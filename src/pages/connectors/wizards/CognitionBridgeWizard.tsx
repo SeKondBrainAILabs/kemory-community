@@ -115,7 +115,7 @@ COGNITION_OS_ORG_ID=${orgId || '<your-org-id>'}`
         </div>
         <CodeBlock label="Environment configuration:" code={envConfig} />
         <p className="mt-3 text-xs text-content-tertiary">
-          Add these variables to your backend environment and restart s9nmv-api to activate the bridge.
+          Add these variables to your backend environment and restart kemory-api to activate the bridge.
         </p>
         <WizardNav step={1} total={total} onBack={() => setStep(0)} onNext={() => setStep(2)} />
       </>

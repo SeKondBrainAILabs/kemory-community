@@ -137,7 +137,7 @@ export function ClaudeDesktopWizard({ onClose }: Props) {
     return JSON.stringify(
       {
         mcpServers: {
-          's9n-memory-vault': {
+          'kemory': {
             command: 'python3',
             args: [serverPath],
             env: { S9NMV_API_URL: apiUrl, S9NMV_API_KEY: apiKey },
