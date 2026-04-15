@@ -56,9 +56,9 @@ class Settings(BaseSettings):
     keycloak_url: str = "http://host.docker.internal:8888"
     keycloak_public_url: str = "http://localhost:8888"
     keycloak_realm: str = "s9n-mvp"
-    keycloak_client_id: str = "memory-vault-api"
-    keycloak_client_ids: str = "vault-dashboard,memory-vault-api,s9nmv-frontend,admin-panel"
-    keycloak_admin_client_secret: str = "memory-vault-api-secret-change-in-production"
+    keycloak_client_id: str = "kemory-api"
+    keycloak_client_ids: str = "vault-dashboard,kemory-api,kemory-frontend,admin-panel"
+    keycloak_admin_client_secret: str = "kemory-api-secret-change-in-production"
 
     @property
     def keycloak_jwks_url(self) -> str:

@@ -198,7 +198,7 @@ class CognitionBridge:
                 "content_type": content_type,
                 "source_agent": source_agent,
                 "project": project or namespace,
-                "source": "kora-memory-vault",
+                "source": "kemory",
             },
         })
 
@@ -249,7 +249,7 @@ class CognitionBridge:
                     "confidence": entity.get("confidence", 1.0),
                     "source_memory_id": memory_id,
                     "kmv_entity_id": entity_id,
-                    "source": "kora-memory-vault",
+                    "source": "kemory",
                 },
             })
 
