@@ -49,3 +49,57 @@ export async function updateMemory(
 export async function getAccessMap(): Promise<AccessMapResponse> {
   return api.get('api/v1/graph/access-map').json()
 }
+
+// ─── Consolidation API (KMV-E14) ─────────────────────────────────────────────
+
+export interface NamespacePolicy {
+  namespace: string
+  decay_rate: number
+  retention_days: number
+  auto_consolidate: boolean
+  consolidation_hour_utc?: number
+  description?: string
+  is_default?: boolean
+}
+
+export interface ConsolidationStats {
+  pending: number
+  consolidating: number
+  archived: number
+  avg_weight: Record<string, number>
+}
+
+export interface ConsolidationSummary {
+  status: string
+  summary: {
+    epoch_date: string
+    namespace: string
+    weight_decay: Record<string, unknown>
+    auto_archived: Record<string, unknown>
+    consolidated: Record<string, unknown>
+    errors: string[]
+  }
+}
+
+export async function triggerConsolidation(namespace: string): Promise<ConsolidationSummary> {
+  return api.post(`api/v1/namespaces/${namespace}/consolidate`).json()
+}
+
+export async function getConsolidationStats(namespace: string): Promise<{ namespace: string; stats: Record<string, ConsolidationStats> }> {
+  return api.get(`api/v1/namespaces/${namespace}/consolidation-stats`).json()
+}
+
+export async function getAllConsolidationStats(): Promise<{ stats: Record<string, Record<string, ConsolidationStats>> }> {
+  return api.get('api/v1/namespaces/consolidation-stats').json()
+}
+
+export async function getNamespacePolicy(namespace: string): Promise<NamespacePolicy> {
+  return api.get(`api/v1/namespaces/${namespace}/policy`).json()
+}
+
+export async function updateNamespacePolicy(
+  namespace: string,
+  policy: Partial<Omit<NamespacePolicy, 'namespace' | 'is_default'>>,
+): Promise<NamespacePolicy> {
+  return api.put(`api/v1/namespaces/${namespace}/policy`, { json: policy }).json()
+}
