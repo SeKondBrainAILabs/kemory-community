@@ -99,6 +99,12 @@ class MemoryResponse(BaseModel):
     updated_at: str
     # S9N-DEDUP: populated when dedup prevented a new memory from being created
     dedup: Optional[DedupInfo] = None
+    # F12: Memory compression level — L1 (raw observation), L2 (AAAK lossless), L3.1 (concept synthesis)
+    # Derived from metadata._compression_tier if present, otherwise defaults to L1.
+    compression_tier: str = "L1"
+    # F12: Source memory IDs for L3.1 synthesized concepts (provenance tracking)
+    # Populated from metadata._source_memory_ids when compression_tier is L3.1.
+    source_memory_ids: Optional[list[str]] = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -127,6 +133,10 @@ class MemorySearchRequest(BaseModel):
     )
     date_to: Optional[str] = Field(
         None, description="ISO date string — only return memories created on or before this date"
+    )
+    # F12: Filter by compression tier (L1, L2, L3.1)
+    compression_tier: Optional[str] = Field(
+        None, description="Filter by compression tier: 'L1' (raw), 'L2' (AAAK), 'L3.1' (concept)"
     )
 
     @model_validator(mode="after")
@@ -381,6 +391,17 @@ async def create_memory(
         asyncio.create_task(_enrich(memory.memory_id, user_id, db))
     except Exception:
         logger.debug("enrichment.hook_skipped", reason="import_or_task_error")
+
+    # F12: Fire-and-forget write-time compression pipeline.
+    # Promotes the new memory to L2 (AAAK) and, when the namespace has
+    # accumulated enough similar memories, synthesizes an L3.1 concept.
+    # Never blocks the write path.
+    if memory.content_type != "concept":  # Don't compress synthesized concepts
+        try:
+            from backend.services.compression_pipeline import schedule_compression
+            schedule_compression(user_id, memory.memory_id, request.namespace)
+        except Exception:
+            logger.debug("compression_pipeline.hook_skipped", reason="import_or_task_error")
     # BUG-007 fix: log audit event for memory creation
     try:
         await log_audit_event(
@@ -644,6 +665,26 @@ async def search_memories(
         dt_to = _resolve_date(request.date_to, now)
         if dt_to:
             query = query.where(Memory.created_at <= dt_to)
+
+    # F12: Compression tier filter — matches on metadata._compression_tier JSON key.
+    # L1 = no _compression_tier key OR value is 'L1'.
+    if request.compression_tier:
+        tier = request.compression_tier.upper().replace("L3.1", "L3.1")  # normalise
+        if tier == "L1":
+            # L1 = raw memories that have not yet been promoted
+            from sqlalchemy import or_, cast, String
+            from sqlalchemy.dialects.postgresql import JSONB
+            query = query.where(
+                or_(
+                    Memory.meta == None,  # noqa: E711
+                    Memory.meta["_compression_tier"].as_string() == "L1",
+                    ~Memory.meta.has_key("_compression_tier"),
+                )
+            )
+        else:
+            query = query.where(
+                Memory.meta["_compression_tier"].as_string() == tier
+            )
 
     # ── Hybrid search path (S9N-3074-SUB2) ──────────────────────────────────
     if getattr(request, "search_mode", "fts") == "hybrid" and request.query:
@@ -969,7 +1010,42 @@ def _to_response(memory: Memory) -> MemoryResponse:
         access_count=memory.access_count or 0,
         created_at=memory.created_at.isoformat() if memory.created_at else "",
         updated_at=memory.updated_at.isoformat() if memory.updated_at else "",
+        # F12: Derive compression tier from metadata field
+        compression_tier=_derive_compression_tier(memory.meta),
+        source_memory_ids=_derive_source_memory_ids(memory.meta),
     )
+
+
+# ─── F12: Compression Tier Helpers ──────────────────────────────────────────
+
+_VALID_TIERS = {"L1", "L2", "L3.1"}
+
+
+def _derive_compression_tier(meta: Optional[dict]) -> str:
+    """Derive the compression tier from memory metadata.
+
+    The tier is stored as metadata._compression_tier by the compression
+    pipeline. Valid values: 'L1' (raw), 'L2' (AAAK), 'L3.1' (concept).
+    Defaults to 'L1' if not present or invalid.
+    """
+    if not meta:
+        return "L1"
+    tier = meta.get("_compression_tier", "L1")
+    return tier if tier in _VALID_TIERS else "L1"
+
+
+def _derive_source_memory_ids(meta: Optional[dict]) -> Optional[list[str]]:
+    """Derive source memory IDs for L3.1 synthesized concepts.
+
+    Stored as metadata._source_memory_ids by the concept synthesis pipeline.
+    Returns None for L1/L2 memories.
+    """
+    if not meta:
+        return None
+    ids = meta.get("_source_memory_ids")
+    if isinstance(ids, list):
+        return [str(i) for i in ids]
+    return None
 
 
 # ─── L1 / L2 / L3 Compression Service (KMV-COMPRESS-01 / S9N-3050) ──────

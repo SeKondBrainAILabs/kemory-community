@@ -21,6 +21,7 @@ from backend.api.routes.enrichment import router as enrichment_router
 from backend.api.routes.audit import router as audit_router
 from backend.api.routes.security import router as security_router
 from backend.api.routes.waitlist import public_router as waitlist_router, admin_router as waitlist_admin_router
+from backend.api.routes.graph import router as graph_router  # F12: Access Graph
 
 logger = structlog.get_logger(__name__)
 
@@ -92,3 +93,4 @@ app.include_router(audit_router)
 app.include_router(security_router)
 app.include_router(waitlist_router)
 app.include_router(waitlist_admin_router)
+app.include_router(graph_router)  # F12: Access Graph
