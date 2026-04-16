@@ -1,25 +1,14 @@
 /**
- * Memory Vault — Memory Explorer Page (KMV-E15 UX Redesign)
+ * Memory Vault — Memory Explorer Page
  *
- * KMV-S15.1: Non-Technical Default View & Advanced Toggle
- *   - Global Advanced toggle (persisted in localStorage)
- *   - Default view: plain-English labels, content previews, relative timestamps
- *   - Advanced view: UUIDs, raw JSON, technical metadata
+ * EPIC-002 fixes:
+ *   KMV-QA-013: Add Delete Memory button with confirmation dialog
+ *   KMV-QA-014: Add Edit Memory inline form in the detail panel
+ *   KMV-QA-015: Add pagination controls (offset-based, 50 per page)
  *
- * KMV-S15.2: Namespace Summary Header
- *   - Compact collapsible header above the memory list
- *   - Shows status counts, avg weight bar, health sentence
- *   - Expandable policy editor + manual sync trigger
- *
- * KMV-S15.3: Inline Memory Health & Decay Indicators
- *   - Per-row: status badge, weight bar/number, days until archived, days until floor
- *   - Light non-error palette (indigo/blue/slate/emerald)
- *   - User-selectable weight display mode (bar vs number)
- *
- * Previous fixes retained:
- *   KMV-QA-013: Delete Memory with confirmation dialog
- *   KMV-QA-014: Edit Memory inline form
- *   KMV-QA-015: Pagination controls (offset-based, 50 per page)
+ * F12 additions:
+ *   F12-US-001: Compression tier (L1/L2/L3.1) badge column + filter buttons
+ *   F12-US-002: Provenance panel for L3.1 concept memories (source IDs)
  */
 import { useState } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
@@ -30,6 +19,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { JsonViewer } from '@/components/shared/JsonViewer'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { MemoryLevelBadge } from '@/components/shared/MemoryLevelBadge'
 import {
   useMemorySearch,
   useNamespaces,
@@ -40,362 +30,75 @@ import {
 import { formatRelativeTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { MemoryResponse } from '@/api/types'
-import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, BarChart2, Hash, SlidersHorizontal } from 'lucide-react'
-import { MemoryHealthBadge } from '@/components/memories/MemoryHealthBadge'
-import { NamespaceSummaryHeader } from '@/components/memories/NamespaceSummaryHeader'
-import { AdvancedViewProvider, useAdvancedView } from '@/contexts/AdvancedViewContext'
+import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, GitMerge } from 'lucide-react'
 
 const PAGE_SIZE = 50
-const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference'] as const
 
-// ─── Advanced toggle button ────────────────────────────────────────────────────
+const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference', 'concept'] as const
+type TierFilter = 'all' | 'L1' | 'L2' | 'L3.1'
+const tierFilters: TierFilter[] = ['all', 'L1', 'L2', 'L3.1']
 
-function AdvancedToggle() {
-  const { advanced, toggle } = useAdvancedView()
-  return (
-    <button
-      onClick={toggle}
-      title={advanced ? 'Switch to simple view' : 'Switch to advanced developer view'}
-      className={cn(
-        'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-        advanced
-          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
-      )}
-    >
-      <SlidersHorizontal size={12} />
-      {advanced ? 'Advanced' : 'Simple'}
-    </button>
-  )
+/** Derive the compression tier from a memory response.
+ *  Falls back to L1 if the backend has not yet promoted the record. */
+function deriveTier(mem: MemoryResponse): 'L1' | 'L2' | 'L3.1' {
+  const meta = mem.metadata as Record<string, unknown> | null
+  const t = meta?.['_compression_tier'] as string | undefined
+  if (t === 'L2' || t === 'L3.1') return t
+  if (mem.content_type === 'concept') return 'L3.1'
+  return 'L1'
 }
 
-// ─── Weight display toggle ─────────────────────────────────────────────────────
+const columns: ColumnDef<MemoryResponse, unknown>[] = [
+  {
+    id: 'tier',
+    header: 'Level',
+    cell: ({ row }) => <MemoryLevelBadge tier={deriveTier(row.original)} />,
+  },
+  {
+    accessorKey: 'content',
+    header: 'Content',
+    cell: ({ getValue }) => (
+      <span className="line-clamp-2 max-w-sm text-sm">{getValue() as string}</span>
+    ),
+  },
+  { accessorKey: 'namespace', header: 'Namespace' },
+  {
+    accessorKey: 'content_type',
+    header: 'Type',
+    cell: ({ getValue }) => (
+      <span className="rounded bg-surface-tertiary px-2 py-0.5 text-xs">{getValue() as string}</span>
+    ),
+  },
+  {
+    accessorKey: 'enrichment_status',
+    header: 'Enrichment',
+    cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
+  },
+  { accessorKey: 'version', header: 'Ver' },
+  {
+    accessorKey: 'created_at',
+    header: 'Created',
+    cell: ({ getValue }) => formatRelativeTime(getValue() as string),
+  },
+]
 
-function WeightDisplayToggle({
-  mode,
-  onChange,
-}: {
-  mode: 'bar' | 'number'
-  onChange: (m: 'bar' | 'number') => void
-}) {
-  return (
-    <div className="flex items-center rounded-lg border border-slate-200 bg-white">
-      <button
-        onClick={() => onChange('bar')}
-        title="Show weight as bar"
-        className={cn(
-          'flex items-center gap-1 rounded-l-lg px-2.5 py-1.5 text-xs transition-colors',
-          mode === 'bar'
-            ? 'bg-indigo-50 text-indigo-700'
-            : 'text-slate-400 hover:bg-slate-50',
-        )}
-      >
-        <BarChart2 size={11} />
-      </button>
-      <button
-        onClick={() => onChange('number')}
-        title="Show weight as number"
-        className={cn(
-          'flex items-center gap-1 rounded-r-lg px-2.5 py-1.5 text-xs transition-colors',
-          mode === 'number'
-            ? 'bg-indigo-50 text-indigo-700'
-            : 'text-slate-400 hover:bg-slate-50',
-        )}
-      >
-        <Hash size={11} />
-      </button>
-    </div>
-  )
-}
-
-// ─── Column definitions ────────────────────────────────────────────────────────
-
-function buildColumns(
-  advanced: boolean,
-  weightDisplay: 'bar' | 'number',
-): ColumnDef<MemoryResponse, unknown>[] {
-  const base: ColumnDef<MemoryResponse, unknown>[] = [
-    {
-      accessorKey: 'content',
-      header: 'Content',
-      cell: ({ getValue }) => (
-        <span className="line-clamp-2 max-w-sm text-sm">{getValue() as string}</span>
-      ),
-    },
-    { accessorKey: 'namespace', header: 'Namespace' },
-    {
-      accessorKey: 'content_type',
-      header: 'Type',
-      cell: ({ getValue }) => (
-        <span className="rounded bg-surface-tertiary px-2 py-0.5 text-xs">{getValue() as string}</span>
-      ),
-    },
-    {
-      id: 'health',
-      header: 'Health',
-      cell: ({ row }) => (
-        <MemoryHealthBadge
-          weight={(row.original as MemoryResponse & { consolidation_weight?: number }).consolidation_weight}
-          consolidationStatus={(row.original as MemoryResponse & { consolidation_status?: string }).consolidation_status}
-          createdAt={row.original.created_at}
-          weightDisplay={weightDisplay}
-          compact
-        />
-      ),
-    },
-    {
-      accessorKey: 'created_at',
-      header: 'Created',
-      cell: ({ getValue }) => (
-        <span className="text-xs text-slate-400">{formatRelativeTime(getValue() as string)}</span>
-      ),
-    },
-  ]
-
-  if (advanced) {
-    base.splice(3, 0, {
-      accessorKey: 'enrichment_status',
-      header: 'Enrichment',
-      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
-    })
-    base.push({
-      accessorKey: 'version',
-      header: 'Ver',
-    })
-  }
-
-  return base
-}
-
-// ─── Detail panel ──────────────────────────────────────────────────────────────
-
-function DetailPanel({
-  selected,
-  editing,
-  editContent,
-  editContentType,
-  weightDisplay,
-  onEdit,
-  onCancelEdit,
-  onSaveEdit,
-  onDelete,
-  onClose,
-  onEditContentChange,
-  onEditContentTypeChange,
-  updatePending,
-  updateError,
-  enrichmentData,
-}: {
-  selected: MemoryResponse & { consolidation_weight?: number; consolidation_status?: string }
-  editing: boolean
-  editContent: string
-  editContentType: string
-  weightDisplay: 'bar' | 'number'
-  onEdit: () => void
-  onCancelEdit: () => void
-  onSaveEdit: () => void
-  onDelete: () => void
-  onClose: () => void
-  onEditContentChange: (v: string) => void
-  onEditContentTypeChange: (v: string) => void
-  updatePending: boolean
-  updateError: boolean
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  enrichmentData: any
-}) {
-  const { advanced } = useAdvancedView()
-
-  return (
-    <div className="w-96 shrink-0 rounded-lg border border-border bg-white p-4">
-      {/* Panel header */}
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
-        <div className="flex items-center gap-1">
-          {!editing && (
-            <button
-              onClick={onEdit}
-              className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary hover:text-brand-primary"
-              title="Edit memory"
-            >
-              <Pencil size={14} />
-            </button>
-          )}
-          <button
-            onClick={onDelete}
-            className="rounded p-1.5 text-content-tertiary hover:bg-red-50 hover:text-status-danger"
-            title="Delete memory"
-          >
-            <Trash2 size={14} />
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-
-      {editing ? (
-        /* ── Edit form ── */
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-content-secondary">Content</label>
-            <textarea
-              value={editContent}
-              onChange={(e) => onEditContentChange(e.target.value)}
-              rows={6}
-              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-content-primary focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-content-secondary">Content Type</label>
-            <select
-              value={editContentType}
-              onChange={(e) => onEditContentTypeChange(e.target.value)}
-              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-brand-primary focus:outline-none"
-            >
-              {['text', 'structured', 'conversation', 'fact', 'preference'].map((ct) => (
-                <option key={ct} value={ct}>{ct}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onSaveEdit}
-              disabled={updatePending || !editContent.trim()}
-              className="flex items-center gap-1.5 rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-primary/90 disabled:opacity-50"
-            >
-              <Check size={12} />
-              {updatePending ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              onClick={onCancelEdit}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-secondary"
-            >
-              Cancel
-            </button>
-          </div>
-          {updateError && (
-            <p className="text-xs text-status-danger">Failed to save. Please try again.</p>
-          )}
-        </div>
-      ) : (
-        /* ── Read-only view ── */
-        <div className="space-y-3 text-sm">
-          {/* Content */}
-          <div>
-            <div className="mb-1 text-xs font-medium text-content-tertiary">Content</div>
-            <p className="whitespace-pre-wrap text-content-primary">{selected.content}</p>
-          </div>
-
-          {/* Memory health — expanded mode */}
-          <MemoryHealthBadge
-            weight={selected.consolidation_weight}
-            consolidationStatus={selected.consolidation_status}
-            createdAt={selected.created_at}
-            weightDisplay={weightDisplay}
-            compact={false}
-          />
-
-          {/* Core metadata grid */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <div className="text-content-tertiary">Namespace</div>
-              <div className="font-medium">{selected.namespace}</div>
-            </div>
-            <div>
-              <div className="text-content-tertiary">Type</div>
-              <div className="font-medium">{selected.content_type}</div>
-            </div>
-            <div>
-              <div className="text-content-tertiary">Source</div>
-              <div className="font-medium">{selected.source_type}</div>
-            </div>
-            <div>
-              <div className="text-content-tertiary">Quality</div>
-              <div className="font-medium">
-                {selected.quality_score != null
-                  ? `${(selected.quality_score * 100).toFixed(0)}%`
-                  : '—'}
-              </div>
-            </div>
-            {advanced && (
-              <>
-                <div>
-                  <div className="text-content-tertiary">Version</div>
-                  <div className="font-medium">{selected.version}</div>
-                </div>
-                <div>
-                  <div className="text-content-tertiary">Enrichment</div>
-                  <StatusBadge status={selected.enrichment_status} />
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Technical IDs — advanced only */}
-          {advanced && (
-            <>
-              <div className="text-xs text-content-tertiary">
-                ID: <code className="rounded bg-surface-tertiary px-1">{selected.memory_id}</code>
-              </div>
-              {(selected as MemoryResponse & { cognition_entity_id?: string }).cognition_entity_id && (
-                <div className="text-xs text-content-tertiary">
-                  Cognition ID:{' '}
-                  <code className="rounded bg-surface-tertiary px-1">
-                    {(selected as MemoryResponse & { cognition_entity_id?: string }).cognition_entity_id}
-                  </code>
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="text-xs text-content-tertiary">
-            Created {formatRelativeTime(selected.created_at)}
-          </div>
-
-          {/* Enrichment data */}
-          {enrichmentData && (
-            <div className="mt-2 rounded-lg bg-surface-secondary p-3">
-              <div className="mb-1 text-xs font-medium text-content-secondary">Enrichment</div>
-              <JsonViewer data={enrichmentData} />
-            </div>
-          )}
-
-          {/* Raw metadata — advanced only */}
-          {advanced && selected.metadata && Object.keys(selected.metadata).length > 0 && (
-            <div>
-              <div className="mb-1 text-xs font-medium text-content-tertiary">Metadata</div>
-              <JsonViewer data={selected.metadata} />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── Main page ─────────────────────────────────────────────────────────────────
-
-function MemoryExplorerPageInner() {
-  const { advanced } = useAdvancedView()
+export function MemoryExplorerPage() {
   const [query, setQuery] = useState('')
   const [namespace, setNamespace] = useState<string>('')
   const [contentType, setContentType] = useState('all')
+  const [tierFilter, setTierFilter] = useState<TierFilter>('all')
   const [selected, setSelected] = useState<MemoryResponse | null>(null)
   const [page, setPage] = useState(0)
-  const [weightDisplay, setWeightDisplay] = useState<'bar' | 'number'>('bar')
 
   // Edit state
   const [editing, setEditing] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [editContentType, setEditContentType] = useState('')
 
-  // Namespace search filter
+  // Namespace search filter (for large namespace lists)
   const [nsFilter, setNsFilter] = useState('')
 
-  // Delete confirm
+  // Delete confirm dialog
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const namespaces = useNamespaces()
@@ -403,6 +106,7 @@ function MemoryExplorerPageInner() {
     query: query || undefined,
     namespace: namespace || undefined,
     content_type: contentType === 'all' ? undefined : contentType,
+    compression_tier: tierFilter === 'all' ? undefined : tierFilter,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   })
@@ -413,7 +117,6 @@ function MemoryExplorerPageInner() {
 
   const totalCount = search.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
-  const columns = buildColumns(advanced, weightDisplay)
 
   function openDetail(row: MemoryResponse) {
     setSelected(row)
@@ -437,7 +140,10 @@ function MemoryExplorerPageInner() {
     updateMutation.mutate(
       {
         memoryId: selected.memory_id,
-        data: { content: editContent, content_type: editContentType || undefined },
+        data: {
+          content: editContent,
+          content_type: editContentType || undefined,
+        },
       },
       {
         onSuccess: (updated) => {
@@ -448,9 +154,19 @@ function MemoryExplorerPageInner() {
     )
   }
 
+  // Derive tier for the selected memory (for provenance panel)
+  const selectedTier = selected ? deriveTier(selected) : null
+  const sourceMemoryIds: string[] = (() => {
+    if (!selected) return []
+    const meta = selected.metadata as Record<string, unknown> | null
+    const ids = meta?.['_source_memory_ids']
+    if (Array.isArray(ids)) return ids as string[]
+    return []
+  })()
+
   return (
     <PageShell>
-      {/* ── Toolbar ── */}
+      {/* Filters row */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
           value={query}
@@ -480,7 +196,8 @@ function MemoryExplorerPageInner() {
             </option>
             {namespaces.data
               ?.filter((ns) =>
-                nsFilter === '' || ns.namespace.toLowerCase().includes(nsFilter.toLowerCase())
+                nsFilter === '' ||
+                ns.namespace.toLowerCase().includes(nsFilter.toLowerCase())
               )
               .map((ns) => (
                 <option key={ns.namespace} value={ns.namespace}>
@@ -490,7 +207,7 @@ function MemoryExplorerPageInner() {
           </select>
         </div>
 
-        {/* Content type pills */}
+        {/* Content type filter */}
         <div className="flex gap-1">
           {contentTypes.map((ct) => (
             <button
@@ -508,27 +225,34 @@ function MemoryExplorerPageInner() {
           ))}
         </div>
 
-        {/* Weight display toggle */}
-        <WeightDisplayToggle mode={weightDisplay} onChange={setWeightDisplay} />
-
-        {/* Advanced toggle — pushed to the right */}
-        <div className="ml-auto">
-          <AdvancedToggle />
+        {/* F12-US-001: Compression tier filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-content-tertiary">Level:</span>
+          {tierFilters.map((t) => (
+            <button
+              key={t}
+              onClick={() => { setTierFilter(t); setPage(0) }}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium transition-colors',
+                tierFilter === t
+                  ? t === 'all'
+                    ? 'bg-brand-primary text-white'
+                    : t === 'L1'
+                      ? 'bg-slate-600 text-white'
+                      : t === 'L2'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-violet-600 text-white'
+                  : 'border border-border bg-white text-content-secondary hover:bg-surface-secondary',
+              )}
+            >
+              {t === 'all' ? 'All levels' : t}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* ── Namespace Summary Header (KMV-S15.2) ── */}
-      {namespace && (
-        <div className="mb-3">
-          <NamespaceSummaryHeader
-            namespace={namespace}
-            totalMemories={totalCount}
-          />
-        </div>
-      )}
-
       <div className="flex gap-4">
-        {/* ── Memory list ── */}
+        {/* Table */}
         <div className="min-w-0 flex-1">
           {search.isLoading ? (
             <LoadingSkeleton lines={10} />
@@ -539,7 +263,7 @@ function MemoryExplorerPageInner() {
                 data={search.data?.items ?? []}
                 onRowClick={openDetail}
               />
-              {/* Pagination */}
+              {/* Pagination — KMV-QA-015 */}
               <div className="mt-3 flex items-center justify-between text-xs text-content-tertiary">
                 <span>
                   {totalCount} {totalCount === 1 ? 'memory' : 'memories'} total
@@ -566,29 +290,176 @@ function MemoryExplorerPageInner() {
           )}
         </div>
 
-        {/* ── Detail panel ── */}
+        {/* Detail panel */}
         {selected && (
-          <DetailPanel
-            selected={selected as MemoryResponse & { consolidation_weight?: number; consolidation_status?: string }}
-            editing={editing}
-            editContent={editContent}
-            editContentType={editContentType}
-            weightDisplay={weightDisplay}
-            onEdit={() => setEditing(true)}
-            onCancelEdit={() => { setEditing(false); setEditContent(selected.content); setEditContentType(selected.content_type) }}
-            onSaveEdit={handleSaveEdit}
-            onDelete={() => setConfirmDelete(true)}
-            onClose={() => { setSelected(null); setEditing(false) }}
-            onEditContentChange={setEditContent}
-            onEditContentTypeChange={setEditContentType}
-            updatePending={updateMutation.isPending}
-            updateError={updateMutation.isError}
-            enrichmentData={enrichment.data}
-          />
+          <div className="w-96 shrink-0 rounded-lg border border-border bg-white p-4">
+            {/* Panel header */}
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
+                {selectedTier && <MemoryLevelBadge tier={selectedTier} />}
+              </div>
+              <div className="flex items-center gap-1">
+                {!editing && (
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary hover:text-brand-primary"
+                    title="Edit memory"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                )}
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded p-1.5 text-content-tertiary hover:bg-red-50 hover:text-status-danger"
+                  title="Delete memory"
+                >
+                  <Trash2 size={14} />
+                </button>
+                <button
+                  onClick={() => { setSelected(null); setEditing(false) }}
+                  className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Edit form — KMV-QA-014 */}
+            {editing ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-content-secondary">Content</label>
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    rows={6}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-content-primary focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-content-secondary">Content Type</label>
+                  <select
+                    value={editContentType}
+                    onChange={(e) => setEditContentType(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-brand-primary focus:outline-none"
+                  >
+                    {['text', 'structured', 'conversation', 'fact', 'preference', 'concept'].map((ct) => (
+                      <option key={ct} value={ct}>{ct}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveEdit}
+                    disabled={updateMutation.isPending || !editContent.trim()}
+                    className="flex items-center gap-1.5 rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-primary/90 disabled:opacity-50"
+                  >
+                    <Check size={12} />
+                    {updateMutation.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => setEditing(false)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {updateMutation.isError && (
+                  <p className="text-xs text-status-danger">Failed to save. Please try again.</p>
+                )}
+              </div>
+            ) : (
+              /* Read-only detail view */
+              <div className="space-y-3 text-sm">
+                <div>
+                  <div className="mb-1 text-xs font-medium text-content-tertiary">Content</div>
+                  <p className="whitespace-pre-wrap text-content-primary">{selected.content}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <div className="text-content-tertiary">Namespace</div>
+                    <div className="font-medium">{selected.namespace}</div>
+                  </div>
+                  <div>
+                    <div className="text-content-tertiary">Type</div>
+                    <div className="font-medium">{selected.content_type}</div>
+                  </div>
+                  <div>
+                    <div className="text-content-tertiary">Version</div>
+                    <div className="font-medium">{selected.version}</div>
+                  </div>
+                  <div>
+                    <div className="text-content-tertiary">Quality</div>
+                    <div className="font-medium">
+                      {selected.quality_score != null
+                        ? `${(selected.quality_score * 100).toFixed(0)}%`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-content-tertiary">Enrichment</div>
+                    <StatusBadge status={selected.enrichment_status} />
+                  </div>
+                  <div>
+                    <div className="text-content-tertiary">Source</div>
+                    <div className="font-medium">{selected.source_type}</div>
+                  </div>
+                </div>
+                <div className="text-xs text-content-tertiary">
+                  ID: <code className="rounded bg-surface-tertiary px-1">{selected.memory_id}</code>
+                </div>
+                <div className="text-xs text-content-tertiary">
+                  Created {formatRelativeTime(selected.created_at)}
+                </div>
+
+                {/* F12-US-002: Provenance panel for L3.1 concept memories */}
+                {selectedTier === 'L3.1' && sourceMemoryIds.length > 0 && (
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-violet-700">
+                      <GitMerge size={12} />
+                      Synthesized from {sourceMemoryIds.length} source{sourceMemoryIds.length !== 1 ? 's' : ''}
+                    </div>
+                    <div className="space-y-1">
+                      {sourceMemoryIds.map((id) => (
+                        <div
+                          key={id}
+                          className="flex items-center gap-1 rounded bg-white px-2 py-1 text-xs font-mono text-violet-600 border border-violet-100"
+                        >
+                          <span className="truncate">{id}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {Boolean((selected.metadata as Record<string, unknown> | null)?.['_synthesis_source']) && (
+                      <div className="mt-2 text-xs text-violet-600">
+                        Synthesis via:{' '}
+                        <span className="font-medium">
+                          {String((selected.metadata as Record<string, unknown>)['_synthesis_source'])}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {enrichment.data && (
+                  <div className="mt-2 rounded-lg bg-surface-secondary p-3">
+                    <div className="mb-1 text-xs font-medium text-content-secondary">Enrichment</div>
+                    <JsonViewer data={enrichment.data} />
+                  </div>
+                )}
+                {selected.metadata && Object.keys(selected.metadata).length > 0 && (
+                  <div>
+                    <div className="mb-1 text-xs font-medium text-content-tertiary">Metadata</div>
+                    <JsonViewer data={selected.metadata} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
-      {/* ── Delete confirmation ── */}
+      {/* Delete confirmation dialog — KMV-QA-013 */}
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
@@ -599,14 +470,5 @@ function MemoryExplorerPageInner() {
         onConfirm={handleDelete}
       />
     </PageShell>
-  )
-}
-
-// Wrap with the AdvancedViewProvider so the toggle is available everywhere
-export function MemoryExplorerPage() {
-  return (
-    <AdvancedViewProvider>
-      <MemoryExplorerPageInner />
-    </AdvancedViewProvider>
   )
 }

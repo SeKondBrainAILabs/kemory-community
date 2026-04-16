@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Brain,
+  GitGraph,
 } from 'lucide-react'
 
 interface NavItem {
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { to: '/permissions', icon: Shield, label: 'Permissions' },
   { to: '/memories', icon: Database, label: 'Memories' },
   { to: '/access', icon: Network, label: 'Access Map' },
+  { to: '/access-graph', icon: GitGraph, label: 'Access Graph' },  // F12
   { to: '/consent', icon: Bell, label: 'Consent Queue' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/connectors', icon: Plug, label: 'Connectors' },

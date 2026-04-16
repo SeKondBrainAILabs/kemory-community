@@ -74,6 +74,10 @@ export interface MemoryResponse {
   temporal_anchor: string | null
   created_at: string
   updated_at: string
+  // F12: Memory compression level — L1 (raw), L2 (AAAK lossless), L3.1 (concept synthesis)
+  compression_tier: 'L1' | 'L2' | 'L3.1'
+  // F12: Source memory IDs for L3.1 synthesized concepts (provenance)
+  source_memory_ids: string[] | null
 }
 
 export interface MemorySearchRequest {
@@ -83,6 +87,37 @@ export interface MemorySearchRequest {
   tags?: string[]
   limit?: number
   offset?: number
+  // F12: Filter by compression tier
+  compression_tier?: 'L1' | 'L2' | 'L3.1'
+}
+
+// ─── Graph Domain (F12) ──────────────────────────────────────
+
+export interface GraphNode {
+  id: string
+  type: 'agent' | 'namespace' | 'memory'
+  label: string
+  status?: string
+  compression_tier?: 'L1' | 'L2' | 'L3.1'
+  namespace?: string
+  memory_count?: number
+  total_reads?: number
+  total_writes?: number
+  denied_requests?: number
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  relation: 'writes_to' | 'reads_from' | 'synthesized_from' | 'in_namespace'
+}
+
+export interface AccessMapResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  total_agents: number
+  total_namespaces: number
+  total_memories: number
 }
 
 export interface MemoryListResponse {
