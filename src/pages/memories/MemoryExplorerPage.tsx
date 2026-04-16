@@ -5,6 +5,10 @@
  *   KMV-QA-013: Add Delete Memory button with confirmation dialog
  *   KMV-QA-014: Add Edit Memory inline form in the detail panel
  *   KMV-QA-015: Add pagination controls (offset-based, 50 per page)
+ *
+ * F12 additions:
+ *   F12-US-001: Compression tier (L1/L2/L3.1) badge column + filter buttons
+ *   F12-US-002: Provenance panel for L3.1 concept memories (source IDs)
  */
 import { useState } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
@@ -15,6 +19,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { JsonViewer } from '@/components/shared/JsonViewer'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { MemoryLevelBadge } from '@/components/shared/MemoryLevelBadge'
 import {
   useMemorySearch,
   useNamespaces,
@@ -25,13 +30,30 @@ import {
 import { formatRelativeTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { MemoryResponse } from '@/api/types'
-import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check } from 'lucide-react'
+import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, GitMerge } from 'lucide-react'
 
 const PAGE_SIZE = 50
 
-const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference'] as const
+const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference', 'concept'] as const
+type TierFilter = 'all' | 'L1' | 'L2' | 'L3.1'
+const tierFilters: TierFilter[] = ['all', 'L1', 'L2', 'L3.1']
+
+/** Derive the compression tier from a memory response.
+ *  Falls back to L1 if the backend has not yet promoted the record. */
+function deriveTier(mem: MemoryResponse): 'L1' | 'L2' | 'L3.1' {
+  const meta = mem.metadata as Record<string, unknown> | null
+  const t = meta?.['_compression_tier'] as string | undefined
+  if (t === 'L2' || t === 'L3.1') return t
+  if (mem.content_type === 'concept') return 'L3.1'
+  return 'L1'
+}
 
 const columns: ColumnDef<MemoryResponse, unknown>[] = [
+  {
+    id: 'tier',
+    header: 'Level',
+    cell: ({ row }) => <MemoryLevelBadge tier={deriveTier(row.original)} />,
+  },
   {
     accessorKey: 'content',
     header: 'Content',
@@ -64,6 +86,7 @@ export function MemoryExplorerPage() {
   const [query, setQuery] = useState('')
   const [namespace, setNamespace] = useState<string>('')
   const [contentType, setContentType] = useState('all')
+  const [tierFilter, setTierFilter] = useState<TierFilter>('all')
   const [selected, setSelected] = useState<MemoryResponse | null>(null)
   const [page, setPage] = useState(0)
 
@@ -83,6 +106,7 @@ export function MemoryExplorerPage() {
     query: query || undefined,
     namespace: namespace || undefined,
     content_type: contentType === 'all' ? undefined : contentType,
+    compression_tier: tierFilter === 'all' ? undefined : tierFilter,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   })
@@ -130,9 +154,19 @@ export function MemoryExplorerPage() {
     )
   }
 
+  // Derive tier for the selected memory (for provenance panel)
+  const selectedTier = selected ? deriveTier(selected) : null
+  const sourceMemoryIds: string[] = (() => {
+    if (!selected) return []
+    const meta = selected.metadata as Record<string, unknown> | null
+    const ids = meta?.['_source_memory_ids']
+    if (Array.isArray(ids)) return ids as string[]
+    return []
+  })()
+
   return (
     <PageShell>
-      {/* Filters */}
+      {/* Filters row */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
           value={query}
@@ -140,7 +174,8 @@ export function MemoryExplorerPage() {
           placeholder="Search memories…"
           className="w-64"
         />
-        {/* Namespace selector — includes text filter when list is large */}
+
+        {/* Namespace selector */}
         <div className="flex flex-col gap-1">
           {(namespaces.data?.length ?? 0) > 10 && (
             <input
@@ -171,6 +206,8 @@ export function MemoryExplorerPage() {
               ))}
           </select>
         </div>
+
+        {/* Content type filter */}
         <div className="flex gap-1">
           {contentTypes.map((ct) => (
             <button
@@ -184,6 +221,31 @@ export function MemoryExplorerPage() {
               )}
             >
               {ct}
+            </button>
+          ))}
+        </div>
+
+        {/* F12-US-001: Compression tier filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-content-tertiary">Level:</span>
+          {tierFilters.map((t) => (
+            <button
+              key={t}
+              onClick={() => { setTierFilter(t); setPage(0) }}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium transition-colors',
+                tierFilter === t
+                  ? t === 'all'
+                    ? 'bg-brand-primary text-white'
+                    : t === 'L1'
+                      ? 'bg-slate-600 text-white'
+                      : t === 'L2'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-violet-600 text-white'
+                  : 'border border-border bg-white text-content-secondary hover:bg-surface-secondary',
+              )}
+            >
+              {t === 'all' ? 'All levels' : t}
             </button>
           ))}
         </div>
@@ -233,7 +295,10 @@ export function MemoryExplorerPage() {
           <div className="w-96 shrink-0 rounded-lg border border-border bg-white p-4">
             {/* Panel header */}
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
+                {selectedTier && <MemoryLevelBadge tier={selectedTier} />}
+              </div>
               <div className="flex items-center gap-1">
                 {!editing && (
                   <button
@@ -279,7 +344,7 @@ export function MemoryExplorerPage() {
                     onChange={(e) => setEditContentType(e.target.value)}
                     className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-brand-primary focus:outline-none"
                   >
-                    {['text', 'structured', 'conversation', 'fact', 'preference'].map((ct) => (
+                    {['text', 'structured', 'conversation', 'fact', 'preference', 'concept'].map((ct) => (
                       <option key={ct} value={ct}>{ct}</option>
                     ))}
                   </select>
@@ -294,7 +359,7 @@ export function MemoryExplorerPage() {
                     {updateMutation.isPending ? 'Saving…' : 'Save'}
                   </button>
                   <button
-                    onClick={() => { setEditing(false); setEditContent(selected.content); setEditContentType(selected.content_type) }}
+                    onClick={() => setEditing(false)}
                     className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-secondary"
                   >
                     Cancel
@@ -347,6 +412,35 @@ export function MemoryExplorerPage() {
                 <div className="text-xs text-content-tertiary">
                   Created {formatRelativeTime(selected.created_at)}
                 </div>
+
+                {/* F12-US-002: Provenance panel for L3.1 concept memories */}
+                {selectedTier === 'L3.1' && sourceMemoryIds.length > 0 && (
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-violet-700">
+                      <GitMerge size={12} />
+                      Synthesized from {sourceMemoryIds.length} source{sourceMemoryIds.length !== 1 ? 's' : ''}
+                    </div>
+                    <div className="space-y-1">
+                      {sourceMemoryIds.map((id) => (
+                        <div
+                          key={id}
+                          className="flex items-center gap-1 rounded bg-white px-2 py-1 text-xs font-mono text-violet-600 border border-violet-100"
+                        >
+                          <span className="truncate">{id}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {Boolean((selected.metadata as Record<string, unknown> | null)?.['_synthesis_source']) && (
+                      <div className="mt-2 text-xs text-violet-600">
+                        Synthesis via:{' '}
+                        <span className="font-medium">
+                          {String((selected.metadata as Record<string, unknown>)['_synthesis_source'])}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {enrichment.data && (
                   <div className="mt-2 rounded-lg bg-surface-secondary p-3">
                     <div className="mb-1 text-xs font-medium text-content-secondary">Enrichment</div>
@@ -378,4 +472,3 @@ export function MemoryExplorerPage() {
     </PageShell>
   )
 }
-

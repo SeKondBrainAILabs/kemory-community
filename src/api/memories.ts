@@ -5,6 +5,7 @@ import type {
   MemorySearchRequest,
   NamespaceInfo,
   EnrichmentResult,
+  AccessMapResponse,
 } from './types'
 
 // EPIC-002: Memory CRUD request types (mirrors backend MemoryUpdate model)
@@ -42,4 +43,9 @@ export async function updateMemory(
   data: MemoryUpdateRequest,
 ): Promise<MemoryResponse> {
   return api.put(`api/v1/memories/${memoryId}`, { json: data }).json()
+}
+
+// F12: Access Graph — agent-memory-namespace relationship graph
+export async function getAccessMap(): Promise<AccessMapResponse> {
+  return api.get('api/v1/graph/access-map').json()
 }

@@ -9,6 +9,8 @@
  *
  * EPIC-002 KMV-QA-013/014: Added useDeleteMemory and useUpdateMemory
  * mutations so the MemoryExplorerPage can delete and edit memories.
+ *
+ * F12: Added compression_tier to queryKey and useAccessMap hook.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -18,6 +20,7 @@ import {
   getMemoryEnrichment,
   deleteMemory,
   updateMemory,
+  getAccessMap,
 } from '@/api/memories'
 import type { MemoryUpdateRequest } from '@/api/memories'
 import type { MemorySearchRequest } from '@/api/types'
@@ -32,6 +35,7 @@ export function useMemorySearch(params: MemorySearchRequest) {
       params.query ?? '',
       params.namespace ?? '',
       params.content_type ?? '',
+      params.compression_tier ?? '',  // F12: tier filter
       params.limit ?? 50,
       params.offset ?? 0,
     ],
@@ -90,5 +94,14 @@ export function useUpdateMemory() {
       qc.invalidateQueries({ queryKey: ['memories', memoryId] })
       qc.invalidateQueries({ queryKey: ['memories', 'search'] })
     },
+  })
+}
+
+// F12: Access Graph hook — agent-memory-namespace relationship graph
+export function useAccessMap() {
+  return useQuery({
+    queryKey: ['graph', 'access-map'],
+    queryFn: getAccessMap,
+    staleTime: 30_000, // 30s — graph data changes infrequently
   })
 }

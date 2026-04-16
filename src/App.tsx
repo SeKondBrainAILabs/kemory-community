@@ -11,6 +11,7 @@ import { AuditLogPage } from '@/pages/audit/AuditLogPage'
 import { PermissionListPage } from '@/pages/permissions/PermissionListPage'
 import { MemoryExplorerPage } from '@/pages/memories/MemoryExplorerPage'
 import { AccessMapPage } from '@/pages/access/AccessMapPage'
+import { AccessGraphPage } from '@/pages/access/AccessGraphPage'  // F12
 import { ConsentQueuePage } from '@/pages/consent/ConsentQueuePage'
 import { StorageAnalyticsPage } from '@/pages/analytics/StorageAnalyticsPage'
 import { SecurityAlertsPage } from '@/pages/security/SecurityAlertsPage'
@@ -40,6 +41,7 @@ export function App() {
         <Route path="permissions" element={<PermissionListPage />} />
         <Route path="memories" element={<MemoryExplorerPage />} />
         <Route path="access" element={<AccessMapPage />} />
+        <Route path="access-graph" element={<AccessGraphPage />} />  {/* F12 */}
         <Route path="consent" element={<ConsentQueuePage />} />
         <Route path="analytics" element={<StorageAnalyticsPage />} />
         <Route path="connectors" element={<ConnectorsPage />} />
