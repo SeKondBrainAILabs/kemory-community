@@ -170,6 +170,24 @@ class Memory(Base):
         comment="Model ID used to generate the embedding. Story: S9N-3074-SUB1",
     )
 
+    # ── Consolidation (KMV-E13) ─────────────────────────────────
+    consolidation_status = Column(
+        String(20), nullable=False, default="pending",
+        comment="Consolidation lifecycle: pending, consolidating, archived (KMV-S13.1)",
+    )
+    cognition_entity_id = Column(
+        String(200), nullable=True,
+        comment="Foreign key to Cognition OS entity after successful consolidation (KMV-S13.1)",
+    )
+    consolidation_weight = Column(
+        Float, nullable=False, default=1.0,
+        comment="Soft decay weight (0.01-1.0) — reduces influence on concept synthesis over time (KMV-S13.3)",
+    )
+    epoch_date = Column(
+        String(10), nullable=True,
+        comment="ISO date YYYY-MM-DD of the consolidation epoch this memory belongs to (KMV-S13.2)",
+    )
+
     # ── Timestamps ────────────────────────────────────────────────
     created_at = Column(
         DateTime(timezone=True), nullable=False,
@@ -200,6 +218,8 @@ class Memory(Base):
         Index("idx_memories_round", "round_id"),
         Index("idx_memories_temporal", "temporal_anchor"),
         Index("idx_memories_decay", "decay_score"),
+        Index("idx_memories_consolidation", "consolidation_status"),
+        Index("idx_memories_epoch", "namespace", "epoch_date"),
         Index(
             "uq_memories_user_ns_hash",
             "user_id", "namespace", "content_hash",

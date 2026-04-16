@@ -206,3 +206,204 @@ async def list_namespaces_endpoint(
     users so the Analytics page shows real data instead of "No namespace data".
     """
     return await list_namespaces(auth.user_id, db, admin_view=is_admin(auth))
+
+
+# ─── Consolidation Endpoints (KMV-E13/E14) ──────────────────────────────────
+
+@router.post(
+    "/namespaces/{namespace}/consolidate",
+    summary="Trigger memory consolidation for a namespace",
+    tags=["Consolidation"],
+)
+async def trigger_consolidation_endpoint(
+    namespace: str,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KMV-S13.2 / KMV-S14.3: Manually trigger the consolidation pipeline for a namespace.
+
+    Runs the full pipeline:
+      1. Apply weight decay to all pending memories
+      2. Auto-archive memories past the retention window
+      3. Push remaining pending memories to Cognition OS
+
+    Admin-only. Returns a summary of actions taken.
+    """
+    if not is_admin(auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can trigger consolidation.",
+        )
+    from backend.services.consolidation_service import run_daily_consolidation
+    try:
+        summary = await run_daily_consolidation(db, namespace=namespace)
+        return JSONResponse(content={"status": "ok", "summary": summary})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Consolidation failed: {exc}",
+        )
+
+
+@router.get(
+    "/namespaces/{namespace}/consolidation-stats",
+    summary="Get consolidation statistics for a namespace",
+    tags=["Consolidation"],
+)
+async def get_consolidation_stats_endpoint(
+    namespace: str,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KMV-S14.2: Return consolidation statistics for a namespace.
+
+    Returns counts of pending/consolidating/archived memories and average weights.
+    Used by the Admin Dashboard Memory Explorer.
+    """
+    from backend.services.consolidation_service import get_consolidation_stats
+    try:
+        stats = await get_consolidation_stats(db, namespace=namespace)
+        return JSONResponse(content={"namespace": namespace, "stats": stats})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get consolidation stats: {exc}",
+        )
+
+
+@router.get(
+    "/namespaces/consolidation-stats",
+    summary="Get consolidation statistics for all namespaces",
+    tags=["Consolidation"],
+)
+async def get_all_consolidation_stats_endpoint(
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KMV-S14.2: Return consolidation statistics for all namespaces.
+
+    Admin-only. Returns counts and average weights grouped by namespace and status.
+    """
+    if not is_admin(auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can view all namespace consolidation stats.",
+        )
+    from backend.services.consolidation_service import get_consolidation_stats
+    try:
+        stats = await get_consolidation_stats(db)
+        return JSONResponse(content={"stats": stats})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get consolidation stats: {exc}",
+        )
+
+
+@router.get(
+    "/namespaces/{namespace}/policy",
+    summary="Get consolidation policy for a namespace",
+    tags=["Consolidation"],
+)
+async def get_namespace_policy_endpoint(
+    namespace: str,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KMV-S14.1: Get the consolidation policy for a namespace.
+
+    Returns the decay_rate, retention_days, and auto_consolidate settings.
+    Returns default values if no policy has been explicitly configured.
+    """
+    from sqlalchemy import select
+    from backend.models.namespace_policy import NamespacePolicy, EXEMPT_NAMESPACES
+    result = await db.execute(
+        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        return JSONResponse(content={
+            "namespace": namespace,
+            "decay_rate": 0.1,
+            "retention_days": 10,
+            "auto_consolidate": namespace not in EXEMPT_NAMESPACES,
+            "is_default": True,
+        })
+    return JSONResponse(content={
+        "namespace": policy.namespace,
+        "decay_rate": policy.decay_rate,
+        "retention_days": policy.retention_days,
+        "auto_consolidate": policy.auto_consolidate,
+        "consolidation_hour_utc": policy.consolidation_hour_utc,
+        "description": policy.description,
+        "is_default": False,
+    })
+
+
+@router.put(
+    "/namespaces/{namespace}/policy",
+    summary="Update consolidation policy for a namespace",
+    tags=["Consolidation"],
+)
+async def update_namespace_policy_endpoint(
+    namespace: str,
+    body: dict,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KMV-S14.1: Create or update the consolidation policy for a namespace.
+
+    Admin-only. Allows configuring decay_rate, retention_days, auto_consolidate,
+    and consolidation_hour_utc per namespace.
+    """
+    if not is_admin(auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can update namespace policies.",
+        )
+    from sqlalchemy import select
+    from backend.models.namespace_policy import NamespacePolicy
+    result = await db.execute(
+        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        policy = NamespacePolicy(namespace=namespace, created_by=auth.user_id)
+        db.add(policy)
+
+    # Update allowed fields
+    if "decay_rate" in body:
+        val = float(body["decay_rate"])
+        if not 0.0 <= val <= 1.0:
+            raise HTTPException(status_code=400, detail="decay_rate must be between 0.0 and 1.0")
+        policy.decay_rate = val
+    if "retention_days" in body:
+        val = int(body["retention_days"])
+        if not 1 <= val <= 365:
+            raise HTTPException(status_code=400, detail="retention_days must be between 1 and 365")
+        policy.retention_days = val
+    if "auto_consolidate" in body:
+        policy.auto_consolidate = bool(body["auto_consolidate"])
+    if "consolidation_hour_utc" in body:
+        val = int(body["consolidation_hour_utc"])
+        if not 0 <= val <= 23:
+            raise HTTPException(status_code=400, detail="consolidation_hour_utc must be between 0 and 23")
+        policy.consolidation_hour_utc = val
+    if "description" in body:
+        policy.description = str(body["description"])[:500]
+
+    await db.commit()
+    return JSONResponse(content={
+        "namespace": policy.namespace,
+        "decay_rate": policy.decay_rate,
+        "retention_days": policy.retention_days,
+        "auto_consolidate": policy.auto_consolidate,
+        "consolidation_hour_utc": policy.consolidation_hour_utc,
+        "description": policy.description,
+        "updated": True,
+    })

@@ -993,6 +993,11 @@ def _memory_to_dict(memory: Memory) -> dict:
         "tier": memory.tier,
         "visibility": memory.visibility,
         "org_id": str(memory.user_id),
+        # KMV-S13.4: Consolidation fields for dashboard visibility and weighted synthesis
+        "consolidation_status": getattr(memory, "consolidation_status", "pending"),
+        "consolidation_weight": getattr(memory, "consolidation_weight", 1.0),
+        "cognition_entity_id": getattr(memory, "cognition_entity_id", None),
+        "epoch_date": getattr(memory, "epoch_date", None),
     }
 
 
@@ -1000,15 +1005,29 @@ async def _list_namespace_active_memories(
     user_id: uuid.UUID,
     namespace: str,
     db: AsyncSession,
+    *,
+    include_archived: bool = False,
 ) -> list[Memory]:
-    """Return every active memory in a namespace for a user (no pagination)."""
+    """Return active memories in a namespace for a user (no pagination).
+
+    KMV-S13.4: By default, excludes archived memories (consolidation_status='archived').
+    L1/L2/L3 reads use include_archived=False (short-term working memory view).
+    L3.1 consolidated reads use include_archived=True for reconciliation with Cognition OS.
+    """
+    where_clauses = [
+        Memory.user_id == user_id,
+        Memory.namespace == namespace,
+        Memory.invalid_at == None,
+    ]
+    if not include_archived:
+        # KMV-S13.4: Exclude archived memories from default short-term reads
+        # Also exclude memories currently being consolidated (immutability signal)
+        where_clauses.append(
+            Memory.consolidation_status.notin_(["archived", "consolidating"])
+        )
     result = await db.execute(
         select(Memory)
-        .where(
-            Memory.user_id == user_id,
-            Memory.namespace == namespace,
-            Memory.invalid_at == None,
-        )
+        .where(*where_clauses)
         .order_by(Memory.created_at)
     )
     return list(result.scalars().all())
@@ -1069,8 +1088,8 @@ async def get_namespace_compressed(
 
     Story: KMV-COMPRESS-01 / S9N-3050
     """
-    if mode not in {"raw", "aaak", "concept"}:
-        raise ValueError(f"mode must be raw|aaak|concept, got {mode!r}")
+    if mode not in {"raw", "aaak", "concept", "consolidated", "cognition"}:
+        raise ValueError(f"mode must be raw|aaak|concept|consolidated|cognition, got {mode!r}")
     if merge_mode not in {"current", "aggregate"}:
         raise ValueError(f"merge_mode must be current|aggregate, got {merge_mode!r}")
 
@@ -1094,7 +1113,11 @@ async def get_namespace_compressed(
     from memory_vault.compression.concept import synthesize_namespace_local
     from memory_vault.compression.llm_client import CoreAIBackendClient
 
-    memories = await _list_namespace_active_memories(user_id, namespace, db)
+    # KMV-S13.4: consolidated and cognition modes include archived memories for reconciliation
+    include_archived = mode in {"consolidated", "cognition"}
+    memories = await _list_namespace_active_memories(
+        user_id, namespace, db, include_archived=include_archived
+    )
     memory_ids = [str(m.memory_id) for m in memories]
     memory_dicts = [_memory_to_dict(m) for m in memories]
 
@@ -1125,7 +1148,7 @@ async def get_namespace_compressed(
             "content": encoded,
             "source": "local",
         }
-    else:  # concept
+    elif mode in {"concept", "consolidated"}:
         # Build a tiny adapter so the compression module can talk to SQLAlchemy
         class _DBAdapter:
             def __init__(self, mems: list[dict]) -> None:
@@ -1137,13 +1160,20 @@ async def get_namespace_compressed(
 
             async def find_similar(self, *, content, org_id, limit=20):
                 # Cheap content-equality fallback when no real backend is wired.
-                # Concept dedup falls through and we treat each memory as its own group.
                 return []
 
             async def get_related(self, *, episode_id, relation_type, limit=10):
                 return []
 
-        adapter = _DBAdapter(memory_dicts)
+        # KMV-S13.4: Pass consolidation_weight to synthesis so newer memories
+        # have stronger influence on concept generation.
+        # Archived memories (included in 'consolidated' mode) are passed with
+        # their decayed weight so they contribute proportionally less.
+        weighted_dicts = [
+            {**m, "weight": m.get("consolidation_weight", 1.0)}
+            for m in memory_dicts
+        ]
+        adapter = _DBAdapter(weighted_dicts)
         client = CoreAIBackendClient()
         synthesis = await synthesize_namespace_local(
             adapter, llm_client=client,
@@ -1154,13 +1184,16 @@ async def get_namespace_compressed(
         synthesis["concepts"] = await round_trip_concepts(
             None, synthesis["concepts"], namespace=namespace,
         )
+        is_consolidated = mode == "consolidated"
         payload = {
-            "mode": "concept",
+            "mode": mode,
             "merge_mode": merge_mode,
             "namespace": namespace,
             "source_count": synthesis.get("source_count", 0),
             "concepts": synthesis["concepts"],
             "source": synthesis.get("source", "local"),
+            # KMV-S13.4: Indicate whether archived memories were included in synthesis
+            "includes_archived": is_consolidated,
         }
 
     cache.put(str(user_id), namespace, mode, merge_mode, memory_ids, payload)
