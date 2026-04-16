@@ -26,6 +26,7 @@ import { formatRelativeTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { MemoryResponse } from '@/api/types'
 import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check } from 'lucide-react'
+import { ConsolidationPanel } from '@/components/memories/ConsolidationPanel'
 
 const PAGE_SIZE = 50
 
@@ -364,6 +365,13 @@ export function MemoryExplorerPage() {
           </div>
         )}
       </div>
+
+      {/* Consolidation panel — KMV-E14: shown when a namespace is selected */}
+      {namespace && (
+        <div className="mt-4">
+          <ConsolidationPanel namespace={namespace} />
+        </div>
+      )}
 
       {/* Delete confirmation dialog — KMV-QA-013 */}
       <ConfirmDialog
