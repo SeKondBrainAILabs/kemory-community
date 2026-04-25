@@ -38,7 +38,7 @@ from difflib import SequenceMatcher
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
@@ -48,7 +48,21 @@ logger = logging.getLogger(__name__)
 
 
 AUTO_REDIRECT_THRESHOLD = 0.90
-SUGGEST_THRESHOLD = 0.60
+# SUGGEST_THRESHOLD calibration:
+#   • 0.60 (original) false-positives on `alice:private` vs `alice:workspace`
+#     (0.64) — distinct buckets, not a typo.
+#   • 0.75 still false-positives on long shared-prefix names like
+#     `lme_bench_mr-002` vs `lme_bench_ie-001` (0.80) — both names share
+#     `lme_bench_` so the character-overlap ratio runs hot.
+#   • 0.85 lets shared-prefix sibling namespaces through while still
+#     catching the genuine typos we care about:
+#       - `alice:privte`  vs `alice:private`  → 0.96
+#       - `user_prefs`    vs `userprefs`      → 0.95
+#       - `lme_bench_001` vs `lme_bench_002`  → 0.93
+#     If a real typo dips into 0.75–0.85 it's recoverable: the user
+#     creates a sibling namespace; the matcher will REUSE it on the next
+#     write, and the namespace dashboard surfaces siblings for manual merge.
+SUGGEST_THRESHOLD = 0.85
 
 
 class ResolutionAction(str, Enum):
@@ -123,9 +137,20 @@ async def _existing_namespaces(
         )
     ).all()
 
+    # Scope policy lookup to this user. NamespacePolicy.created_by is
+    # nullable for legacy rows seeded before the policy was per-user — those
+    # are treated as global/shared (anyone can see them as suggestion
+    # candidates). Without this filter, user A's matcher would surface
+    # user B's namespaces in the suggestion list AND raise spurious 409s
+    # on names like "alice:private" because a different user's
+    # "alice:workspace" scored 0.75 fuzzy.
     pol_rows = (
         await db.execute(
             select(NamespacePolicy.namespace, NamespacePolicy.description)
+            .where(or_(
+                NamespacePolicy.created_by == user_id,
+                NamespacePolicy.created_by.is_(None),
+            ))
         )
     ).all()
 
@@ -161,7 +186,28 @@ def _best_score(
                 semantic = _cosine(req_vec, ex_vec)
             except Exception:
                 semantic = 0.0
-        scored.append(NamespaceCandidate(existing_ns, max(fuzzy, semantic)))
+        # Decouple fuzzy and semantic signals.
+        #
+        # Fuzzy ratio is a typo detector — it reliably catches
+        # `user_prefs` vs `userprefs` style collisions and bottoms out at
+        # ~0.3 for unrelated names. So we trust it across the full 0.75–1.0
+        # range (above SUGGEST_THRESHOLD).
+        #
+        # Semantic cosine on a generic sentence-transformers embedding has a
+        # high noise floor for short namespace strings — any two short
+        # tokens easily land at 0.7–0.85 even when conceptually unrelated
+        # (`lme_bench_mr-002` vs `lme_bench_ie-001` ≈ 0.86, `shared` vs
+        # `alice:private` ≈ 0.64). At those middle scores semantic is
+        # noise, not signal. We therefore only let semantic *raise* the
+        # final score when it's strong enough to AUTO_REDIRECT
+        # (≥ AUTO_REDIRECT_THRESHOLD). That way semantic can rescue real
+        # conceptual aliases (`user:preferences` vs `user_prefs` ≈ 0.93)
+        # but cannot push a fuzzy mismatch into the SUGGEST 409 band.
+        if semantic >= AUTO_REDIRECT_THRESHOLD:
+            score = max(fuzzy, semantic)
+        else:
+            score = fuzzy
+        scored.append(NamespaceCandidate(existing_ns, score))
 
     scored.sort(key=lambda c: c.similarity, reverse=True)
     return scored
