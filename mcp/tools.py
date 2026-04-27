@@ -398,6 +398,13 @@ _TENANT_SCOPE_HINT = (
     "cannot read or write outside your org, and (by default) you cannot "
     "see other users' private memories within your org. Use the "
     "visibility option (private/team/org) to share with teammates."
+    "\n\nWhat to store (good vs bad examples):"
+    "\n  GOOD: 'User prefers TypeScript with strict mode and pnpm.'"
+    "\n  GOOD: 'Project uses Postgres 16, FalkorDB 1.4, deploy via Tilt.'"
+    "\n  GOOD: 'User asked to refactor to async; in progress on branch X.'"
+    "\n  BAD : 'The user said hello.'  (transient — not worth storing)"
+    "\n  BAD : 'API key abc123.'       (NEVER store credentials)"
+    "\n  BAD : 'The current time is 14:32.'  (non-durable — will go stale)"
 )
 
 for _tool in TOOL_DEFINITIONS:
