@@ -232,15 +232,13 @@ async def rotate_agent_key(
         raise ValueError("Agent not found")
 
     plaintext_key, hashed_key, key_prefix = generate_api_key()
-    old_prefix = agent.api_key_prefix
     agent.api_key_hash = hashed_key
     agent.api_key_prefix = key_prefix
     await db.flush()
 
-    # Drop any cached AuthContext keyed on the old prefix so the rotation
-    # takes effect on the next request rather than after the cache TTL.
-    if old_prefix:
-        clear_auth_cache_for_agent(old_prefix)
+    # Drop only this agent's cached AuthContexts (O(k) by agent_id, not O(N)
+    # over the whole cache — see auth_service.clear_auth_cache_for_agent).
+    clear_auth_cache_for_agent(agent.agent_id)
 
     return AgentRegistrationResponse(
         agent_id=str(agent.agent_id),

@@ -54,27 +54,33 @@ def upgrade() -> None:
         )
 
     # Align teams.org_id to String(64). Was GUID() (UUID) from migration
-    # 004; new code expects a string-shaped tenant id. USING clause casts
-    # any UUID values to text in-place.
-    op.alter_column(
-        "teams",
-        "org_id",
-        existing_type=sa.dialects.postgresql.UUID(as_uuid=True),
-        type_=sa.String(length=64),
-        existing_nullable=False,
-        postgresql_using="org_id::text",
-    )
+    # 004; new code expects a string-shaped tenant id. The USING clause is
+    # required on Postgres but unsupported on SQLite — guard by dialect.
+    # SQLite stores GUID() as TEXT under the GUID TypeDecorator, so the
+    # column is already string-shaped at the DB level and an ALTER would
+    # be a no-op (also: SQLite local mode has no production data).
+    if bind.dialect.name == "postgresql":
+        op.alter_column(
+            "teams",
+            "org_id",
+            existing_type=sa.dialects.postgresql.UUID(as_uuid=True),
+            type_=sa.String(length=64),
+            existing_nullable=False,
+            postgresql_using="org_id::text",
+        )
 
 
 def downgrade() -> None:
-    op.alter_column(
-        "teams",
-        "org_id",
-        existing_type=sa.String(length=64),
-        type_=sa.dialects.postgresql.UUID(as_uuid=True),
-        existing_nullable=False,
-        postgresql_using="org_id::uuid",
-    )
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.alter_column(
+            "teams",
+            "org_id",
+            existing_type=sa.String(length=64),
+            type_=sa.dialects.postgresql.UUID(as_uuid=True),
+            existing_nullable=False,
+            postgresql_using="org_id::uuid",
+        )
     for table in _TABLES:
         op.alter_column(
             table,

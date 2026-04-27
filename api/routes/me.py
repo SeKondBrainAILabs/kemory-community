@@ -90,9 +90,16 @@ async def get_me(
         for (member, team) in rows
     ]
 
+    # Only Keycloak tokens carry an email. API-key / internal-JWT auth
+    # populates AuthContext.agent_name with the agent name, not an email
+    # — surfacing that as `email` would make the dashboard render
+    # gibberish for service-account callers. Leave empty and let the
+    # client decide whether to render or hide.
+    email = auth.agent_name if auth.auth_method == "keycloak" else ""
+
     payload = MeResponse(
         user_id=str(auth.user_id),
-        email=auth.agent_name or "",
+        email=email,
         org_id=scope.org_id,
         # Org name is not stored anywhere yet — best-effort: use org_id.
         # When an Org table lands (post-MVP), populate properly.

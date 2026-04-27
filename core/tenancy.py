@@ -298,7 +298,27 @@ def register_tenant_filter(session_class) -> None:
         # Allow caller-controlled bypass for admin / health paths.
         if _bypass_filter.get():
             return
-        for cls in tenant_scoped_models():
+
+        # Only attach criteria for models actually referenced by this
+        # statement. Walking the full tenant_scoped_models() set on every
+        # query inflates compile cost linearly with the number of
+        # tenant-scoped models — and was wasteful for queries against
+        # non-tenant tables (Waitlist, ConsentRequest, ReferralEvent).
+        try:
+            referenced = {
+                desc.get("entity") or desc.get("type")
+                for desc in orm_execute_state.statement.column_descriptions
+                if desc.get("entity") or desc.get("type")
+            }
+        except (AttributeError, TypeError):
+            # Statements without column_descriptions (e.g. raw text) get
+            # the full apply — defensive default.
+            referenced = None
+
+        scoped = list(tenant_scoped_models())
+        for cls in scoped:
+            if referenced is not None and cls not in referenced:
+                continue
             orm_execute_state.statement = orm_execute_state.statement.options(
                 with_loader_criteria(
                     cls,

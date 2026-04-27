@@ -37,6 +37,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Cache verified API keys for 5 minutes to avoid repeated bcrypt calls.
 # Key: SHA-256 of the plaintext API key → Value: (AuthContext, expiry_time)
 _auth_cache: dict[str, tuple["AuthContext", float]] = {}
+# Reverse index: agent_id (str) → set of cache keys for that agent.
+# Lets us invalidate one agent's entries on key rotation in O(1) without
+# walking the whole cache (the previous implementation wiped everything,
+# which caused a thundering herd of bcrypt verifications at scale).
+_auth_cache_by_agent: dict[str, set[str]] = {}
 _AUTH_CACHE_TTL = 300  # seconds
 
 
@@ -207,24 +212,28 @@ def _cache_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
-def clear_auth_cache_for_agent(prefix: str) -> None:
-    """Drop any AuthContext entries that resolved to this agent prefix.
+def clear_auth_cache_for_agent(agent_id: uuid.UUID | str) -> None:
+    """Drop any AuthContext entries belonging to a specific agent.
 
-    Called on key rotation (WS-5) so the next request sees the new key
-    state rather than waiting for cache TTL to expire. The cache is keyed
-    by sha256(plaintext_key) so we walk it and drop entries whose context
-    matches the old prefix.
+    Called on key rotation (WS-5). The reverse-index map ``_auth_cache_by_agent``
+    tracks every cache key associated with each agent_id, so this is O(k)
+    in the rotation cost rather than O(N) in the cache size — preventing
+    the thundering-herd of bcrypt verifications a full cache wipe would
+    cause at scale.
     """
-    if not prefix:
+    if not agent_id:
         return
-    drops = []
-    for ck, (ctx, _expiry) in list(_auth_cache.items()):
-        # AuthContext doesn't carry the prefix; cheapest correct fix is
-        # to drop everything on rotation. Cache size is bounded by active
-        # API keys (small), so this is fine in practice.
-        drops.append(ck)
-    for ck in drops:
+    aid = str(agent_id)
+    keys = _auth_cache_by_agent.pop(aid, set())
+    for ck in keys:
         _auth_cache.pop(ck, None)
+
+
+def _cache_auth_context(cache_key: str, ctx: "AuthContext", expiry: float) -> None:
+    """Store an AuthContext and update the reverse index."""
+    _auth_cache[cache_key] = (ctx, expiry)
+    if ctx.agent_id is not None:
+        _auth_cache_by_agent.setdefault(str(ctx.agent_id), set()).add(cache_key)
 
 
 async def authenticate_api_key(
@@ -253,7 +262,16 @@ async def authenticate_api_key(
         ctx, expiry = cached
         if time.monotonic() < expiry:
             return ctx
-        del _auth_cache[ck]
+        # Expired — drop and clean up the reverse-index entry so it
+        # doesn't pile up unbounded under churn (heavy rotation, leaked
+        # key spam, etc.).
+        _auth_cache.pop(ck, None)
+        if ctx.agent_id is not None:
+            agent_keys = _auth_cache_by_agent.get(str(ctx.agent_id))
+            if agent_keys is not None:
+                agent_keys.discard(ck)
+                if not agent_keys:
+                    _auth_cache_by_agent.pop(str(ctx.agent_id), None)
 
     # 2. Try prefix-based O(1) lookup
     prefix = _compute_key_prefix(api_key)
@@ -267,7 +285,7 @@ async def authenticate_api_key(
 
     if agent and verify_api_key(api_key, agent.api_key_hash):
         ctx = _build_auth_context(agent)
-        _auth_cache[ck] = (ctx, time.monotonic() + _AUTH_CACHE_TTL)
+        _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
         agent.last_active_at = datetime.now(timezone.utc)
         await db.flush()
         return ctx
@@ -289,7 +307,7 @@ async def authenticate_api_key(
                 await db.flush()
 
                 ctx = _build_auth_context(agent)
-                _auth_cache[ck] = (ctx, time.monotonic() + _AUTH_CACHE_TTL)
+                _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
                 return ctx
 
     return None
