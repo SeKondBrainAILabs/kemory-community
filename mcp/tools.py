@@ -387,6 +387,25 @@ TOOL_DEFINITIONS: list[MCPToolDefinition] = [
 ]
 
 
+# ─── WS-6: scope hint for LLMs ────────────────────────────────────
+# Appended to every tool description at load time so the calling LLM
+# understands the multi-tenant boundary without having to re-train on
+# product copy. Kept short — long preambles get ignored by smaller models.
+# This runs once at import; mutating after the list is built keeps the
+# diff small and avoids touching 16 separate description strings.
+_TENANT_SCOPE_HINT = (
+    "\n\nScope: memories are isolated per-organisation and per-user. You "
+    "cannot read or write outside your org, and (by default) you cannot "
+    "see other users' private memories within your org. Use the "
+    "visibility option (private/team/org) to share with teammates."
+)
+
+for _tool in TOOL_DEFINITIONS:
+    if _TENANT_SCOPE_HINT not in _tool.description:
+        _tool.description = _tool.description.rstrip() + _TENANT_SCOPE_HINT
+del _tool
+
+
 # ─── Tool Handlers ────────────────────────────────────────────────
 
 async def handle_tool_call(

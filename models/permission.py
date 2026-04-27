@@ -38,6 +38,16 @@ class PermissionRule(Base):
         comment="ID of the user who owns this rule",
     )
 
+    # ── Multi-tenancy (WS-1 / WS-3) ───────────────────────────────
+    # Gatekeeper rules are scoped to the org of their owning user. WS-3's
+    # global SQLAlchemy filter prevents cross-org rule evaluation. Nullable
+    # for migration safety; revision 011 enforces NOT NULL.
+    org_id = Column(
+        String(64),
+        nullable=True,
+        comment="Tenant the rule belongs to (WS-3 enforcement).",
+    )
+
     agent_id = Column(
         GUID(),
         nullable=True,
@@ -105,6 +115,7 @@ class PermissionRule(Base):
         Index("idx_permission_rules_user_agent", "user_id", "agent_id"),
         Index("idx_permission_rules_scope", "user_id", "scope"),
         Index("idx_permission_rules_priority", "user_id", "priority"),
+        Index("idx_permission_rules_org_user", "org_id", "user_id"),
     )
 
     def __repr__(self):

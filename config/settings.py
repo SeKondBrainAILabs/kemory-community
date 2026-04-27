@@ -51,6 +51,21 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 15
 
+    # ─── Multi-tenancy (KEMORY_MULTI_TENANT_AUTH_PLAN.md) ────────
+    # Three-stage rollout:
+    #   "off"     — legacy single-tenant behaviour, no enforcement (default)
+    #   "shadow"  — log cross-org / claim-missing violations but allow request
+    #   "enforce" — reject cross-org with 404 and missing-claim with 401
+    # Default is "off" so this branch is shippable but inert until each
+    # follow-up workstream flips it on.
+    tenant_enforcement: str = "off"
+
+    # Keycloak claim name carrying the tenant identifier. Mapped from the
+    # user attribute via a Protocol Mapper (WS-2). The legacy tenant name
+    # used for backfilled rows; matches the migration sentinel in 009.
+    tenant_org_claim: str = "org_id"
+    tenant_legacy_sentinel: str = "legacy"
+
     # ─── Keycloak (RS256 for human users) ─────────────────────────
     keycloak_enabled: bool = False
     keycloak_url: str = "http://host.docker.internal:8888"

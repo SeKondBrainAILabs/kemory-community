@@ -42,6 +42,15 @@ class Memory(Base):
         GUID(), nullable=False, index=True,
         comment="Owner user ID (maps to org_id in core library)",
     )
+    # ── Multi-tenancy (WS-1) ──────────────────────────────────────
+    # Nullable in revision 009; will be NOT NULL in revision 011 once
+    # WS-2 (Keycloak claim mapper) populates it for every write. Until
+    # then, legacy rows carry org_id='legacy' and writes default to the
+    # caller's AuthContext.org_id.
+    org_id = Column(
+        String(64), nullable=True,
+        comment="Tenant identifier (multi-tenant foundation, WS-1).",
+    )
 
     # ── Content ───────────────────────────────────────────────────
     namespace = Column(
@@ -220,6 +229,7 @@ class Memory(Base):
         Index("idx_memories_decay", "decay_score"),
         Index("idx_memories_consolidation", "consolidation_status"),
         Index("idx_memories_epoch", "namespace", "epoch_date"),
+        Index("idx_memories_org_user", "org_id", "user_id"),
         Index(
             "uq_memories_user_ns_hash",
             "user_id", "namespace", "content_hash",

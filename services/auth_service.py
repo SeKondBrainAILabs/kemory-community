@@ -41,12 +41,38 @@ _AUTH_CACHE_TTL = 300  # seconds
 
 
 class AuthContext(BaseModel):
-    """Represents the authenticated identity for a request."""
+    """Represents the authenticated identity for a request.
+
+    Multi-tenant fields (org_id, team_ids, roles) are populated by the
+    auth middleware (see backend/core/auth.py and backend/core/tenancy.py).
+    They default to empty values so existing single-tenant code paths keep
+    working while TENANT_ENFORCEMENT='off'.
+    """
     user_id: uuid.UUID
     agent_id: uuid.UUID | None = None
     agent_name: str = ""
     scopes: list[str] = []
     auth_method: str  # "jwt", "api_key", or "keycloak"
+
+    # ── Multi-tenancy (WS-2) ──────────────────────────────────────
+    # Source priority:
+    #   keycloak path → token claim (settings.tenant_org_claim)
+    #   api_key path  → AgentRegistry.org_id (WS-5, never from headers)
+    #   jwt    path   → token claim "org_id" (HS256 internal agents)
+    # When TENANT_ENFORCEMENT='enforce', tokens missing this value cause
+    # 401 missing_org_claim. While 'off' or 'shadow', empty string is OK.
+    org_id: str = ""
+    # Resolved server-side from TeamMember rows by team_resolver (WS-4).
+    # Not present on token; recomputed per-request with a 60s cache.
+    team_ids: list[str] = []
+    # Mirror of `scopes` but specifically the role-shaped subset (e.g.
+    # "org_admin", "team_owner"). Kept separate so role checks don't have
+    # to know about scope-string conventions.
+    roles: list[str] = []
+    # When set, the request was made by an MCP bridge process holding an
+    # API key for a different user but acting on behalf of this user (WS-6).
+    # Audit emits both identities so accountability is preserved.
+    acting_user_id: uuid.UUID | None = None
 
 
 class TokenPayload(BaseModel):
@@ -68,6 +94,7 @@ def create_access_token(
     agent_name: str,
     scopes: list[str],
     expires_delta: Optional[timedelta] = None,
+    org_id: Optional[str] = None,
 ) -> str:
     """
     Create a signed JWT access token for an authenticated agent.
@@ -78,6 +105,10 @@ def create_access_token(
         agent_name: Human-readable agent name
         scopes: List of granted scope strings
         expires_delta: Custom expiry (default: settings.jwt_expiry_minutes)
+        org_id: Tenant identifier (WS-2). When None, falls back to the
+            migration sentinel — callers that have an org_id in scope
+            (e.g. /v1/auth/token issuing for an agent) should always pass
+            it explicitly so the resulting AuthContext is enforceable.
 
     Returns:
         Encoded JWT string
@@ -91,6 +122,7 @@ def create_access_token(
         "user_id": str(user_id),
         "agent_name": agent_name,
         "scopes": scopes,
+        "org_id": org_id or settings.tenant_legacy_sentinel,
         "exp": now + expires_delta,
         "iat": now,
         "jti": str(uuid.uuid4()),
@@ -122,6 +154,10 @@ def decode_access_token(token: str) -> Optional[AuthContext]:
             agent_name=payload.get("agent_name", ""),
             scopes=scopes,
             auth_method="jwt",
+            # HS256 internal tokens carry org_id when minted post-WS-2;
+            # legacy tokens fall back to the sentinel so they keep working
+            # until natural rotation (15-minute expiry).
+            org_id=payload.get("org_id") or settings.tenant_legacy_sentinel,
         )
     except (JWTError, KeyError, ValueError):
         return None
@@ -240,7 +276,12 @@ async def authenticate_api_key(
 
 
 def _build_auth_context(agent: AgentRegistry) -> AuthContext:
-    """Extract AuthContext from an AgentRegistry record."""
+    """Extract AuthContext from an AgentRegistry record.
+
+    WS-5 invariant: org_id is read from the agent row, never from request
+    headers. A leaked key cannot escalate by spoofing X-Org-Id because we
+    don't read that header anywhere on the api_key path.
+    """
     scopes = []
     if agent.declared_scopes:
         for scope_obj in agent.declared_scopes:
@@ -249,10 +290,15 @@ def _build_auth_context(agent: AgentRegistry) -> AuthContext:
             elif isinstance(scope_obj, str):
                 scopes.append(scope_obj)
 
+    # Pre-WS-5 keys have NULL org_id — fall back to the migration sentinel
+    # so they keep working until ops reassigns them in P4 rollout phase.
+    org_id = (agent.org_id or settings.tenant_legacy_sentinel)
+
     return AuthContext(
         user_id=agent.user_id,
         agent_id=agent.agent_id,
         agent_name=agent.agent_name,
         scopes=scopes,
         auth_method="api_key",
+        org_id=org_id,
     )

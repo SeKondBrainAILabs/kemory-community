@@ -42,6 +42,18 @@ class AgentRegistry(Base):
         comment="ID of the user who registered this agent",
     )
 
+    # ── Multi-tenancy (WS-1 / WS-5) ──────────────────────────────
+    # Bound to caller's org at /v1/agents creation time (WS-5). A leaked
+    # key in org A cannot read org B because authenticate_api_key() reads
+    # this column and seeds AuthContext.org_id from it — never from request
+    # headers. Nullable for migration safety; revision 011 enforces NOT NULL.
+    org_id = Column(
+        String(64),
+        nullable=True,
+        index=True,
+        comment="Tenant the key is bound to (WS-5). Read by authenticate_api_key().",
+    )
+
     # Agent metadata
     agent_name = Column(
         String(100),
@@ -114,6 +126,7 @@ class AgentRegistry(Base):
         Index("idx_agent_registry_user_id", "user_id"),
         Index("idx_agent_registry_status", "user_id", "status"),
         Index("idx_agent_registry_key_prefix", "api_key_prefix"),
+        Index("idx_agent_registry_org_user", "org_id", "user_id"),
     )
 
     def __repr__(self):

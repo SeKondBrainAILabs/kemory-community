@@ -36,7 +36,15 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def _try_keycloak(token: str) -> Optional[AuthContext]:
-    """Attempt Keycloak RS256 validation. Returns None if Keycloak is disabled or unreachable."""
+    """Attempt Keycloak RS256 validation. Returns None if Keycloak is disabled or unreachable.
+
+    WS-2: extracts the tenant claim (settings.tenant_org_claim, default
+    "org_id") into AuthContext.org_id. Behaviour when the claim is missing
+    is gated on settings.tenant_enforcement:
+      * "off"     — accept token, set org_id = legacy sentinel (current default)
+      * "shadow"  — accept token, log a violation, set org_id = sentinel
+      * "enforce" — raise 401 missing_org_claim (caller must catch HTTPException)
+    """
     if not settings.keycloak_enabled:
         return None
 
@@ -48,16 +56,52 @@ async def _try_keycloak(token: str) -> Optional[AuthContext]:
             # Keycloak unreachable — fall through to HS256
             return None
 
-        # Extract realm roles for scopes
+        # Extract realm roles for scopes (legacy field, kept for compat with
+        # is_admin / require_admin etc.) plus client-specific roles for the
+        # WS-2 roles list (org_admin, team_owner, ...).
         realm_access = payload.get("realm_access", {})
-        roles = realm_access.get("roles", [])
+        scopes = realm_access.get("roles", [])
+
+        client_id = settings.keycloak_client_id
+        resource_access = payload.get("resource_access", {})
+        client_roles = resource_access.get(client_id, {}).get("roles", [])
+        # Merge: any role from realm_access OR resource_access.kemory-api
+        # is fair game for role-checks. Keep both lists addressable.
+        roles = sorted({*scopes, *client_roles})
+
+        # WS-2: tenant claim extraction.
+        org_claim = payload.get(settings.tenant_org_claim)
+        if not org_claim:
+            mode = settings.tenant_enforcement
+            if mode == "enforce":
+                logger.warning(
+                    "keycloak.missing_org_claim.reject",
+                    sub=payload.get("sub"),
+                    azp=payload.get("azp"),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="missing_org_claim",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if mode == "shadow":
+                logger.warning(
+                    "kemory.tenancy.violation",
+                    kind="missing_org_claim",
+                    sub=payload.get("sub"),
+                    azp=payload.get("azp"),
+                    mode=mode,
+                )
+            org_claim = settings.tenant_legacy_sentinel
 
         return AuthContext(
             user_id=uuid.UUID(payload["sub"]),
             agent_id=None,
             agent_name=payload.get("preferred_username", payload.get("email", "")),
-            scopes=roles,
+            scopes=scopes,
+            roles=roles,
             auth_method="keycloak",
+            org_id=org_claim,
         )
     except JWTError:
         # Token looked like a Keycloak token (RS256) but was invalid
@@ -67,6 +111,7 @@ async def _try_keycloak(token: str) -> Optional[AuthContext]:
 async def get_auth_context(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_acting_user_id: Optional[str] = Header(None, alias="X-Acting-User-Id"),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[AuthContext]:
     """
@@ -75,27 +120,44 @@ async def get_auth_context(
     Checks in order:
     1. Bearer token → Keycloak RS256 → internal HS256
     2. X-API-Key header
+
+    WS-6: X-Acting-User-Id is honoured only on the API-key path (shared MCP
+    bridge serving multiple users). It is informational in this foundation
+    branch — the field is recorded on AuthContext.acting_user_id so audit
+    can log both identities, but it does NOT change the effective user_id.
+    Full delegation (switching user_id and team_ids to the target) lands in
+    a follow-up once the user-lookup contract for cross-org validation is
+    settled. Header on the Keycloak / HS256 paths is silently ignored.
     """
+    auth: Optional[AuthContext] = None
     if credentials and credentials.credentials:
         token = credentials.credentials
 
         # Try Keycloak RS256 first (if enabled)
         auth = await _try_keycloak(token)
-        if auth:
-            return auth
-
-        # Fall back to internal HS256 JWT
-        auth = decode_access_token(token)
-        if auth:
-            return auth
+        if auth is None:
+            # Fall back to internal HS256 JWT
+            auth = decode_access_token(token)
 
     # Try API key
-    if x_api_key:
+    if auth is None and x_api_key:
         auth = await authenticate_api_key(x_api_key, db)
-        if auth:
-            return auth
 
-    return None
+    if auth is None:
+        return None
+
+    # WS-6: capture acting-as on api_key path only.
+    if x_acting_user_id and auth.auth_method == "api_key":
+        try:
+            auth = auth.model_copy(update={"acting_user_id": uuid.UUID(x_acting_user_id)})
+        except ValueError:
+            logger.warning(
+                "auth.invalid_acting_user_id",
+                value=x_acting_user_id,
+                key_user_id=str(auth.user_id),
+            )
+
+    return auth
 
 
 async def require_auth(
@@ -171,7 +233,13 @@ async def require_user(
     user_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
 ) -> AuthContext:
-    """Require that the authenticated identity matches the specified user."""
+    """Require that the authenticated identity matches the specified user.
+
+    WS-3: when TENANT_ENFORCEMENT='enforce' the cross-org check is layered
+    on top by the global SQLAlchemy filter (queries filter by org_id and
+    naturally return 404). At the request level this function still does
+    the user-equality check so the legacy 403 stays consistent.
+    """
     if auth.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

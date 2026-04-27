@@ -46,6 +46,21 @@ class AuditLog(Base):
         comment="ID of the agent that made the request",
     )
 
+    # ── Multi-tenancy (WS-1 / WS-8) ───────────────────────────────
+    # Populated from AuthContext.org_id at audit emission time. Required
+    # for per-tenant audit exports (GDPR/SOC2) and the per-org observability
+    # dashboards (WS-8). Nullable for migration safety; revision 011 enforces.
+    org_id = Column(
+        String(64),
+        nullable=True,
+        comment="Tenant context of the audited action (WS-8).",
+    )
+    team_id = Column(
+        String(64),
+        nullable=True,
+        comment="Team context, when the action was team-scoped (WS-8).",
+    )
+
     # Action details
     action = Column(
         String(50),
@@ -113,6 +128,7 @@ class AuditLog(Base):
         Index("idx_audit_log_user_time", "user_id", "created_at"),
         Index("idx_audit_log_agent_time", "agent_id", "created_at"),
         Index("idx_audit_log_action", "action", "outcome"),
+        Index("idx_audit_log_org_time", "org_id", "created_at"),
     )
 
     def __repr__(self):
