@@ -238,46 +238,42 @@ def tenant_scoped_models() -> Iterable[Type[Base]]:
 
 
 def _build_tenant_predicate(model_cls):
-    """Return a callable that produces the filter predicate for ``model_cls``.
+    """Build the criterion expression for ``model_cls`` using the current
+    request scope from ContextVars.
 
-    The callable is invoked by SQLAlchemy each time a SELECT against
-    ``model_cls`` is compiled in a request that has an active org context.
+    Reads the ContextVars at call time and returns a fully-bound SQL
+    expression. We do NOT return a callable / lambda — SQLAlchemy's
+    with_loader_criteria lambda-extraction layer rejects ContextVar
+    lookups in lambda bodies (it tries to extract bound values without
+    invoking the function, which fails on contextvar reads). By building
+    the expression eagerly here and passing the resulting SQL element to
+    with_loader_criteria, we sidestep the lambda system entirely.
     """
     name = model_cls.__name__
+    org_id = _current_org_id.get()
+    user_id = _current_user_id.get()
+    team_ids = _current_team_ids.get()
+
+    if not org_id:
+        # No active scope — emit an always-false predicate so a forgotten
+        # request context can't accidentally leak rows. Background tasks
+        # / migrations that need cross-tenant access must use
+        # ``with bypass_tenant_filter():``.
+        return model_cls.org_id == "__no_active_scope__"
 
     if name == "Memory":
-        # Memory has visibility tiers — apply org_id AND visibility predicate.
-        # Imported lazily to avoid module-load cycles.
-        def predicate(cls):  # type: ignore[no-untyped-def]
-            org_id = _current_org_id.get()
-            user_id = _current_user_id.get()
-            team_ids = _current_team_ids.get()
-            if not org_id:
-                # No active scope — emit an always-false predicate so a
-                # forgotten request context can't accidentally leak rows.
-                # Background tasks / migrations that need cross-tenant
-                # access must use ``with bypass_tenant_filter():``.
-                return cls.org_id == "__no_active_scope__"
-            visibility_clauses = [
-                cls.user_id == user_id,
-                cls.visibility == "org-public",
-            ]
-            if team_ids:
-                visibility_clauses.append(
-                    (cls.visibility == "team") & cls.team_id.in_(team_ids)
-                )
-            return (cls.org_id == org_id) & or_(*visibility_clauses)
-
-        return predicate
+        visibility_clauses = [
+            model_cls.user_id == user_id,
+            model_cls.visibility == "org-public",
+        ]
+        if team_ids:
+            visibility_clauses.append(
+                (model_cls.visibility == "team") & model_cls.team_id.in_(team_ids)
+            )
+        return (model_cls.org_id == org_id) & or_(*visibility_clauses)
 
     # All other tenant-scoped models: simple org_id equality.
-    def simple_predicate(cls):  # type: ignore[no-untyped-def]
-        org_id = _current_org_id.get()
-        if not org_id:
-            return cls.org_id == "__no_active_scope__"
-        return cls.org_id == org_id
-
-    return simple_predicate
+    return model_cls.org_id == org_id
 
 
 def register_tenant_filter(session_class) -> None:
@@ -319,6 +315,11 @@ def register_tenant_filter(session_class) -> None:
         for cls in scoped:
             if referenced is not None and cls not in referenced:
                 continue
+            # Build the criterion eagerly here using the current request
+            # scope. We pass the resulting SQL expression directly to
+            # with_loader_criteria — no callable / lambda wrapper. This
+            # sidesteps SQLAlchemy's lambda-extraction layer which would
+            # reject ContextVar lookups inside a closure body.
             orm_execute_state.statement = orm_execute_state.statement.options(
                 with_loader_criteria(
                     cls,
