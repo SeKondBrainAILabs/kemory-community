@@ -130,6 +130,8 @@ async def log_audit_event(
     namespace: Optional[str] = None,
     details: Optional[dict] = None,
     ip_address: Optional[str] = None,
+    org_id: Optional[str] = None,
+    team_id: Optional[str] = None,
 ) -> AuditEntry:
     """
     Log an audit event to the append-only audit log.
@@ -137,8 +139,24 @@ async def log_audit_event(
     This is the primary entry point for all audit logging.
     Every memory operation, permission check, and agent action
     should be logged through this function.
+
+    org_id / team_id are auto-resolved from the active TenantScope when
+    not passed explicitly — so existing call-sites get tenant-aware
+    audits "for free" without a code change. Compliance / GDPR exports
+    can then filter by org_id with one indexed query (idx_audit_log_org_time).
     """
     now = datetime.now(timezone.utc)
+
+    # Auto-thread tenant context. Falls back to an empty string for
+    # cross-tenant background tasks (the global filter bypass path) so
+    # we still record SOMETHING rather than crashing audit emission.
+    if org_id is None or team_id is None:
+        from backend.core.tenancy import current_org_id, current_team_ids
+        if org_id is None:
+            org_id = current_org_id() or None
+        if team_id is None:
+            tids = current_team_ids()
+            team_id = tids[0] if len(tids) == 1 else None
 
     # Get the previous hash for chain continuity
     result = await db.execute(
@@ -171,6 +189,8 @@ async def log_audit_event(
         ip_address=ip_address,
         hash_chain=hash_chain,
         created_at=now,
+        org_id=org_id,
+        team_id=team_id,
     )
     db.add(audit)
     await db.flush()

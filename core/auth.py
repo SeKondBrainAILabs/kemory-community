@@ -146,16 +146,54 @@ async def get_auth_context(
     if auth is None:
         return None
 
-    # WS-6: capture acting-as on api_key path only.
+    # WS-6: capture acting-as on api_key path only, and only when the
+    # target user is in the same org as the key. We confirm same-org by
+    # looking up an AgentRegistry row for that target user_id within
+    # auth.org_id — if none exists OR none in the same org, reject.
+    # This is conservative: a user without any agent rows can't be
+    # acted-as. That is acceptable for v1 because the only legitimate
+    # use case is shared MCP bridges talking to kemory, which inherently
+    # requires the target user to have at least one registered agent.
     if x_acting_user_id and auth.auth_method == "api_key":
         try:
-            auth = auth.model_copy(update={"acting_user_id": uuid.UUID(x_acting_user_id)})
+            target_uuid = uuid.UUID(x_acting_user_id)
         except ValueError:
             logger.warning(
                 "auth.invalid_acting_user_id",
                 value=x_acting_user_id,
                 key_user_id=str(auth.user_id),
             )
+            return auth
+
+        if not auth.org_id:
+            logger.warning("auth.acting_as_rejected.no_caller_org", key_user_id=str(auth.user_id))
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="acting-as requires the caller key to have an org",
+            )
+
+        # Cross-org acting-as is the attack we are defending against.
+        from sqlalchemy import select as _select  # local — cycle avoid
+        from backend.models.agent import AgentRegistry as _AgentRegistry
+        result = await db.execute(
+            _select(_AgentRegistry.user_id)
+            .where(_AgentRegistry.user_id == target_uuid)
+            .where(_AgentRegistry.org_id == auth.org_id)
+            .limit(1)
+        )
+        if result.scalar_one_or_none() is None:
+            logger.warning(
+                "auth.acting_as_rejected.cross_org",
+                caller=str(auth.user_id),
+                target=x_acting_user_id,
+                org=auth.org_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="acting-as: target user is not in the caller's org",
+            )
+
+        auth = auth.model_copy(update={"acting_user_id": target_uuid})
 
     return auth
 

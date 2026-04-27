@@ -67,6 +67,17 @@ class Settings(BaseSettings):
     tenant_org_claim: str = "org_id"
     tenant_legacy_sentinel: str = "legacy"
 
+    # Per-tenant rate limits applied by tenant_rate_limit_middleware.
+    # Generous defaults — a popular product gets noisy fast and we don't
+    # want to throttle real customers. Override per-deployment via env.
+    tenant_rps_per_org: int = 200
+    tenant_rps_per_user: int = 50
+    tenant_rate_limit_window_seconds: int = 1
+
+    # Hard cap on agents per user. Prevents a single user from spamming
+    # the agent_registry table after they obtain a Keycloak token.
+    max_agents_per_user: int = 50
+
     # ─── Keycloak (RS256 for human users) ─────────────────────────
     keycloak_enabled: bool = False
     keycloak_url: str = "http://host.docker.internal:8888"

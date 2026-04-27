@@ -24,6 +24,7 @@ from backend.api.routes.waitlist import public_router as waitlist_router, admin_
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
 from backend.api.routes.me import router as me_router  # WS-11: identity
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
+from backend.core.tenant_rate_limit import tenant_rate_limit_middleware
 
 logger = structlog.get_logger(__name__)
 
@@ -82,6 +83,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Per-tenant rate limiting (WS-3 hardening). Mounted last in the user code
+# so it runs first on the inbound path — we want to reject 429s before
+# expensive auth/db work. The middleware reads the ContextVars set by
+# get_tenant_scope; unauthenticated routes pass through unchanged.
+app.middleware("http")(tenant_rate_limit_middleware)
 
 # ─── Routes ──────────────────────────────────────────────────────
 app.include_router(health_router)

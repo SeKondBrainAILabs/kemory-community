@@ -131,6 +131,24 @@ async def register_agent(
     if existing.scalar_one_or_none():
         raise ValueError(f"Agent '{request.agent_name}' already exists for this user")
 
+    # Hard cap on agents per user — prevents a noisy / malicious authed
+    # user from filling the agent_registry table. Default 50 (override
+    # via settings.max_agents_per_user); raises ValueError → 409 at
+    # the route layer, mapped from the existing duplicate-name path.
+    from backend.config.settings import settings as _settings
+    from sqlalchemy import func
+    count_result = await db.execute(
+        select(func.count()).select_from(AgentRegistry).where(
+            AgentRegistry.user_id == user_id,
+            AgentRegistry.status != "revoked",
+        )
+    )
+    if (count_result.scalar() or 0) >= _settings.max_agents_per_user:
+        raise ValueError(
+            f"Agent quota exhausted: max {_settings.max_agents_per_user} active agents per user. "
+            "Revoke unused agents with `kemory keys revoke <id>` before creating more."
+        )
+
     # Generate API key
     plaintext_key, hashed_key, key_prefix = generate_api_key()
 

@@ -34,7 +34,10 @@ from backend.core.tenancy import (
     bypass_tenant_filter,
 )
 from backend.models.team import Team, TeamMember
-from backend.services.team_resolver import invalidate as invalidate_team_cache
+from backend.services.team_resolver import (
+    invalidate as invalidate_team_cache,
+    invalidate_for_org as invalidate_team_cache_for_org,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -157,7 +160,7 @@ async def create_team(
     ))
     await db.flush()
 
-    invalidate_team_cache(str(auth.user_id))
+    await invalidate_team_cache_for_org(auth.user_id, org_id)
     logger.info("team.created", team_id=str(team.team_id), org_id=org_id, by=str(auth.user_id))
     return TeamResponse(
         id=str(team.team_id),
@@ -228,7 +231,7 @@ async def add_member(
         db.add(member)
         await db.flush()
 
-    invalidate_team_cache(str(request.user_id))
+    await invalidate_team_cache_for_org(request.user_id, scope.org_id)
     return MemberResponse(
         team_id=str(team_id),
         user_id=str(request.user_id),
@@ -261,5 +264,5 @@ async def remove_member(
     if member is not None:
         await db.delete(member)
         await db.flush()
-    invalidate_team_cache(str(user_id))
+    await invalidate_team_cache_for_org(user_id, scope.org_id)
     return None
