@@ -18,7 +18,10 @@ class Team(Base):
     team_id = Column(
         GUID(), primary_key=True, default=uuid.uuid4, nullable=False,
     )
-    org_id = Column(GUID(), nullable=False, index=True)
+    # WS-1: org_id is a string tenant identifier (matches Cognition OS,
+    # CCB Kafka envelope, and the new org_id columns added in revision
+    # 009/010). Was GUID() prior to revision 010.
+    org_id = Column(String(64), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     description = Column(String(1000), nullable=True)
     visibility = Column(

@@ -1,47 +1,69 @@
 """
-Kemory — Tenant scope (WS-3 foundation).
+Kemory — Tenant scope and SQLAlchemy global query filter.
 
-This module is the single entry point for tenant context inside route
-handlers and services. It exposes:
+This module is the single source of truth for tenant context inside route
+handlers, services, and the ORM. It exposes:
 
-    * TenantScope             — request-scoped (org_id, team_ids, roles)
-    * TenantScopeDep          — FastAPI Depends(...) shorthand
-    * tenant_scoped_models()  — registry of models the global filter applies to
-    * apply_tenant_filter()   — helper that injects WHERE org_id = :caller_org
+  * TenantScope                     — frozen per-request (org_id, team_ids, roles)
+  * get_tenant_scope                — FastAPI dependency
+  * TenantScopeDep                  — Depends(...) shorthand
+  * tenant_scoped_models()          — registry of models the global filter applies to
+  * register_tenant_filter()        — wires the SQLAlchemy do_orm_execute listener
+  * apply_tenant_filter()           — explicit Select-helper (defense in depth)
 
-The actual SQLAlchemy global query filter is wired into get_db() in a
-follow-up commit (under WS-3) so this scaffold can land independently
-behind TENANT_ENFORCEMENT='off'. Until the filter is wired and the flag
-is flipped to 'shadow' or 'enforce', this module is read-only context.
+How it works
+------------
+1. On every authenticated request, ``get_tenant_scope`` reads
+   ``AuthContext.org_id`` and stashes it into context-local variables.
+2. A SQLAlchemy ``do_orm_execute`` event listener, registered against the
+   AsyncSession factory at import time, intercepts every SELECT against a
+   tenant-scoped model and injects ``WHERE org_id = :current_org_id`` via
+   ``with_loader_criteria``.
+3. For ``Memory`` specifically, the listener also injects the visibility-
+   tier predicate (private | team | org) so a memory tagged ``team`` is
+   only visible to TeamMembers of that team.
 
-Design choices (recorded so they survive the next reviewer):
+The listener applies to SELECT only. INSERT / UPDATE / DELETE go through
+unaffected — handlers must still use ``apply_tenant_filter`` or set
+``org_id`` explicitly when writing. This split is intentional:
+  - Reads need a safety net (forgotten WHERE clauses leak data).
+  - Writes need explicit intent (the caller must pick which tenant a row
+    belongs to). Letting the listener auto-tag writes would silently move
+    cross-org data on a sloppy refactor.
 
-  * `org_id` is a string, not a UUID. This matches the Cognition OS graph
-    model (cognition_os/src/models/graph_models.py:30) and the CCB Kafka
-    envelope. We do not invent a kemory-specific UUID.
+Bypassing the filter
+--------------------
+For admin / migration / health-check code paths that genuinely need cross-
+tenant access, use ``with bypass_tenant_filter():`` — a context manager
+that flips a contextvar the listener checks before injecting. Logged.
 
-  * 404, never 403, on cross-org. Industry standard for tenant isolation
-    — 403 leaks the fact that a resource exists in another tenant.
-
-  * Defense in depth. Every tenant-scoped query goes through THREE layers:
-      1. Request-scope filter (this dep) — typed, explicit
-      2. SQLAlchemy with_loader_criteria — catches forgotten manual filters
-      3. require_user / Gatekeeper — catches owner-vs-tenant mismatches
-    Any single layer being bypassed (refactor, raw SQL, new endpoint)
-    is caught by the others.
+Design choices
+--------------
+* ``org_id`` is a string (matches Cognition OS / CCB envelope).
+* Default mode is ``enforce``: a request without an org_id is rejected 401.
+* No legacy sentinel for new writes — kemory is greenfield, every request
+  must carry an org_id. The migration sentinel ``legacy`` is only used for
+  any rows accidentally produced before WS-2 is plumbed end-to-end and is
+  treated as a bug, not a fallback.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterable, Type
+from typing import Iterable, Iterator, Type
 
 import structlog
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import event, or_
+from sqlalchemy.orm import Session, with_loader_criteria
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
 from backend.core.auth import require_auth
-from backend.core.database import Base
+from backend.core.database import Base, get_db
 from backend.services.auth_service import AuthContext
 
 logger = structlog.get_logger(__name__)
@@ -56,7 +78,7 @@ class TenantScope:
 
     Frozen so handlers can't accidentally mutate it mid-request. If you
     need to fork the scope (e.g. an admin elevating to a different org for
-    a single read), use `dataclasses.replace`.
+    a single read), use ``dataclasses.replace`` and ``set_current_scope``.
     """
 
     org_id: str
@@ -66,8 +88,59 @@ class TenantScope:
 
     @property
     def is_legacy(self) -> bool:
-        """True when the caller is on the migration sentinel (pre-WS-2)."""
+        """True when the caller is on the migration sentinel — a bug."""
         return self.org_id == settings.tenant_legacy_sentinel
+
+    def has_role(self, role: str) -> bool:
+        return role in self.roles
+
+
+# ─── Context variables ─────────────────────────────────────────────────────
+# These thread the active tenant context through async call stacks without
+# requiring every function signature to take a TenantScope. The ORM event
+# listener reads them; handlers should use the FastAPI dependency above.
+
+_current_org_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kemory_current_org_id", default=""
+)
+_current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kemory_current_user_id", default=""
+)
+_current_team_ids: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "kemory_current_team_ids", default=()
+)
+_bypass_filter: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kemory_bypass_tenant_filter", default=False
+)
+
+
+def current_org_id() -> str:
+    """Return the request-bound org_id or '' when no scope is active."""
+    return _current_org_id.get()
+
+
+def current_user_id() -> str:
+    return _current_user_id.get()
+
+
+def current_team_ids() -> tuple[str, ...]:
+    return _current_team_ids.get()
+
+
+@contextmanager
+def bypass_tenant_filter() -> Iterator[None]:
+    """Context manager that disables the global filter for the duration.
+
+    Use only for admin / migration / health-check paths that genuinely
+    need cross-tenant reads. Every entry is logged for audit.
+    """
+    token = _bypass_filter.set(True)
+    logger.warning("kemory.tenancy.bypass.enter")
+    try:
+        yield
+    finally:
+        _bypass_filter.reset(token)
+        logger.warning("kemory.tenancy.bypass.exit")
 
 
 # ─── Request dependency ────────────────────────────────────────────────────
@@ -75,25 +148,22 @@ class TenantScope:
 
 async def get_tenant_scope(
     auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ) -> TenantScope:
     """FastAPI dependency that resolves AuthContext → TenantScope.
 
-    Behaviour by settings.tenant_enforcement:
-
-      "off"     → always returns the scope (org_id may be the sentinel)
-      "shadow"  → returns the scope, logs a violation if org_id is sentinel
-      "enforce" → raises 401 if org_id is sentinel (no legacy callers allowed)
-
-    team_ids is empty in this foundation branch. WS-4 wires the
-    team_resolver in here so team-tier visibility can be enforced.
+    Sets context variables for the lifetime of the request so the SQLAlchemy
+    listener can read them without further plumbing. In ``enforce`` mode,
+    requests missing an org_id are rejected 401 here so handlers never run
+    against an empty tenant scope.
     """
     mode = settings.tenant_enforcement
-    org_id = auth.org_id or settings.tenant_legacy_sentinel
+    org_id = auth.org_id or ""
 
-    if org_id == settings.tenant_legacy_sentinel:
+    if not org_id or org_id == settings.tenant_legacy_sentinel:
         if mode == "enforce":
             logger.warning(
-                "kemory.tenancy.legacy_blocked",
+                "kemory.tenancy.no_org_blocked",
                 user_id=str(auth.user_id),
                 auth_method=auth.auth_method,
             )
@@ -105,22 +175,39 @@ async def get_tenant_scope(
         if mode == "shadow":
             logger.warning(
                 "kemory.tenancy.violation",
-                kind="legacy_org",
+                kind="legacy_or_missing_org",
                 user_id=str(auth.user_id),
                 auth_method=auth.auth_method,
                 mode=mode,
             )
+        # off / shadow: tolerate, but the listener will skip filtering
+        # when org_id is empty so reads return nothing rather than leaking.
+        org_id = org_id or settings.tenant_legacy_sentinel
 
-    return TenantScope(
+    # WS-4: resolve teams server-side. The token never carries team_ids
+    # because team membership is product data that changes faster than a
+    # token TTL; a 60-second cache makes this cheap.
+    from backend.services.team_resolver import get_team_ids
+    try:
+        team_ids = tuple(await get_team_ids(auth.user_id, org_id, db))
+    except Exception as exc:
+        # Don't let a transient DB hiccup break auth — log and proceed
+        # with an empty team list (caller still sees their private memories).
+        logger.warning("team_resolver.failed", error=str(exc), user_id=str(auth.user_id))
+        team_ids = ()
+
+    scope = TenantScope(
         org_id=org_id,
-        team_ids=tuple(auth.team_ids),
+        team_ids=team_ids,
         roles=tuple(auth.roles),
         user_id=str(auth.user_id),
     )
+    _current_org_id.set(scope.org_id)
+    _current_user_id.set(scope.user_id)
+    _current_team_ids.set(scope.team_ids)
+    return scope
 
 
-# Convenience alias so handlers can `Depends(TenantScopeDep)` without an
-# import of `Depends` and the function — keeps route signatures clean.
 TenantScopeDep = Depends(get_tenant_scope)
 
 
@@ -129,43 +216,109 @@ TenantScopeDep = Depends(get_tenant_scope)
 
 # Models that carry an org_id column and should be touched by the global
 # filter. Listed by string name to avoid a circular import at module load —
-# the filter wiring imports them lazily.
+# the filter wiring resolves them lazily from SQLAlchemy's mapper registry.
 TENANT_SCOPED_MODEL_NAMES: tuple[str, ...] = (
     "Memory",
     "AgentRegistry",
     "AuditLog",
     "PermissionRule",
+    "Team",
 )
 
 
 def tenant_scoped_models() -> Iterable[Type[Base]]:
-    """Yield the model classes that have an org_id column.
-
-    Resolved by class name from SQLAlchemy's registry so this module can
-    be imported before models — and because importing each model directly
-    risks pulling in the API layer (see CLAUDE.md note about
-    src.api.__init__ side-effects).
-    """
+    """Yield the model classes that have an org_id column."""
     for mapper in Base.registry.mappers:  # type: ignore[attr-defined]
         cls = mapper.class_
         if cls.__name__ in TENANT_SCOPED_MODEL_NAMES:
             yield cls
 
 
-# ─── Helper for explicit query scoping ────────────────────────────────────
+# ─── SQLAlchemy global filter ──────────────────────────────────────────────
+
+
+def _build_tenant_predicate(model_cls):
+    """Return a callable that produces the filter predicate for ``model_cls``.
+
+    The callable is invoked by SQLAlchemy each time a SELECT against
+    ``model_cls`` is compiled in a request that has an active org context.
+    """
+    name = model_cls.__name__
+
+    if name == "Memory":
+        # Memory has visibility tiers — apply org_id AND visibility predicate.
+        # Imported lazily to avoid module-load cycles.
+        def predicate(cls):  # type: ignore[no-untyped-def]
+            org_id = _current_org_id.get()
+            user_id = _current_user_id.get()
+            team_ids = _current_team_ids.get()
+            if not org_id:
+                # No active scope — emit an always-false predicate so a
+                # forgotten request context can't accidentally leak rows.
+                # Background tasks / migrations that need cross-tenant
+                # access must use ``with bypass_tenant_filter():``.
+                return cls.org_id == "__no_active_scope__"
+            visibility_clauses = [
+                cls.user_id == user_id,
+                cls.visibility == "org-public",
+            ]
+            if team_ids:
+                visibility_clauses.append(
+                    (cls.visibility == "team") & cls.team_id.in_(team_ids)
+                )
+            return (cls.org_id == org_id) & or_(*visibility_clauses)
+
+        return predicate
+
+    # All other tenant-scoped models: simple org_id equality.
+    def simple_predicate(cls):  # type: ignore[no-untyped-def]
+        org_id = _current_org_id.get()
+        if not org_id:
+            return cls.org_id == "__no_active_scope__"
+        return cls.org_id == org_id
+
+    return simple_predicate
+
+
+def register_tenant_filter(session_class) -> None:
+    """Attach a do_orm_execute listener to the given session class.
+
+    Idempotent — safe to call multiple times. Wires every tenant-scoped
+    model's predicate via ``with_loader_criteria`` so SELECTs are filtered
+    at compilation time.
+    """
+    if getattr(session_class, "_kemory_tenant_filter_registered", False):
+        return
+
+    @event.listens_for(session_class, "do_orm_execute")
+    def _do_orm_execute(orm_execute_state):  # type: ignore[no-untyped-def]
+        # Skip non-SELECT statements (writes need explicit org_id).
+        if not orm_execute_state.is_select:
+            return
+        # Allow caller-controlled bypass for admin / health paths.
+        if _bypass_filter.get():
+            return
+        for cls in tenant_scoped_models():
+            orm_execute_state.statement = orm_execute_state.statement.options(
+                with_loader_criteria(
+                    cls,
+                    _build_tenant_predicate(cls),
+                    include_aliases=True,
+                )
+            )
+
+    session_class._kemory_tenant_filter_registered = True  # type: ignore[attr-defined]
+
+
+# ─── Helper for explicit query scoping (defense in depth) ─────────────────
 
 
 def apply_tenant_filter(stmt, model: Type[Base], scope: TenantScope):
     """Apply WHERE org_id = :caller_org_id to a Select statement.
 
-    Use this when you already have a `select(Model)` and want explicit
-    org filtering before the global SQLAlchemy filter (WS-3 follow-up)
-    is in place. After the global filter ships this becomes a no-op
-    safety net — calling it twice is harmless because the predicate is
-    idempotent.
-
-    Example:
-        stmt = select(Memory).where(Memory.user_id == auth.user_id)
-        stmt = apply_tenant_filter(stmt, Memory, scope)
+    The global listener already does this for any SELECT, but calling it
+    explicitly in handlers documents intent and survives a future refactor
+    that disables the listener (e.g. a new test harness). Idempotent —
+    calling twice produces a redundant predicate, never an error.
     """
     return stmt.where(model.org_id == scope.org_id)

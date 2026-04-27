@@ -9,6 +9,7 @@ from backend.models.permission import PermissionRule
 from backend.models.audit import AuditLog
 from backend.models.consent import ConsentRequest
 from backend.models.memory import Memory
+from backend.models.team import Team, TeamMember  # WS-4 + WS-9
 from backend.models.waitlist import WaitlistEntry, ReferralEvent
 
 __all__ = [
@@ -17,6 +18,8 @@ __all__ = [
     "AuditLog",
     "ConsentRequest",
     "Memory",
+    "Team",
+    "TeamMember",
     "WaitlistEntry",
     "ReferralEvent",
 ]

@@ -93,6 +93,7 @@ async def register_agent(
     user_id: uuid.UUID,
     request: AgentRegistrationRequest,
     db: AsyncSession,
+    org_id: str = "",
 ) -> AgentRegistrationResponse:
     """
     Register a new agent for a user.
@@ -101,13 +102,18 @@ async def register_agent(
     1. Agent name must be unique per user
     2. At least one scope must be declared
     3. Callback URL must not point to private IPs
-    4. New agents start in 'pending_approval' status
+    4. New agents start in 'pending_approval' status (auto-approved when
+       issued by the same user who'll use it — there's no separate review
+       step in the org-scoped CLI flow)
     5. API key is generated and shown ONCE
+    6. WS-5: ``org_id`` is bound at creation time. Reads come from this
+       row, never from request headers — a leaked key cannot escalate.
 
     Args:
         user_id: The owning user's UUID
         request: Registration request data
         db: Database session
+        org_id: Tenant identifier (WS-5). Required for any production caller.
 
     Returns:
         AgentRegistrationResponse with the one-time API key
@@ -131,6 +137,7 @@ async def register_agent(
     # Create agent record
     agent = AgentRegistry(
         user_id=user_id,
+        org_id=org_id or None,
         agent_name=request.agent_name,
         agent_description=request.agent_description,
         declared_scopes=[s.model_dump() for s in request.declared_scopes],
@@ -196,6 +203,53 @@ async def revoke_agent(
     agent.status = "revoked"
     await db.flush()
     return _to_response(agent)
+
+
+async def rotate_agent_key(
+    agent_id: uuid.UUID,
+    user_id: uuid.UUID,
+    org_id: str,
+    db: AsyncSession,
+) -> AgentRegistrationResponse:
+    """Issue a fresh API key for an existing agent (WS-5).
+
+    The agent must belong to the calling user AND the calling org. The
+    old key is invalidated as soon as this transaction commits because
+    we replace ``api_key_hash`` and ``api_key_prefix`` in place.
+
+    Returns the new plaintext key in an AgentRegistrationResponse — the
+    same shape as initial registration so clients have one code path.
+    """
+    from backend.services.auth_service import (
+        clear_auth_cache_for_agent,
+        generate_api_key,
+    )
+
+    agent = await _get_agent_for_user(agent_id, user_id, db)
+    if org_id and agent.org_id and str(agent.org_id) != org_id:
+        # Defense-in-depth: a row that somehow leaked across orgs is
+        # treated as not-found rather than rotated.
+        raise ValueError("Agent not found")
+
+    plaintext_key, hashed_key, key_prefix = generate_api_key()
+    old_prefix = agent.api_key_prefix
+    agent.api_key_hash = hashed_key
+    agent.api_key_prefix = key_prefix
+    await db.flush()
+
+    # Drop any cached AuthContext keyed on the old prefix so the rotation
+    # takes effect on the next request rather than after the cache TTL.
+    if old_prefix:
+        clear_auth_cache_for_agent(old_prefix)
+
+    return AgentRegistrationResponse(
+        agent_id=str(agent.agent_id),
+        agent_name=agent.agent_name,
+        status=agent.status,
+        api_key=plaintext_key,
+        declared_scopes=agent.declared_scopes,
+        message="Key rotated. Old key is no longer valid. Store the new key securely.",
+    )
 
 
 async def get_agent(

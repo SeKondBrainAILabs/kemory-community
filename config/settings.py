@@ -52,13 +52,14 @@ class Settings(BaseSettings):
     jwt_expiry_minutes: int = 15
 
     # ─── Multi-tenancy (KEMORY_MULTI_TENANT_AUTH_PLAN.md) ────────
-    # Three-stage rollout:
-    #   "off"     — legacy single-tenant behaviour, no enforcement (default)
+    # Three modes:
+    #   "off"     — legacy single-tenant behaviour, no enforcement
     #   "shadow"  — log cross-org / claim-missing violations but allow request
     #   "enforce" — reject cross-org with 404 and missing-claim with 401
-    # Default is "off" so this branch is shippable but inert until each
-    # follow-up workstream flips it on.
-    tenant_enforcement: str = "off"
+    # Default is "enforce" — kemory has no production users yet, so we
+    # ship multi-tenant from day 1 rather than running through shadow bake.
+    # Set TENANT_ENFORCEMENT=off in local dev when working without Keycloak.
+    tenant_enforcement: str = "enforce"
 
     # Keycloak claim name carrying the tenant identifier. Mapped from the
     # user attribute via a Protocol Mapper (WS-2). The legacy tenant name

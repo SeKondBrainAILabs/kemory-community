@@ -22,6 +22,8 @@ from backend.api.routes.audit import router as audit_router
 from backend.api.routes.security import router as security_router
 from backend.api.routes.waitlist import public_router as waitlist_router, admin_router as waitlist_admin_router
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
+from backend.api.routes.me import router as me_router  # WS-11: identity
+from backend.api.routes.teams import router as teams_router  # WS-9: team admin
 
 logger = structlog.get_logger(__name__)
 
@@ -94,3 +96,5 @@ app.include_router(security_router)
 app.include_router(waitlist_router)
 app.include_router(waitlist_admin_router)
 app.include_router(graph_router)  # F12: Access Graph
+app.include_router(me_router)  # WS-11: GET /api/v1/me
+app.include_router(teams_router)  # WS-9: org/team admin

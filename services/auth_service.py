@@ -207,6 +207,26 @@ def _cache_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
+def clear_auth_cache_for_agent(prefix: str) -> None:
+    """Drop any AuthContext entries that resolved to this agent prefix.
+
+    Called on key rotation (WS-5) so the next request sees the new key
+    state rather than waiting for cache TTL to expire. The cache is keyed
+    by sha256(plaintext_key) so we walk it and drop entries whose context
+    matches the old prefix.
+    """
+    if not prefix:
+        return
+    drops = []
+    for ck, (ctx, _expiry) in list(_auth_cache.items()):
+        # AuthContext doesn't carry the prefix; cheapest correct fix is
+        # to drop everything on rotation. Cache size is bounded by active
+        # API keys (small), so this is fine in practice.
+        drops.append(ck)
+    for ck in drops:
+        _auth_cache.pop(ck, None)
+
+
 async def authenticate_api_key(
     api_key: str,
     db: AsyncSession,

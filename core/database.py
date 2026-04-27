@@ -54,7 +54,14 @@ def _get_engine():
 
 
 def _get_session_factory():
-    """Lazily create the session factory on first access."""
+    """Lazily create the session factory on first access.
+
+    On first creation, registers the multi-tenant SQLAlchemy global query
+    filter (WS-3). The listener is attached to the AsyncSession's underlying
+    sync_session_class so SELECTs against tenant-scoped models are
+    automatically filtered by the active TenantScope. See
+    ``backend.core.tenancy`` for how the filter resolves the active org_id.
+    """
     global _async_session_factory
     if _async_session_factory is None:
         _async_session_factory = async_sessionmaker(
@@ -62,6 +69,16 @@ def _get_session_factory():
             class_=AsyncSession,
             expire_on_commit=False,
         )
+        # Lazy import to avoid the import cycle:
+        #   tenancy → auth_service → settings (fine)
+        #   database → tenancy → auth_service → ... (fine, but only safe
+        # AFTER the session factory is in place).
+        from sqlalchemy.orm import Session as _SyncSession
+        from backend.core.tenancy import register_tenant_filter
+        # AsyncSession proxies do_orm_execute through to the underlying
+        # sync Session, so registering against Session catches both async
+        # and any sync use of get_db (e.g. seed scripts).
+        register_tenant_filter(_SyncSession)
     return _async_session_factory
 
 

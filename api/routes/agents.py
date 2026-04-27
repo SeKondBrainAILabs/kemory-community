@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import get_db
 from backend.core.auth import require_auth, AuthContext, is_admin
+from backend.core.tenancy import TenantScope, TenantScopeDep
 from backend.services.agent_service import (
     AgentRegistrationRequest,
     AgentRegistrationResponse,
@@ -45,6 +46,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 async def register_agent_endpoint(
     request: AgentRegistrationRequest,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -53,9 +55,13 @@ async def register_agent_endpoint(
     The agent starts in 'pending_approval' status and must be approved
     before it can access the memory vault. The API key is returned ONCE
     in the response — store it securely.
+
+    WS-5: the resulting key is bound to the caller's org. A leaked key
+    cannot read another org's data because authenticate_api_key() reads
+    org_id from this row, never from request headers.
     """
     try:
-        return await register_agent(auth.user_id, request, db)
+        return await register_agent(auth.user_id, request, db, org_id=scope.org_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
@@ -171,3 +177,29 @@ async def generate_token_endpoint(
         return await generate_token_for_agent(agent_id, auth.user_id, db)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ─── WS-5: key rotation ────────────────────────────────────────────────
+
+
+@router.post(
+    "/{agent_id}/rotate-key",
+    summary="Rotate the API key for an agent",
+    description=(
+        "Generates a fresh API key for an existing agent. The new key is "
+        "returned ONCE; the old key is invalidated immediately. Use this "
+        "when a key is suspected of being leaked or as part of routine "
+        "rotation. Requires the caller to own the agent."
+    ),
+)
+async def rotate_key_endpoint(
+    agent_id: uuid.UUID,
+    auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.services.agent_service import rotate_agent_key
+    try:
+        return await rotate_agent_key(agent_id, auth.user_id, scope.org_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
