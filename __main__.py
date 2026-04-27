@@ -162,13 +162,19 @@ def keys_grp() -> None:
 @keys_grp.command("create")
 @click.option("--name", required=True, help="Agent name (unique per user).")
 @click.option("--description", default="Issued via `kemory keys create`")
+@click.option("--write", "allow_write", is_flag=True, default=False,
+              help="Grant write access. Default is read-only (least privilege).")
 @click.pass_context
-def keys_create(ctx: click.Context, name: str, description: str) -> None:
+def keys_create(ctx: click.Context, name: str, description: str, allow_write: bool) -> None:
+    """Create an org-scoped API key. Read-only by default — pass --write to allow mutations."""
     creds = _require_creds(ctx)
+    declared_scopes: list[dict[str, str]] = [{"scope": "memory:read"}]
+    if allow_write:
+        declared_scopes.append({"scope": "memory:write"})
     body = {
         "agent_name": name,
         "agent_description": description,
-        "declared_scopes": [{"scope": "memory:read"}, {"scope": "memory:write"}],
+        "declared_scopes": declared_scopes,
     }
     resp = _api_post(creds, "/api/v1/agents", body)
     if resp.status_code not in (200, 201):
