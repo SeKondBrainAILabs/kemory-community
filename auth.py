@@ -20,6 +20,11 @@ Flow:
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
+import secrets
+import sys
 import time
 import webbrowser
 from dataclasses import dataclass
@@ -28,6 +33,38 @@ from typing import Optional
 import httpx
 
 from kemory_cli.config import Credentials
+
+
+# ─── PKCE (RFC 7636) ──────────────────────────────────────────────────────
+# Defense-in-depth on top of the device-flow spec. RFC 8628 doesn't
+# require PKCE for public clients, but adding it raises the bar against
+# auth-code-leakage between device approval and token poll.
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) for an S256 PKCE flow."""
+    verifier = (
+        base64.urlsafe_b64encode(secrets.token_bytes(32))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    return verifier, challenge
+
+
+def _is_headless() -> bool:
+    """Detect environments where opening a browser would be useless."""
+    if os.environ.get("KEMORY_HEADLESS") == "1":
+        return True
+    if sys.platform.startswith("linux"):
+        return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+    if os.environ.get("SSH_TTY") or os.environ.get("SSH_CONNECTION"):
+        return True
+    return False
 
 
 # ─── Device flow primitives ───────────────────────────────────────────────
@@ -52,14 +89,19 @@ def request_device_code(
     client_id: str,
     scope: str = "openid profile email offline_access",
     timeout: float = 10.0,
+    code_challenge: Optional[str] = None,
 ) -> DeviceCodeResponse:
-    """Initiate the device-authorization flow."""
+    """Initiate the device-authorization flow.
+
+    code_challenge: PKCE S256 challenge. When provided, the matching
+    code_verifier must be supplied to poll_for_token().
+    """
     url = f"{issuer.rstrip('/')}/protocol/openid-connect/auth/device"
-    resp = httpx.post(
-        url,
-        data={"client_id": client_id, "scope": scope},
-        timeout=timeout,
-    )
+    data: dict[str, str] = {"client_id": client_id, "scope": scope}
+    if code_challenge:
+        data["code_challenge"] = code_challenge
+        data["code_challenge_method"] = "S256"
+    resp = httpx.post(url, data=data, timeout=timeout)
     if resp.status_code != 200:
         raise DeviceFlowError(
             f"device_code request failed: {resp.status_code} {resp.text}"
@@ -79,25 +121,27 @@ def poll_for_token(
     issuer: str,
     client_id: str,
     device_code: DeviceCodeResponse,
+    code_verifier: Optional[str] = None,
 ) -> dict:
     """Block until the user approves or the device_code expires.
 
     Returns the raw token response dict; caller wraps it in Credentials.
+    code_verifier: PKCE verifier matching the challenge passed to
+    request_device_code.
     """
     token_url = f"{issuer.rstrip('/')}/protocol/openid-connect/token"
     deadline = time.time() + device_code.expires_in
     interval = device_code.interval
 
     while time.time() < deadline:
-        resp = httpx.post(
-            token_url,
-            data={
-                "client_id": client_id,
-                "device_code": device_code.device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-            timeout=10.0,
-        )
+        body: dict[str, str] = {
+            "client_id": client_id,
+            "device_code": device_code.device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        }
+        if code_verifier:
+            body["code_verifier"] = code_verifier
+        resp = httpx.post(token_url, data=body, timeout=10.0)
         if resp.status_code == 200:
             return resp.json()
         body = resp.json() if resp.content else {}
@@ -128,21 +172,27 @@ def login(
     open_browser: bool = True,
     output=print,
 ) -> Credentials:
-    """Run the full device flow and return saved Credentials."""
-    dev = request_device_code(issuer, client_id)
+    """Run the full device flow and return saved Credentials.
+
+    Always uses PKCE (S256) — defense-in-depth on top of the device flow
+    spec. Skips the auto-open-browser step in headless / SSH environments
+    where launching a local browser would be useless.
+    """
+    code_verifier, code_challenge = _pkce_pair()
+    dev = request_device_code(issuer, client_id, code_challenge=code_challenge)
     output(
         "\nOpen this URL in any browser and enter the code:\n"
         f"  {dev.verification_uri}\n"
         f"  Code: {dev.user_code}\n"
     )
-    if open_browser:
+    if open_browser and not _is_headless():
         try:
             webbrowser.open(dev.verification_uri_complete, new=2, autoraise=True)
         except Exception:
             pass
 
     output("Waiting for approval... (Ctrl-C to cancel)\n")
-    token = poll_for_token(issuer, client_id, dev)
+    token = poll_for_token(issuer, client_id, dev, code_verifier=code_verifier)
 
     creds = Credentials(
         access_token=token["access_token"],
