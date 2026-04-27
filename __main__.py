@@ -3,17 +3,22 @@ Kemory CLI entry point — `kemory <command>`.
 
 Subcommands:
   login         OAuth 2.0 device flow, caches tokens at ~/.kemory/credentials
+  login --local Skip OAuth, generate a machine-local API key (dev mode)
   logout        Delete the cached credentials
   whoami        Hit /v1/me and print user/org/teams
+  doctor        Run end-to-end health checks (network, auth, MCP host config)
   keys          Manage API keys (list, create, rotate, revoke)
-  mcp install   Write an MCP server entry into ~/.claude.json
-  mcp serve     Run the stdio MCP bridge (called by the MCP host)
+  mcp install   Write an MCP server entry into supported MCP hosts
+                (Claude Code, Claude Desktop, Cursor, Continue.dev)
+  mcp serve     Run the stdio MCP bridge (called by the MCP host, not humans)
 """
 from __future__ import annotations
 
 import json
 import os
+import platform
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -86,8 +91,42 @@ def cli() -> None:
               help="Keycloak realm issuer URL.")
 @click.option("--client-id", default=DEFAULT_CLIENT_ID, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Print the URL but don't open it.")
-def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool) -> None:
-    """Log in via OAuth 2.0 device flow. Caches tokens at ~/.kemory/credentials."""
+@click.option("--local", "local_mode", is_flag=True,
+              help="Skip OAuth and use a machine-local API key (dev mode). "
+                   "Reads S9NMV_API_KEY or KORA_API_KEY from the env, or "
+                   "registers a new agent against KEMORY_URL with a generated key.")
+def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, local_mode: bool) -> None:
+    """Log in. Default is OAuth 2.0 device flow against Keycloak; --local
+    skips OAuth and stores a kemory API key at ~/.kemory/credentials so
+    self-hosted / dev-mode users can onboard without a Keycloak install.
+    """
+    if local_mode:
+        api_key = os.environ.get("S9NMV_API_KEY") or os.environ.get("KORA_API_KEY")
+        if not api_key:
+            raise click.ClickException(
+                "--local mode needs an API key. Set S9NMV_API_KEY=<key> in the "
+                "environment, then re-run `kemory login --local`. Generate a "
+                "key by registering an agent against your local kemory: see "
+                "docs/getting-started.md."
+            )
+        # Store the key as a pseudo-credential so the bridge can pick it up.
+        # We use a far-future expiry and a placeholder issuer so refresh()
+        # is never attempted on this credential.
+        creds = Credentials(
+            access_token=api_key,
+            refresh_token="",
+            expires_at=time.time() + 365 * 24 * 3600,
+            issuer="local",
+            client_id="local",
+            kemory_url=kemory_url,
+        )
+        creds.save()
+        click.echo(click.style(
+            f"✓ Local credential stored. The MCP bridge will forward "
+            f"X-API-Key to {kemory_url}.", fg="green"
+        ))
+        return
+
     try:
         creds = run_login(
             issuer=issuer,
@@ -96,7 +135,13 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool) ->
             open_browser=not no_browser,
         )
     except DeviceFlowError as exc:
-        raise click.ClickException(str(exc))
+        raise click.ClickException(
+            f"{exc}\n\nThings to check:\n"
+            f"  • is {issuer} reachable from this network?\n"
+            f"  • is the kemory-cli client enabled in your Keycloak realm?\n"
+            f"    (see keycloak/kemory-multi-tenant-mappers.md §3)\n"
+            f"  • for self-hosted setups without Keycloak, try `kemory login --local`."
+        )
 
     # Optimistically populate email + org_id from /v1/me.
     try:
@@ -116,6 +161,30 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool) ->
     except httpx.HTTPError:
         pass
     click.echo(click.style("✓ Logged in. Cached tokens at ~/.kemory/credentials", fg="green"))
+
+
+@cli.command("telemetry")
+@click.argument("state", type=click.Choice(["on", "off", "status"]))
+def telemetry_cmd(state: str) -> None:
+    """Manage anonymous, opt-in usage telemetry.
+
+    OFF BY DEFAULT. See kemory_cli/telemetry.py for the full list of
+    fields collected and a guarantee on what is NOT collected (no user
+    identity, no memory contents, no file paths).
+    """
+    from kemory_cli.telemetry import enable, disable, _enabled, _telemetry_path
+    if state == "on":
+        install_id = enable()
+        click.echo(click.style(f"✓ Telemetry enabled. install_id={install_id[:8]}…", fg="green"))
+        click.echo("  Disable any time with `kemory telemetry off`.")
+    elif state == "off":
+        disable()
+        click.echo("✓ Telemetry disabled. install_id removed.")
+    else:
+        on = _enabled()
+        click.echo(f"telemetry: {'on' if on else 'off'}")
+        if on:
+            click.echo(f"install_id file: {_telemetry_path()}")
 
 
 @cli.command("logout")
@@ -222,19 +291,39 @@ def mcp_grp() -> None:
     """MCP (Model Context Protocol) integration commands."""
 
 
-@mcp_grp.command("install")
-@click.option("--config", "config_path",
-              type=click.Path(dir_okay=False, path_type=Path),
-              default=Path.home() / ".claude.json",
-              show_default=True,
-              help="Path to the MCP host config (Claude Code default).")
-@click.option("--name", default="kemory", show_default=True,
-              help="Server name to register under mcpServers.")
-def mcp_install(config_path: Path, name: str) -> None:
-    """Write an MCP server entry into ~/.claude.json so Claude Code calls
-    `kemory mcp serve` whenever it needs the tools. No API key is stored
-    in the config — the bridge reads ~/.kemory/credentials at runtime.
-    """
+# Map host name → list of candidate config paths (first existing wins,
+# else first in list is created). Cross-platform; tested by the doctor
+# command below before writing.
+def _host_config_paths() -> dict[str, list[Path]]:
+    home = Path.home()
+    macos_app_support = home / "Library" / "Application Support"
+    win_appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
+    return {
+        "claude-code":     [home / ".claude.json"],
+        "claude-desktop":  [
+            macos_app_support / "Claude" / "claude_desktop_config.json",
+            win_appdata / "Claude" / "claude_desktop_config.json",
+            home / ".config" / "Claude" / "claude_desktop_config.json",
+        ],
+        "cursor":          [home / ".cursor" / "mcp.json"],
+        "continue":        [home / ".continue" / "config.json"],
+    }
+
+
+def _resolve_host_config(host: str) -> Optional[Path]:
+    """Pick the first candidate path that exists, or fall back to the
+    first candidate (which we'll create). Returns None for unknown hosts."""
+    candidates = _host_config_paths().get(host)
+    if not candidates:
+        return None
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]
+
+
+def _write_mcp_entry(config_path: Path, name: str) -> None:
+    """Idempotently merge a kemory MCP server entry into config_path."""
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text() or "{}")
@@ -243,17 +332,58 @@ def mcp_install(config_path: Path, name: str) -> None:
                 f"{config_path} is not valid JSON. Refusing to overwrite — fix it first."
             )
     else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config = {}
-
     servers = config.setdefault("mcpServers", {})
-    servers[name] = {
-        "command": "kemory",
-        "args": ["mcp", "serve"],
-        "env": {},
-    }
+    servers[name] = {"command": "kemory", "args": ["mcp", "serve"], "env": {}}
     config_path.write_text(json.dumps(config, indent=2))
-    click.echo(click.style(f"✓ Wrote MCP server entry '{name}' into {config_path}", fg="green"))
-    click.echo("Restart Claude Code (or your MCP host) to pick it up.")
+
+
+@mcp_grp.command("install")
+@click.option("--host", "hosts", multiple=True,
+              type=click.Choice(["claude-code", "claude-desktop", "cursor", "continue", "all"]),
+              default=("claude-code",),
+              help="MCP host(s) to configure. Pass --host all to wire every "
+                   "supported host on this machine.")
+@click.option("--config", "config_path",
+              type=click.Path(dir_okay=False, path_type=Path),
+              default=None,
+              help="Override host detection — write directly to this path.")
+@click.option("--name", default="kemory", show_default=True,
+              help="Server name to register under mcpServers.")
+def mcp_install(hosts: tuple[str, ...], config_path: Optional[Path], name: str) -> None:
+    """Write an MCP server entry into one or more MCP hosts. No API key
+    is stored in the config — the bridge reads ~/.kemory/credentials at
+    runtime, so config files stay safe to commit / sync.
+    """
+    if config_path is not None:
+        _write_mcp_entry(config_path, name)
+        click.echo(click.style(f"✓ Wrote MCP server entry '{name}' into {config_path}", fg="green"))
+        return
+
+    targets = list(hosts)
+    if "all" in targets:
+        targets = ["claude-code", "claude-desktop", "cursor", "continue"]
+
+    written: list[tuple[str, Path]] = []
+    skipped: list[tuple[str, str]] = []
+    for host in targets:
+        path = _resolve_host_config(host)
+        if path is None:
+            skipped.append((host, "unknown host"))
+            continue
+        try:
+            _write_mcp_entry(path, name)
+            written.append((host, path))
+        except click.ClickException as exc:
+            skipped.append((host, str(exc)))
+
+    for host, path in written:
+        click.echo(click.style(f"✓ {host:<15} {path}", fg="green"))
+    for host, reason in skipped:
+        click.echo(click.style(f"✗ {host:<15} {reason}", fg="yellow"))
+    if written:
+        click.echo("\nRestart the affected MCP host(s) to pick up the change.")
 
 
 @mcp_grp.command("serve")
@@ -261,6 +391,92 @@ def mcp_serve() -> None:
     """Run the kemory stdio MCP bridge. Invoked by the MCP host, not humans."""
     from kemory_cli.mcp_bridge import serve as run_bridge
     run_bridge()
+
+
+# ─── doctor ───────────────────────────────────────────────────────────────
+
+
+@cli.command("doctor")
+@click.pass_context
+def doctor_cmd(ctx: click.Context) -> None:
+    """End-to-end health check: network → auth → API → MCP host config.
+
+    Run this first when something feels wrong. Each line ends in PASS / FAIL
+    / SKIP with a hint on what to do next. No personal data is printed.
+    """
+    creds = Credentials.load()
+    kemory_url = (creds.kemory_url if creds else None) or DEFAULT_KEMORY_URL
+
+    def emit(label: str, ok: bool | None, detail: str = "") -> None:
+        if ok is True:
+            tag = click.style("  PASS", fg="green")
+        elif ok is False:
+            tag = click.style("  FAIL", fg="red")
+        else:
+            tag = click.style("  SKIP", fg="yellow")
+        click.echo(f"{tag}  {label}{('  ' + detail) if detail else ''}")
+
+    click.echo(click.style("kemory doctor", bold=True))
+    click.echo(f"  python  : {sys.version.split()[0]} on {platform.system()} {platform.release()}")
+    click.echo(f"  cli     : {__version__}")
+    click.echo(f"  kemory  : {kemory_url}")
+    click.echo("")
+
+    # 1. Credentials present?
+    if creds is None:
+        emit("credentials cached", False, "run `kemory login` (or `kemory login --local`)")
+    else:
+        ok = creds.access_token != ""
+        emit("credentials cached", ok, f"~/.kemory/credentials, expires_at={int(creds.expires_at)}")
+
+    # 2. Network reachability of kemory.
+    try:
+        resp = httpx.get(f"{kemory_url.rstrip('/')}/health/live", timeout=5.0)
+        emit("kemory reachable", resp.status_code == 200, f"GET /health/live → {resp.status_code}")
+    except httpx.HTTPError as exc:
+        emit("kemory reachable", False, f"{type(exc).__name__}: {exc}")
+
+    # 3. Auth round-trip (if we have credentials).
+    if creds and creds.access_token:
+        try:
+            resp = httpx.get(
+                f"{kemory_url.rstrip('/')}/api/v1/me",
+                headers={"Authorization": f"Bearer {creds.access_token}"},
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                me = resp.json()
+                emit("auth round-trip", True, f"org={me.get('org_id', '?')}, teams={len(me.get('teams', []))}")
+            elif resp.status_code == 401:
+                emit("auth round-trip", False, "401 — token expired? run `kemory login` again")
+            else:
+                emit("auth round-trip", False, f"GET /api/v1/me → {resp.status_code}")
+        except httpx.HTTPError as exc:
+            emit("auth round-trip", False, str(exc))
+    else:
+        emit("auth round-trip", None, "no credentials")
+
+    # 4. MCP host config consistency — does any known host have a kemory entry?
+    found = []
+    for host, paths in _host_config_paths().items():
+        for p in paths:
+            if not p.exists():
+                continue
+            try:
+                cfg = json.loads(p.read_text() or "{}")
+                names = list((cfg.get("mcpServers") or {}).keys())
+                if any("kemory" in n for n in names):
+                    found.append((host, p))
+            except json.JSONDecodeError:
+                pass
+    if found:
+        for host, p in found:
+            emit(f"mcp host: {host}", True, str(p))
+    else:
+        emit("mcp host config", False, "no kemory entry found — run `kemory mcp install --host all`")
+
+    click.echo("")
+    click.echo("Done. If a check failed, the hint after FAIL tells you what to do.")
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────

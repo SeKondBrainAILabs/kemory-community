@@ -132,7 +132,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         except httpx.HTTPStatusError as exc:
             return [TextContent(type="text", text=f"HTTP {exc.response.status_code}: {exc.response.text}")]
         except httpx.ConnectError:
-            return [TextContent(type="text", text=f"Cannot connect to kemory at {_resolve_url()}.")]
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Cannot connect to kemory at {_resolve_url()}.\n"
+                    f"Hints:\n"
+                    f"  • Is the URL correct? Try `kemory doctor`.\n"
+                    f"  • Set KEMORY_URL=<url> if you need to override.\n"
+                    f"  • For local dev, run `docker compose up -d kemory-api`."
+                ),
+            )]
         except Exception as exc:  # pragma: no cover — defensive
             return [TextContent(type="text", text=f"Bridge error: {type(exc).__name__}: {exc}")]
 
