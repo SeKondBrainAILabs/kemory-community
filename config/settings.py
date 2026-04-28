@@ -222,13 +222,17 @@ class Settings(BaseSettings):
             # Dev: generate an ephemeral key. Use object.__setattr__ because
             # pydantic v2 freezes fields after validation by default.
             import secrets
-            import structlog as _structlog
+            import sys as _sys
             ephemeral = secrets.token_urlsafe(48)
             object.__setattr__(self, "jwt_secret_key", ephemeral)
-            _structlog.get_logger("kemory.config").warning(
-                "jwt.ephemeral_secret_generated",
-                environment=self.environment,
-                hint="Set JWT_SECRET_KEY in your env to keep tokens valid across restarts.",
+            # Log to stderr explicitly. structlog's default goes to stdout,
+            # which is wrong for a startup-warn line — and pollutes anything
+            # else that pipes the process's stdout (gen_env.py, scripts that
+            # render the model).
+            print(
+                f"[WARN] jwt.ephemeral_secret_generated environment={self.environment} "
+                "hint='Set JWT_SECRET_KEY to keep tokens valid across restarts'",
+                file=_sys.stderr,
             )
 
 
