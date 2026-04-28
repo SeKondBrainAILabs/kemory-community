@@ -9,20 +9,20 @@
  *
  * EPIC-002 KMV-QA-013/014: Added useDeleteMemory and useUpdateMemory
  * mutations so the MemoryExplorerPage can delete and edit memories.
- *
- * F12: Added compression_tier to queryKey and useAccessMap hook.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   searchMemories,
   getMemory,
   getNamespaces,
+  getNamespaceSummary,
   getMemoryEnrichment,
   deleteMemory,
   updateMemory,
-  getAccessMap,
+  getMemoryLevel,
+  getSessionSummary,
 } from '@/api/memories'
-import type { MemoryUpdateRequest } from '@/api/memories'
+import type { MemoryUpdateRequest, MemoryReadMode, MemoryMergeMode } from '@/api/memories'
 import type { MemorySearchRequest } from '@/api/types'
 
 export function useMemorySearch(params: MemorySearchRequest) {
@@ -35,7 +35,7 @@ export function useMemorySearch(params: MemorySearchRequest) {
       params.query ?? '',
       params.namespace ?? '',
       params.content_type ?? '',
-      params.compression_tier ?? '',  // F12: tier filter
+      params.compression_tier ?? '',
       params.limit ?? 50,
       params.offset ?? 0,
     ],
@@ -62,6 +62,34 @@ export function useNamespaces() {
   })
 }
 
+export function useNamespaceSummary(namespace: string | null | undefined) {
+  return useQuery({
+    queryKey: ['namespaces', namespace, 'summary'],
+    queryFn: () => getNamespaceSummary(namespace!),
+    enabled: !!namespace,
+    staleTime: 30_000,
+  })
+}
+
+// F12 v2: per-session L3 rollup (session + cumulative-to-this-point)
+export function useSessionSummary(
+  namespace: string | null | undefined,
+  sessionId: string | null | undefined,
+) {
+  return useQuery({
+    queryKey: ['namespaces', namespace, 'sessions', sessionId, 'summary'],
+    queryFn: () => getSessionSummary(namespace!, sessionId!),
+    enabled: !!namespace && !!sessionId,
+    staleTime: 30_000,
+    retry: (failureCount, err: unknown) => {
+      // Don't retry on 404 (summary simply hasn't been generated yet).
+      const e = err as { response?: { status?: number } }
+      if (e?.response?.status === 404) return false
+      return failureCount < 2
+    },
+  })
+}
+
 export function useMemoryEnrichment(memoryId: string) {
   return useQuery({
     queryKey: ['memories', memoryId, 'enrichment'],
@@ -83,6 +111,24 @@ export function useDeleteMemory() {
   })
 }
 
+// KMV-S12.4: Multi-level memory read hook (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)
+export function useMemoryLevel(
+  namespace: string | null | undefined,
+  mode: MemoryReadMode = 'concept',
+  mergeMode: MemoryMergeMode = 'current',
+) {
+  return useQuery({
+    queryKey: ['namespaces', namespace, 'compressed', mode, mergeMode],
+    queryFn: () => getMemoryLevel(namespace!, mode, mergeMode),
+    // Only fetch when a namespace is selected
+    enabled: !!namespace,
+    // Cache for 30s — concept/cognition synthesis is expensive
+    staleTime: 30_000,
+    // Keep previous data while new level loads to avoid blank flash
+    placeholderData: (prev) => prev,
+  })
+}
+
 // EPIC-002: KMV-QA-014 — Update memory mutation
 export function useUpdateMemory() {
   const qc = useQueryClient()
@@ -97,11 +143,13 @@ export function useUpdateMemory() {
   })
 }
 
-// F12: Access Graph hook — agent-memory-namespace relationship graph
+// F12: Access Graph hook
+import { getAccessMap } from '@/api/memories'
+
 export function useAccessMap() {
   return useQuery({
-    queryKey: ['graph', 'access-map'],
-    queryFn: getAccessMap,
-    staleTime: 30_000, // 30s — graph data changes infrequently
+    queryKey: ['access-map'],
+    queryFn: () => getAccessMap(),
+    staleTime: 30_000,
   })
 }

@@ -99,12 +99,6 @@ test.describe('Sidebar Navigation', () => {
     await expect(page.locator('h1').filter({ hasText: /Security Alerts/i })).toBeVisible()
   })
 
-  test('should navigate to Waitlist page', async ({ page }) => {
-    await page.goto('/waitlist')
-    await expect(page).toHaveURL('/waitlist')
-    await expect(page.locator('h1').filter({ hasText: /Waitlist Management/i })).toBeVisible()
-  })
-
   test('BUG-001: /connectors route is inaccessible — redirects to /', async ({ page }) => {
     // BUG: ConnectorsPage is defined in App.tsx router but navigating to /connectors
     // redirects to / (the catch-all or RequireAuth redirect is intercepting it).

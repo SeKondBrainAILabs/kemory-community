@@ -6,9 +6,10 @@
  *   KMV-QA-014: Add Edit Memory inline form in the detail panel
  *   KMV-QA-015: Add pagination controls (offset-based, 50 per page)
  *
- * F12 additions:
- *   F12-US-001: Compression tier (L1/L2/L3.1) badge column + filter buttons
- *   F12-US-002: Provenance panel for L3.1 concept memories (source IDs)
+ * KMV-E12 (Multi-Level Memory Reads):
+ *   KMV-S12.1: Memory Level Toggle UI (Raw / Compress / Compacted / Cognition)
+ *   KMV-S12.2: Raw and AAAK (Compress) views
+ *   KMV-S12.3: Compacted (Concept) and Cognition views
  */
 import { useState } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
@@ -19,41 +20,42 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { JsonViewer } from '@/components/shared/JsonViewer'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
-import { MemoryLevelBadge } from '@/components/shared/MemoryLevelBadge'
 import {
   useMemorySearch,
   useNamespaces,
   useMemoryEnrichment,
   useDeleteMemory,
   useUpdateMemory,
+  useMemoryLevel,
 } from '@/hooks/useMemories'
 import { formatRelativeTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { MemoryResponse } from '@/api/types'
-import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, GitMerge } from 'lucide-react'
+import type { MemoryReadMode } from '@/api/memories'
+import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, Layers } from 'lucide-react'
+import { NamespaceSummaryHeader } from '@/components/memories/NamespaceSummaryHeader'
+import { MemoryHealthBadge } from '@/components/memories/MemoryHealthBadge'
+import { MemoryLevelsSection } from '@/components/memories/MemoryLevelsSection'
+import { SessionSummarySection } from '@/components/memories/SessionSummarySection'
+import { MemoryLevelBadge, MemoryLevelLegend } from '@/components/shared/MemoryLevelBadge'
 
 const PAGE_SIZE = 50
 
-const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference', 'concept'] as const
-type TierFilter = 'all' | 'L1' | 'L2' | 'L3.1'
-const tierFilters: TierFilter[] = ['all', 'L1', 'L2', 'L3.1']
+const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference'] as const
 
-/** Derive the compression tier from a memory response.
- *  Falls back to L1 if the backend has not yet promoted the record. */
-function deriveTier(mem: MemoryResponse): 'L1' | 'L2' | 'L3.1' {
-  const meta = mem.metadata as Record<string, unknown> | null
-  const t = meta?.['_compression_tier'] as string | undefined
-  if (t === 'L2' || t === 'L3.1') return t
-  if (mem.content_type === 'concept') return 'L3.1'
-  return 'L1'
-}
+// F12: Compression tier filter — L1 raw / L2 AAAK / L3.1 concept
+const tiers = ['all', 'L1', 'L2', 'L3.1'] as const
+type TierFilter = (typeof tiers)[number]
+
+// KMV-S12.1: Memory level definitions
+const MEMORY_LEVELS: { mode: MemoryReadMode; label: string; description: string }[] = [
+  { mode: 'raw',       label: 'Raw (L1)',      description: 'Every active memory as raw dicts' },
+  { mode: 'aaak',      label: 'Compress (L2)', description: 'Lossless AAAK encoding with compression metrics' },
+  { mode: 'concept',   label: 'Compacted (L3)', description: 'LLM-synthesized concepts' },
+  { mode: 'cognition', label: 'Cognition (L4)', description: 'Concepts + Cognition OS graph entities' },
+]
 
 const columns: ColumnDef<MemoryResponse, unknown>[] = [
-  {
-    id: 'tier',
-    header: 'Level',
-    cell: ({ row }) => <MemoryLevelBadge tier={deriveTier(row.original)} />,
-  },
   {
     accessorKey: 'content',
     header: 'Content',
@@ -70,6 +72,31 @@ const columns: ColumnDef<MemoryResponse, unknown>[] = [
     ),
   },
   {
+    // F12: Compression tier (L1 raw / L2 AAAK / L3.1 concept)
+    accessorKey: 'compression_tier',
+    header: 'Tier',
+    cell: ({ getValue }) => <MemoryLevelBadge tier={(getValue() as string) ?? 'L1'} />,
+  },
+  {
+    // KMV-S15.3: Per-row memory health (status pill, weight bar, archive countdown)
+    id: 'health',
+    header: 'Health',
+    cell: ({ row }) => {
+      const m = row.original as MemoryResponse & {
+        weight?: number | null
+        consolidation_status?: string | null
+      }
+      return (
+        <MemoryHealthBadge
+          weight={m.weight ?? null}
+          consolidationStatus={m.consolidation_status ?? null}
+          createdAt={m.created_at}
+          compact
+        />
+      )
+    },
+  },
+  {
     accessorKey: 'enrichment_status',
     header: 'Enrichment',
     cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
@@ -82,13 +109,197 @@ const columns: ColumnDef<MemoryResponse, unknown>[] = [
   },
 ]
 
+// ── KMV-S12.2: Raw View ──────────────────────────────────────────────────────
+function MemoryRawView({ namespace }: { namespace: string }) {
+  const { data, isLoading, isError } = useMemoryLevel(namespace, 'raw')
+  if (isLoading) return <LoadingSkeleton lines={6} />
+  if (isError) return <p className="text-xs text-status-danger">Failed to load raw memories.</p>
+  if (!data) return null
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs text-content-tertiary">
+        <span className="rounded bg-surface-tertiary px-2 py-0.5 font-mono">
+          {data.source_count} {data.source_count === 1 ? 'memory' : 'memories'}
+        </span>
+        <span>source: {data.source}</span>
+      </div>
+      <JsonViewer data={data.memories ?? []} />
+    </div>
+  )
+}
+
+// ── KMV-S12.2: AAAK (Compress) View ─────────────────────────────────────────
+function MemoryAaakView({ namespace }: { namespace: string }) {
+  const { data, isLoading, isError } = useMemoryLevel(namespace, 'aaak')
+  if (isLoading) return <LoadingSkeleton lines={4} />
+  if (isError) return <p className="text-xs text-status-danger">Failed to load AAAK encoding.</p>
+  if (!data) return null
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-3 text-xs">
+        <div className="rounded bg-surface-tertiary px-3 py-1.5">
+          <span className="text-content-tertiary">Source count: </span>
+          <span className="font-semibold">{data.source_count}</span>
+        </div>
+        <div className="rounded bg-surface-tertiary px-3 py-1.5">
+          <span className="text-content-tertiary">Compressed size: </span>
+          <span className="font-semibold">{data.compressed_size ?? '—'} bytes</span>
+        </div>
+        <div className="rounded bg-brand-primary/10 px-3 py-1.5 text-brand-primary">
+          <span className="font-semibold">{data.ratio != null ? `${data.ratio}×` : '—'}</span>
+          <span className="ml-1 text-content-tertiary">compression</span>
+        </div>
+      </div>
+      <pre className="overflow-x-auto rounded-lg border border-border bg-surface-tertiary p-3 text-xs font-mono whitespace-pre-wrap">
+        {data.content ?? '(empty)'}
+      </pre>
+    </div>
+  )
+}
+
+// ── KMV-S12.3: Concept (Compacted) View ──────────────────────────────────────
+function MemoryConceptView({ namespace }: { namespace: string }) {
+  const { data, isLoading, isError } = useMemoryLevel(namespace, 'concept')
+  if (isLoading) return <LoadingSkeleton lines={5} />
+  if (isError) return <p className="text-xs text-status-danger">Failed to load concept synthesis.</p>
+  if (!data) return null
+  const concepts = data.concepts ?? []
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs text-content-tertiary">
+        <span className="rounded bg-surface-tertiary px-2 py-0.5">
+          {data.source_count} source {data.source_count === 1 ? 'memory' : 'memories'}
+        </span>
+        <span>→ {concepts.length} {concepts.length === 1 ? 'concept' : 'concepts'}</span>
+        <span className="rounded bg-surface-tertiary px-2 py-0.5">source: {data.source}</span>
+      </div>
+      {concepts.length === 0 ? (
+        <p className="text-xs text-content-tertiary italic">No concepts synthesized yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {concepts.map((c, i) => (
+              <div key={i} className="rounded-lg border border-border bg-white p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-content-primary">
+                    {String((c as Record<string, unknown>).name ?? `Concept ${i + 1}`)}
+                  </span>
+                  {Boolean((c as Record<string, unknown>).directional) && (
+                    <span className="rounded bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">directional</span>
+                  )}
+                  {Boolean((c as Record<string, unknown>).synthesis_unavailable) && (
+                    <span className="rounded bg-status-warning/10 px-1.5 py-0.5 text-xs text-status-warning">synthesis unavailable</span>
+                  )}
+                </div>
+                <p className="text-xs text-content-secondary">
+                  {String((c as Record<string, unknown>).synthesis ?? '—')}
+                </p>
+              </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── KMV-S12.3: Cognition (L4) View ───────────────────────────────────────────
+function MemoryCognitionView({ namespace }: { namespace: string }) {
+  const { data, isLoading, isError } = useMemoryLevel(namespace, 'cognition')
+  if (isLoading) return <LoadingSkeleton lines={6} />
+  if (isError) return <p className="text-xs text-status-danger">Failed to load cognition synthesis.</p>
+  if (!data) return null
+  const concepts = data.concepts ?? []
+  const graphEntities = data.graph_entities ?? []
+  const cogAvailable = data.cognition_os_available ?? false
+  return (
+    <div className="space-y-4">
+      {/* Status bar */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded bg-surface-tertiary px-2 py-0.5 text-content-tertiary">
+          {data.source_count} source {data.source_count === 1 ? 'memory' : 'memories'}
+        </span>
+        <span className={cn(
+          'rounded px-2 py-0.5 font-medium',
+          cogAvailable
+            ? 'bg-status-success/10 text-status-success'
+            : 'bg-surface-tertiary text-content-tertiary',
+        )}>
+          Cognition OS: {cogAvailable ? 'connected' : 'unavailable'}
+        </span>
+        <span className="text-content-tertiary">source: {data.source}</span>
+      </div>
+
+      {/* Synthesized Concepts */}
+      <div>
+        <h4 className="mb-2 text-xs font-semibold text-content-secondary uppercase tracking-wide">
+          Synthesized Concepts ({concepts.length})
+        </h4>
+        {concepts.length === 0 ? (
+          <p className="text-xs text-content-tertiary italic">No concepts synthesized yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {concepts.map((c, i) => (
+              <div key={i} className="rounded-lg border border-border bg-white p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-content-primary">
+                    {String((c as Record<string, unknown>).name ?? `Concept ${i + 1}`)}
+                  </span>
+                  {Boolean((c as Record<string, unknown>).directional) && (
+                    <span className="rounded bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">directional</span>
+                  )}
+                </div>
+                <p className="text-xs text-content-secondary">
+                  {String((c as Record<string, unknown>).synthesis ?? '—')}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Cognition OS Graph Entities */}
+      <div>
+        <h4 className="mb-2 text-xs font-semibold text-content-secondary uppercase tracking-wide">
+          Cognition OS Graph Entities ({graphEntities.length})
+        </h4>
+        {!cogAvailable ? (
+          <p className="text-xs text-content-tertiary italic">
+            Cognition OS is not connected. Configure it in the Connectors page to enable L4 graph augmentation.
+          </p>
+        ) : graphEntities.length === 0 ? (
+          <p className="text-xs text-content-tertiary italic">No related graph entities found.</p>
+        ) : (
+          <div className="space-y-2">
+            {graphEntities.map((e, i) => (
+              <div key={i} className="rounded-lg border border-border bg-surface-secondary p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-content-primary">{e.title}</span>
+                  <span className="rounded bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">
+                    {(e.score * 100).toFixed(0)}% match
+                  </span>
+                </div>
+                <p className="line-clamp-2 text-xs text-content-secondary">{e.content}</p>
+                <div className="mt-1 text-xs text-content-tertiary font-mono">{e.entity_id}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export function MemoryExplorerPage() {
   const [query, setQuery] = useState('')
   const [namespace, setNamespace] = useState<string>('')
   const [contentType, setContentType] = useState('all')
-  const [tierFilter, setTierFilter] = useState<TierFilter>('all')
+  const [tier, setTier] = useState<TierFilter>('all')
   const [selected, setSelected] = useState<MemoryResponse | null>(null)
   const [page, setPage] = useState(0)
+
+  // KMV-S12.1: Memory level toggle state
+  const [memoryLevel, setMemoryLevel] = useState<MemoryReadMode>('raw')
+  const [showLevelView, setShowLevelView] = useState(false)
 
   // Edit state
   const [editing, setEditing] = useState(false)
@@ -106,9 +317,13 @@ export function MemoryExplorerPage() {
     query: query || undefined,
     namespace: namespace || undefined,
     content_type: contentType === 'all' ? undefined : contentType,
-    compression_tier: tierFilter === 'all' ? undefined : tierFilter,
+    compression_tier: tier === 'all' ? undefined : tier,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
+    // Hybrid mode tolerates an empty query (falls back to a plain SQL
+    // listing) whereas fts mode returns 422. Keeps the Explorer populated
+    // on first open, before the user has typed anything.
+    search_mode: 'hybrid',
   })
 
   const enrichment = useMemoryEnrichment(selected?.memory_id ?? '')
@@ -154,19 +369,9 @@ export function MemoryExplorerPage() {
     )
   }
 
-  // Derive tier for the selected memory (for provenance panel)
-  const selectedTier = selected ? deriveTier(selected) : null
-  const sourceMemoryIds: string[] = (() => {
-    if (!selected) return []
-    const meta = selected.metadata as Record<string, unknown> | null
-    const ids = meta?.['_source_memory_ids']
-    if (Array.isArray(ids)) return ids as string[]
-    return []
-  })()
-
   return (
     <PageShell>
-      {/* Filters row */}
+      {/* Filters */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
           value={query}
@@ -174,8 +379,7 @@ export function MemoryExplorerPage() {
           placeholder="Search memories…"
           className="w-64"
         />
-
-        {/* Namespace selector */}
+        {/* Namespace selector — includes text filter when list is large */}
         <div className="flex flex-col gap-1">
           {(namespaces.data?.length ?? 0) > 10 && (
             <input
@@ -206,8 +410,6 @@ export function MemoryExplorerPage() {
               ))}
           </select>
         </div>
-
-        {/* Content type filter */}
         <div className="flex gap-1">
           {contentTypes.map((ct) => (
             <button
@@ -225,35 +427,110 @@ export function MemoryExplorerPage() {
           ))}
         </div>
 
-        {/* F12-US-001: Compression tier filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-content-tertiary">Level:</span>
-          {tierFilters.map((t) => (
+        {/* F12: Compression tier filter pills (L1 / L2 / L3.1) */}
+        <div className="flex items-center gap-1" title="Filter by memory compression tier">
+          {tiers.map((t) => (
             <button
               key={t}
-              onClick={() => { setTierFilter(t); setPage(0) }}
+              onClick={() => { setTier(t); setPage(0) }}
               className={cn(
                 'rounded-full px-3 py-1 text-xs font-medium transition-colors',
-                tierFilter === t
-                  ? t === 'all'
-                    ? 'bg-brand-primary text-white'
-                    : t === 'L1'
-                      ? 'bg-slate-600 text-white'
-                      : t === 'L2'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-violet-600 text-white'
+                tier === t
+                  ? 'bg-brand-primary text-white'
                   : 'border border-border bg-white text-content-secondary hover:bg-surface-secondary',
               )}
             >
-              {t === 'all' ? 'All levels' : t}
+              {t === 'all' ? 'All tiers' : t}
             </button>
           ))}
         </div>
+
+        {/* KMV-S12.1: Memory Level View toggle button */}
+        {namespace && (
+          <button
+            onClick={() => setShowLevelView((v) => !v)}
+            className={cn(
+              'ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+              showLevelView
+                ? 'border-brand-primary bg-brand-primary text-white'
+                : 'border-border bg-white text-content-secondary hover:bg-surface-secondary',
+            )}
+            title="View memory levels for selected namespace"
+          >
+            <Layers size={13} />
+            Memory Levels
+          </button>
+        )}
       </div>
+
+      {/* F12: Tier legend — explains what L1 / L2 / L3.1 mean */}
+      <div className="mb-3 px-1">
+        <MemoryLevelLegend />
+      </div>
+
+      {/* KMV-S12.1/12.2/12.3: Memory Level View Panel */}
+      {showLevelView && namespace && (
+        <div className="mb-4 rounded-xl border border-border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers size={15} className="text-brand-primary" />
+              <h3 className="text-sm font-semibold text-content-primary">
+                Memory Levels — <span className="font-mono text-brand-primary">{namespace}</span>
+              </h3>
+            </div>
+            <button
+              onClick={() => setShowLevelView(false)}
+              className="rounded p-1 text-content-tertiary hover:bg-surface-secondary"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* Level selector tabs */}
+          <div className="mb-4 flex gap-1 rounded-lg border border-border bg-surface-secondary p-1">
+            {MEMORY_LEVELS.map(({ mode, label, description }) => (
+              <button
+                key={mode}
+                onClick={() => setMemoryLevel(mode)}
+                title={description}
+                className={cn(
+                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  memoryLevel === mode
+                    ? 'bg-white text-brand-primary shadow-sm'
+                    : 'text-content-secondary hover:text-content-primary',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Level description */}
+          <p className="mb-3 text-xs text-content-tertiary">
+            {MEMORY_LEVELS.find((l) => l.mode === memoryLevel)?.description}
+          </p>
+
+          {/* Level content — KMV-S12.2 and KMV-S12.3 */}
+          <div className="max-h-[480px] overflow-y-auto">
+            {memoryLevel === 'raw'       && <MemoryRawView namespace={namespace} />}
+            {memoryLevel === 'aaak'      && <MemoryAaakView namespace={namespace} />}
+            {memoryLevel === 'concept'   && <MemoryConceptView namespace={namespace} />}
+            {memoryLevel === 'cognition' && <MemoryCognitionView namespace={namespace} />}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-4">
         {/* Table */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 space-y-3">
+          {/* KMV-S15.2: Namespace summary header (counts + decay policy + manual sync) */}
+          {namespace && (
+            <NamespaceSummaryHeader
+              namespace={namespace}
+              totalMemories={totalCount}
+            />
+          )}
+
           {search.isLoading ? (
             <LoadingSkeleton lines={10} />
           ) : (
@@ -295,10 +572,7 @@ export function MemoryExplorerPage() {
           <div className="w-96 shrink-0 rounded-lg border border-border bg-white p-4">
             {/* Panel header */}
             <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
-                {selectedTier && <MemoryLevelBadge tier={selectedTier} />}
-              </div>
+              <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
               <div className="flex items-center gap-1">
                 {!editing && (
                   <button
@@ -344,7 +618,7 @@ export function MemoryExplorerPage() {
                     onChange={(e) => setEditContentType(e.target.value)}
                     className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-brand-primary focus:outline-none"
                   >
-                    {['text', 'structured', 'conversation', 'fact', 'preference', 'concept'].map((ct) => (
+                    {['text', 'structured', 'conversation', 'fact', 'preference'].map((ct) => (
                       <option key={ct} value={ct}>{ct}</option>
                     ))}
                   </select>
@@ -359,7 +633,7 @@ export function MemoryExplorerPage() {
                     {updateMutation.isPending ? 'Saving…' : 'Save'}
                   </button>
                   <button
-                    onClick={() => setEditing(false)}
+                    onClick={() => { setEditing(false); setEditContent(selected.content); setEditContentType(selected.content_type) }}
                     className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-secondary"
                   >
                     Cancel
@@ -405,6 +679,10 @@ export function MemoryExplorerPage() {
                     <div className="text-content-tertiary">Source</div>
                     <div className="font-medium">{selected.source_type}</div>
                   </div>
+                  <div>
+                    <div className="text-content-tertiary">Tier</div>
+                    <MemoryLevelBadge tier={(selected as MemoryResponse & { compression_tier?: string }).compression_tier ?? 'L1'} />
+                  </div>
                 </div>
                 <div className="text-xs text-content-tertiary">
                   ID: <code className="rounded bg-surface-tertiary px-1">{selected.memory_id}</code>
@@ -412,35 +690,23 @@ export function MemoryExplorerPage() {
                 <div className="text-xs text-content-tertiary">
                   Created {formatRelativeTime(selected.created_at)}
                 </div>
-
-                {/* F12-US-002: Provenance panel for L3.1 concept memories */}
-                {selectedTier === 'L3.1' && sourceMemoryIds.length > 0 && (
-                  <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
-                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-violet-700">
-                      <GitMerge size={12} />
-                      Synthesized from {sourceMemoryIds.length} source{sourceMemoryIds.length !== 1 ? 's' : ''}
-                    </div>
-                    <div className="space-y-1">
-                      {sourceMemoryIds.map((id) => (
-                        <div
-                          key={id}
-                          className="flex items-center gap-1 rounded bg-white px-2 py-1 text-xs font-mono text-violet-600 border border-violet-100"
-                        >
-                          <span className="truncate">{id}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {Boolean((selected.metadata as Record<string, unknown> | null)?.['_synthesis_source']) && (
-                      <div className="mt-2 text-xs text-violet-600">
-                        Synthesis via:{' '}
-                        <span className="font-medium">
-                          {String((selected.metadata as Record<string, unknown>)['_synthesis_source'])}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
+                {/* KMV-S15.3: Expanded memory health (status, weight, decay countdown) */}
+                <MemoryHealthBadge
+                  weight={(selected as MemoryResponse & { weight?: number | null }).weight ?? null}
+                  consolidationStatus={(selected as MemoryResponse & { consolidation_status?: string | null }).consolidation_status ?? null}
+                  createdAt={selected.created_at}
+                  compact={false}
+                />
+                {/* F12: Per-memory L2/L3.1 level viewer (namespace-wide L2/L3 + provenance to this memory) */}
+                <MemoryLevelsSection
+                  namespace={selected.namespace}
+                  memoryId={selected.memory_id}
+                />
+                {/* F12 v2: Per-session L3 rollup (renders only when memory has session_id) */}
+                <SessionSummarySection
+                  namespace={selected.namespace}
+                  sessionId={selected.session_id ?? null}
+                />
                 {enrichment.data && (
                   <div className="mt-2 rounded-lg bg-surface-secondary p-3">
                     <div className="mb-1 text-xs font-medium text-content-secondary">Enrichment</div>

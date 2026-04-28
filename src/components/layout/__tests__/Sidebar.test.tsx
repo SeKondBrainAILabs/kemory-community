@@ -30,8 +30,7 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Overview')).toBeInTheDocument()
     expect(screen.getByText('Agents')).toBeInTheDocument()
-    expect(screen.getByText('Security')).toBeInTheDocument()
-    expect(screen.getByText('Waitlist')).toBeInTheDocument()
+    expect(screen.getByText('Content Inspector')).toBeInTheDocument()
   })
 
   it('hides restricted items for regular user', () => {
@@ -43,8 +42,7 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Overview')).toBeInTheDocument()
     expect(screen.getByText('Agents')).toBeInTheDocument()
-    expect(screen.queryByText('Security')).not.toBeInTheDocument()
-    expect(screen.queryByText('Waitlist')).not.toBeInTheDocument()
+    expect(screen.queryByText('Content Inspector')).not.toBeInTheDocument()
   })
 
   it('shows non-restricted items regardless of role', () => {

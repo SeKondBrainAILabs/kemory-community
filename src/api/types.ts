@@ -89,6 +89,10 @@ export interface MemorySearchRequest {
   offset?: number
   // F12: Filter by compression tier
   compression_tier?: 'L1' | 'L2' | 'L3.1'
+  // Backend rejects search_mode='fts' + empty query with 422 (Memory Explorer
+  // "No data" on first load). Hybrid falls through to a plain SQL listing
+  // when no query is provided, so we default to hybrid for list views.
+  search_mode?: 'fts' | 'hybrid' | 'dense'
 }
 
 // ─── Graph Domain (F12) ──────────────────────────────────────
@@ -127,9 +131,30 @@ export interface MemoryListResponse {
   offset: number
 }
 
+export interface NamespaceRelated {
+  namespace: string
+  similarity: number | null
+  detected_at?: string
+  action?: string
+}
+
 export interface NamespaceInfo {
   namespace: string
   count: number
+  description?: string | null
+  consolidated_summary?: string | null
+  consolidated_summary_tier?: string | null
+  consolidated_summary_updated_at?: string | null
+  related_namespaces?: NamespaceRelated[] | null
+}
+
+export interface NamespaceSummary {
+  namespace: string
+  description: string | null
+  consolidated_summary: string | null
+  consolidated_summary_tier: string | null
+  consolidated_summary_updated_at: string | null
+  related_namespaces: NamespaceRelated[]
 }
 
 // ─── Permission Domain ───────────────────────────────────────

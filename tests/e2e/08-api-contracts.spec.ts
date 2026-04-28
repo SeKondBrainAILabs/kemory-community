@@ -208,23 +208,6 @@ test.describe('API Contract Tests', () => {
   })
 
   // ============================================================
-  // WAITLIST ADMIN API (BUG-012)
-  // ============================================================
-  test('BUG-012: GET /api/v1/admin/waitlist/stats — returns 500 Internal Server Error', async ({ request }) => {
-    // BUG: The WaitlistManagementPage calls /api/v1/admin/waitlist/stats but
-    // the endpoint returns 500 Internal Server Error.
-    const res = await request.get(`${BASE}/api/v1/admin/waitlist/stats`)
-    console.log(`BUG-012: /api/v1/admin/waitlist/stats status: ${res.status()}`)
-    expect(res.status()).toBe(500)
-  })
-
-  test('BUG-012: GET /api/v1/admin/waitlist — returns 500 Internal Server Error', async ({ request }) => {
-    const res = await request.get(`${BASE}/api/v1/admin/waitlist`)
-    console.log(`BUG-012: /api/v1/admin/waitlist status: ${res.status()}`)
-    expect(res.status()).toBe(500)
-  })
-
-  // ============================================================
   // SECURITY API
   // ============================================================
   test('POST /api/v1/security/scan — scan endpoint exists', async ({ request }) => {

@@ -30,7 +30,7 @@ export function LoginPage() {
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-primary text-white shadow-md">
               <Brain size={32} />
             </div>
-            <h1 className="text-2xl font-bold text-content-primary">S9N Memory Vault</h1>
+            <h1 className="text-2xl font-bold text-content-primary">Kemory</h1>
             <p className="mt-1 text-sm text-content-secondary">Memory Vault Control Plane</p>
           </div>
 

@@ -4,6 +4,7 @@ import type {
   MemoryListResponse,
   MemorySearchRequest,
   NamespaceInfo,
+  NamespaceSummary,
   EnrichmentResult,
   AccessMapResponse,
 } from './types'
@@ -26,6 +27,34 @@ export async function getMemory(memoryId: string): Promise<MemoryResponse> {
 
 export async function getNamespaces(): Promise<NamespaceInfo[]> {
   return api.get('api/v1/namespaces').json()
+}
+
+export async function getNamespaceSummary(namespace: string): Promise<NamespaceSummary> {
+  return api.get(`api/v1/namespaces/${encodeURIComponent(namespace)}/summary`).json()
+}
+
+export interface SessionSummaryPayload {
+  namespace: string
+  session_id: string
+  session_summary: string | null
+  session_summary_tier: string | null
+  session_memory_count: number
+  cumulative_summary: string | null
+  cumulative_summary_tier: string | null
+  cumulative_memory_count: number
+  up_to_ts: string | null
+  updated_at: string | null
+}
+
+export async function getSessionSummary(
+  namespace: string,
+  sessionId: string,
+): Promise<SessionSummaryPayload> {
+  return api
+    .get(
+      `api/v1/namespaces/${encodeURIComponent(namespace)}/sessions/${encodeURIComponent(sessionId)}/summary`,
+    )
+    .json()
 }
 
 export async function getMemoryEnrichment(memoryId: string): Promise<EnrichmentResult> {
@@ -102,4 +131,45 @@ export async function updateNamespacePolicy(
   policy: Partial<Omit<NamespacePolicy, 'namespace' | 'is_default'>>,
 ): Promise<NamespacePolicy> {
   return api.put(`api/v1/namespaces/${namespace}/policy`, { json: policy }).json()
+}
+
+// KMV-S12.4: Multi-level memory read (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)
+export type MemoryReadMode = 'raw' | 'aaak' | 'concept' | 'cognition'
+export type MemoryMergeMode = 'current' | 'aggregate'
+
+export interface MemoryLevelPayload {
+  mode: MemoryReadMode
+  merge_mode: MemoryMergeMode
+  namespace: string
+  source_count: number
+  source: string
+  // L1 raw
+  memories?: Record<string, unknown>[]
+  // L2 aaak
+  compressed_size?: number
+  ratio?: number
+  content?: string
+  // L3.1 concept
+  concepts?: Record<string, unknown>[]
+  // L4 cognition
+  graph_entities?: {
+    entity_id: string
+    title: string
+    content: string
+    score: number
+    source: string
+  }[]
+  cognition_os_available?: boolean
+}
+
+export async function getMemoryLevel(
+  namespace: string,
+  mode: MemoryReadMode = 'concept',
+  mergeMode: MemoryMergeMode = 'current',
+): Promise<MemoryLevelPayload> {
+  return api
+    .get(`api/v1/namespaces/${encodeURIComponent(namespace)}/compressed`, {
+      searchParams: { mode, merge_mode: mergeMode },
+    })
+    .json()
 }

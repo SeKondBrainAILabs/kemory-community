@@ -11,7 +11,6 @@ const pages = [
   { path: '/consent', name: 'Consent' },
   { path: '/analytics', name: 'Analytics' },
   { path: '/security', name: 'Security' },
-  { path: '/waitlist', name: 'Waitlist' },
 ]
 
 for (const p of pages) {

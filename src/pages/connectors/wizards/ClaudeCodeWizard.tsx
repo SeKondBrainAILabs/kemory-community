@@ -4,6 +4,7 @@ import { Check, Terminal, AlertCircle } from 'lucide-react'
 import { registerAgent } from '@/api/agents'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAgents } from '@/hooks/useAgents'
+import { defaultApiUrl, defaultScriptPath } from '@/lib/connectorDefaults'
 
 interface Props { onClose: () => void }
 
@@ -12,15 +13,8 @@ const AGENT_DESC = 'Claude Code persistent memory MCP agent'
 
 export function ClaudeCodeWizard({ onClose }: Props) {
   const [step, setStep] = useState(0)
-  const [serverPath, setServerPath] = useState(() => {
-    const base = window.location.hostname === 'localhost' ? '/Volumes/DataDrive/Repos/sekond/agent_memory_vault/agent_memory_vault' : '/opt/s9nmv'
-    return `${base}/scripts/s9nmv_mcp_server.py`
-  })
-  const [apiUrl, setApiUrl] = useState(() => {
-    const host = window.location.hostname
-    const isLocal = host === 'localhost' || host.startsWith('10.') || host.startsWith('192.168.')
-    return isLocal ? `http://${host}:8100` : `${window.location.origin}`
-  })
+  const [serverPath, setServerPath] = useState(defaultScriptPath)
+  const [apiUrl, setApiUrl] = useState(defaultApiUrl)
   const [apiKey, setApiKey] = useState('')
   const [registering, setRegistering] = useState(false)
   const [regError, setRegError] = useState('')

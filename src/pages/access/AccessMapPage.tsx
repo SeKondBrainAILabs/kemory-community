@@ -42,13 +42,15 @@ export function AccessMapPage() {
     null,
   )
 
+  // Matrix orientation: rows = namespaces, columns = agents.
+  // This reads as "who can access this namespace" (one row per resource).
   const matrix = useMemo(() => {
     if (!agents.data || !permissions.data || !namespaces.data) return null
 
-    const ns = namespaces.data.map((n) => n.namespace)
-    const rows = agents.data.map((agent) => {
-      const cells: CellInfo[] = ns.map((namespace) => {
-        // Find first matching rule for this agent + namespace + selectedScope
+    const agentsList = agents.data
+    const rows = namespaces.data.map((n) => {
+      const namespace = n.namespace
+      const cells: CellInfo[] = agentsList.map((agent) => {
         const rules = permissions.data
           .filter(
             (r) =>
@@ -72,10 +74,10 @@ export function AccessMapPage() {
         }
         return { access: 'none' as AccessType, ruleId: null, rulePriority: null, namespaceFilter: null }
       })
-      return { agent, cells }
+      return { namespace, cells }
     })
 
-    return { namespaces: ns, rows }
+    return { agents: agentsList, rows }
   }, [agents.data, permissions.data, namespaces.data, selectedScope])
 
   const isLoading = agents.isLoading || permissions.isLoading || namespaces.isLoading
@@ -110,48 +112,53 @@ export function AccessMapPage() {
             <thead>
               <tr className="bg-surface-secondary">
                 <th className="sticky left-0 z-10 bg-surface-secondary px-4 py-3 text-left text-xs font-medium text-content-secondary">
-                  Agent
+                  Namespace
                 </th>
-                {matrix.namespaces.map((ns) => (
+                {matrix.agents.map((agent) => (
                   <th
-                    key={ns}
+                    key={agent.agent_id}
                     className="px-3 py-3 text-center text-xs font-medium text-content-secondary"
                   >
-                    <span className="inline-block max-w-[100px] truncate" title={ns}>{ns}</span>
+                    <span className="inline-block max-w-[120px] truncate" title={agent.agent_name}>
+                      {agent.agent_name}
+                    </span>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {matrix.rows.map(({ agent, cells }) => (
-                <tr key={agent.agent_id} className="border-t border-border hover:bg-surface-secondary/30">
-                  <td className="sticky left-0 z-10 bg-white px-4 py-3 font-medium text-content-primary">
-                    {agent.agent_name}
+              {matrix.rows.map(({ namespace, cells }) => (
+                <tr key={namespace} className="border-t border-border hover:bg-surface-secondary/30">
+                  <td className="sticky left-0 z-10 bg-white px-4 py-3 font-mono text-xs font-medium text-content-primary">
+                    {namespace}
                   </td>
-                  {cells.map((info, i) => (
-                    <td
-                      key={i}
-                      className="px-3 py-3 text-center"
-                      onClick={() => {
-                        const ns = matrix.namespaces[i] ?? ''
-                        setTooltip((prev) =>
-                          prev?.agentName === agent.agent_name && prev?.ns === ns
-                            ? null
-                            : { agentName: agent.agent_name, ns, info },
-                        )
-                      }}
-                    >
-                      <span
-                        className={cn(
-                          'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-xs font-medium capitalize transition-transform hover:scale-110',
-                          accessColors[info.access],
-                        )}
-                        title={`${info.access} — click for details`}
+                  {cells.map((info, i) => {
+                    const agent = matrix.agents[i]
+                    return (
+                      <td
+                        key={agent?.agent_id ?? i}
+                        className="px-3 py-3 text-center"
+                        onClick={() => {
+                          const agentName = agent?.agent_name ?? ''
+                          setTooltip((prev) =>
+                            prev?.agentName === agentName && prev?.ns === namespace
+                              ? null
+                              : { agentName, ns: namespace, info },
+                          )
+                        }}
                       >
-                        {info.access[0]?.toUpperCase()}
-                      </span>
-                    </td>
-                  ))}
+                        <span
+                          className={cn(
+                            'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-xs font-medium capitalize transition-transform hover:scale-110',
+                            accessColors[info.access],
+                          )}
+                          title={`${info.access} — click for details`}
+                        >
+                          {info.access[0]?.toUpperCase()}
+                        </span>
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>

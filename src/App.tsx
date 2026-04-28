@@ -10,12 +10,12 @@ import { HealthStatusPage } from '@/pages/health/HealthStatusPage'
 import { AuditLogPage } from '@/pages/audit/AuditLogPage'
 import { PermissionListPage } from '@/pages/permissions/PermissionListPage'
 import { MemoryExplorerPage } from '@/pages/memories/MemoryExplorerPage'
+import { NamespacesPage } from '@/pages/namespaces/NamespacesPage'
 import { AccessMapPage } from '@/pages/access/AccessMapPage'
 import { AccessGraphPage } from '@/pages/access/AccessGraphPage'  // F12
 import { ConsentQueuePage } from '@/pages/consent/ConsentQueuePage'
 import { StorageAnalyticsPage } from '@/pages/analytics/StorageAnalyticsPage'
 import { SecurityAlertsPage } from '@/pages/security/SecurityAlertsPage'
-import { WaitlistManagementPage } from '@/pages/waitlist/WaitlistManagementPage'
 import { ConnectorsPage } from '@/pages/connectors/ConnectorsPage'
 
 export function App() {
@@ -40,6 +40,7 @@ export function App() {
         <Route path="audit" element={<AuditLogPage />} />
         <Route path="permissions" element={<PermissionListPage />} />
         <Route path="memories" element={<MemoryExplorerPage />} />
+        <Route path="namespaces" element={<NamespacesPage />} />
         <Route path="access" element={<AccessMapPage />} />
         <Route path="access-graph" element={<AccessGraphPage />} />  {/* F12 */}
         <Route path="consent" element={<ConsentQueuePage />} />
@@ -55,15 +56,6 @@ export function App() {
             </RequireAuth>
           }
         />
-        <Route
-          path="waitlist"
-          element={
-            <RequireAuth requiredRole="super_admin">
-              <WaitlistManagementPage />
-            </RequireAuth>
-          }
-        />
-
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

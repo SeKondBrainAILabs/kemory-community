@@ -1,107 +1,168 @@
-import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { cn } from '@/lib/utils'
-import { useAuth } from '@/context/AuthContext'
+import type { LucideIcon } from 'lucide-react'
 import {
+  Brain,
   LayoutDashboard,
   Bot,
+  Database,
+  FolderTree,
   Heart,
   ScrollText,
   Shield,
-  Database,
   Network,
   Bell,
   BarChart3,
   AlertTriangle,
-  Users,
   Plug,
-  ChevronLeft,
-  ChevronRight,
-  Brain,
   GitGraph,
+  Settings,
+  MessageCircle,
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useAuth } from '@/context/AuthContext'
 
-interface NavItem {
+/**
+ * Kemory inner sidebar.
+ *
+ * This is the active SekondBrain app's OWN navigation. It sits to the
+ * right of the outer SekondBrainRail (app switcher). Layout / styling
+ * mirrors the Pulse reference:
+ *   - App header with logo, name, subtitle & version block.
+ *   - Grouped nav links with label + icon.
+ *   - Settings + Feedback at the bottom.
+ *
+ * Routes match the post-rebrand baseline (Kemory): /system-health,
+ * /access-graph, /connectors, etc. Role-gated items hide for users
+ * without the required role.
+ */
+
+type NavItem = {
   to: string
-  icon: typeof LayoutDashboard
+  icon: LucideIcon
   label: string
   requiredRole?: string
 }
 
-const navItems: NavItem[] = [
+// Primary: the Kemory core workspaces.
+// (Operations & ops items live in opsNav below — keeps primary/secondary split.)
+// Waitlist is intentionally absent — removed in feat(rebrand-phase-2).
+const primaryNav: NavItem[] = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
-  { to: '/agents', icon: Bot, label: 'Agents' },
-  { to: '/system-health', icon: Heart, label: 'Health' },
-  { to: '/audit', icon: ScrollText, label: 'Audit Log' },
-  { to: '/permissions', icon: Shield, label: 'Permissions' },
   { to: '/memories', icon: Database, label: 'Memories' },
+  { to: '/namespaces', icon: FolderTree, label: 'Namespaces' },
+  { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/access', icon: Network, label: 'Access Map' },
-  { to: '/access-graph', icon: GitGraph, label: 'Access Graph' },  // F12
-  { to: '/consent', icon: Bell, label: 'Consent Queue' },
-  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/connectors', icon: Plug, label: 'Connectors' },
-  { to: '/security', icon: AlertTriangle, label: 'Content Inspector', requiredRole: 'super_admin' },
-  { to: '/waitlist', icon: Users, label: 'Waitlist', requiredRole: 'super_admin' },
 ]
 
-export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false)
-  const { hasRole } = useAuth()
+// Operations / control plane (matches post-rebrand baseline routes).
+const opsNav: NavItem[] = [
+  { to: '/system-health', icon: Heart, label: 'Health' },
+  { to: '/permissions', icon: Shield, label: 'Permissions' },
+  { to: '/consent', icon: Bell, label: 'Consent Queue' },
+  { to: '/audit', icon: ScrollText, label: 'Audit Log' },
+  { to: '/access-graph', icon: GitGraph, label: 'Access Graph' },
+  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { to: '/connectors', icon: Plug, label: 'Connectors' },
+  {
+    to: '/security',
+    icon: AlertTriangle,
+    label: 'Content Inspector',
+    requiredRole: 'super_admin',
+  },
+]
 
-  const visibleItems = navItems.filter(
+function NavRow({ to, icon: Icon, label }: NavItem) {
+  return (
+    <NavLink
+      to={to}
+      end={to === '/'}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+          isActive
+            ? 'bg-white text-content-primary shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04]'
+            : 'text-content-secondary hover:bg-black/[0.04] hover:text-content-primary',
+        )
+      }
+    >
+      <Icon size={16} className="shrink-0" />
+      <span className="truncate">{label}</span>
+    </NavLink>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">
+      {children}
+    </div>
+  )
+}
+
+export function Sidebar() {
+  const { hasRole } = useAuth()
+  const visibleOps = opsNav.filter(
     (item) => !item.requiredRole || hasRole(item.requiredRole),
   )
 
   return (
     <aside
-      className={cn(
-        'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-white transition-all duration-200',
-        collapsed ? 'w-[80px]' : 'w-[280px]',
-      )}
+      aria-label="Kemory"
+      className="fixed left-[56px] top-0 z-40 flex h-screen w-[240px] flex-col border-r border-black/[0.06] bg-white/60 backdrop-blur-[20px]"
     >
-      {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-primary text-white">
-          <Brain size={20} />
+      {/* App header: Kemory app tile + name + version block */}
+      <div className="flex items-start gap-3 border-b border-black/[0.05] px-4 pb-4 pt-5">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-sm">
+          <Brain size={20} strokeWidth={2} />
         </div>
-        {!collapsed && (
-          <div className="overflow-hidden">
-            <div className="text-sm font-semibold text-content-primary">S9N Memory Vault</div>
-            <div className="text-xs text-content-tertiary">Control Plane</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] font-semibold leading-tight text-content-primary">
+            Kemory
           </div>
-        )}
+          <div className="mt-0.5 text-[11px] leading-tight text-content-tertiary">
+            by SekondBrain AI
+          </div>
+          <div className="mt-1.5 font-mono text-[10px] leading-tight text-content-tertiary/80">
+            FE:0.1.0 / BE:0.5.0
+          </div>
+        </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-        {visibleItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-brand-primary/10 text-brand-primary'
-                  : 'text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
-                collapsed && 'justify-center px-2',
-              )
-            }
-          >
-            <Icon size={20} className="shrink-0" />
-            {!collapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        <div className="space-y-0.5">
+          {primaryNav.map((item) => (
+            <NavRow key={item.to} {...item} />
+          ))}
+        </div>
+
+        <div className="mt-4">
+          <SectionLabel>Operations</SectionLabel>
+          <div className="space-y-0.5">
+            {visibleOps.map((item) => (
+              <NavRow key={item.to} {...item} />
+            ))}
+          </div>
+        </div>
       </nav>
 
-      {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="flex h-12 items-center justify-center border-t border-border text-content-tertiary hover:text-content-primary"
-      >
-        {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-      </button>
+      {/* Footer: settings + feedback */}
+      <div className="border-t border-black/[0.05] px-2 py-2">
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary"
+        >
+          <Settings size={16} />
+          <span>Settings</span>
+        </button>
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary"
+        >
+          <MessageCircle size={16} />
+          <span>Feedback?</span>
+        </button>
+      </div>
     </aside>
   )
 }

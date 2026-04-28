@@ -8,6 +8,8 @@ import { ClaudeDesktopWizard } from './wizards/ClaudeDesktopWizard'
 import { AgentWizard } from './wizards/AgentWizard'
 import { CognitionBridgeWizard } from './wizards/CognitionBridgeWizard'
 import { WebhookWizard } from './wizards/WebhookWizard'
+import { McpClientWizard } from './wizards/McpClientWizard'
+import { mcpClientDescriptors } from './wizards/mcpClientDescriptors'
 
 interface Props {
   connectorId: ConnectorId
@@ -17,10 +19,27 @@ interface Props {
 const titles: Record<ConnectorId, string> = {
   'claude-code': 'Set up Claude Code',
   'claude-desktop': 'Set up Claude Desktop',
+  cursor: 'Set up Cursor',
+  windsurf: 'Set up Windsurf',
+  cline: 'Set up Cline',
+  codex: 'Set up ChatGPT / Codex CLI',
+  'gemini-cli': 'Set up Gemini CLI',
+  ollama: 'Set up Ollama',
+  'custom-mcp': 'Set up Custom MCP Client',
   'custom-agent': 'Register Custom Agent',
   'cognition-os': 'Configure Cognition OS Bridge',
   webhook: 'Configure Webhook',
 }
+
+const GENERIC_MCP_IDS: ReadonlySet<ConnectorId> = new Set<ConnectorId>([
+  'cursor',
+  'windsurf',
+  'cline',
+  'codex',
+  'gemini-cli',
+  'ollama',
+  'custom-mcp',
+])
 
 export function ConnectorWizard({ connectorId, onClose }: Props) {
   return (
@@ -44,6 +63,12 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
             {connectorId === 'custom-agent' && <AgentWizard onClose={onClose} />}
             {connectorId === 'cognition-os' && <CognitionBridgeWizard onClose={onClose} />}
             {connectorId === 'webhook' && <WebhookWizard onClose={onClose} />}
+            {GENERIC_MCP_IDS.has(connectorId) && mcpClientDescriptors[connectorId] && (
+              <McpClientWizard
+                descriptor={mcpClientDescriptors[connectorId]}
+                onClose={onClose}
+              />
+            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

@@ -15,12 +15,25 @@ import {
   Pause,
   Ban,
   Play,
+  Code2,
+  Wind,
+  SquareTerminal,
+  Sparkles,
+  Cpu,
+  Puzzle,
 } from 'lucide-react'
 import { ConnectorWizard } from './ConnectorWizard'
 
 export type ConnectorId =
   | 'claude-code'
   | 'claude-desktop'
+  | 'cursor'
+  | 'windsurf'
+  | 'cline'
+  | 'codex'
+  | 'gemini-cli'
+  | 'ollama'
+  | 'custom-mcp'
   | 'custom-agent'
   | 'cognition-os'
   | 'webhook'
@@ -50,6 +63,62 @@ const connectors: ConnectorDef[] = [
     category: 'MCP Clients',
     icon: Monitor,
     matchAgent: 'claude-desktop-agent',
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    description: 'AI-first IDE — persistent memory across coding sessions',
+    category: 'MCP Clients',
+    icon: Code2,
+    matchAgent: 'cursor-agent',
+  },
+  {
+    id: 'windsurf',
+    name: 'Windsurf',
+    description: 'Codeium Windsurf — MCP memory for Cascade agents',
+    category: 'MCP Clients',
+    icon: Wind,
+    matchAgent: 'windsurf-agent',
+  },
+  {
+    id: 'cline',
+    name: 'Cline',
+    description: 'Autonomous VS Code agent — MCP memory integration',
+    category: 'MCP Clients',
+    icon: SquareTerminal,
+    matchAgent: 'cline-agent',
+  },
+  {
+    id: 'codex',
+    name: 'ChatGPT / Codex CLI',
+    description: 'OpenAI Codex CLI — memory bridge via MCP',
+    category: 'MCP Clients',
+    icon: Sparkles,
+    matchAgent: 'codex-agent',
+  },
+  {
+    id: 'gemini-cli',
+    name: 'Gemini CLI',
+    description: 'Google Gemini CLI — MCP memory integration',
+    category: 'MCP Clients',
+    icon: Sparkles,
+    matchAgent: 'gemini-cli-agent',
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama',
+    description: 'Local Ollama runtime with MCP-aware front-end',
+    category: 'MCP Clients',
+    icon: Cpu,
+    matchAgent: 'ollama-agent',
+  },
+  {
+    id: 'custom-mcp',
+    name: 'Custom MCP Client',
+    description: 'Any MCP-compliant client — generic setup instructions',
+    category: 'MCP Clients',
+    icon: Puzzle,
+    matchAgent: 'custom-mcp-agent',
   },
   {
     id: 'custom-agent',
@@ -99,7 +168,7 @@ export function ConnectorsPage() {
     <PageShell>
       <div className="mb-6">
         <p className="text-sm text-content-secondary">
-          Connect external systems to the Memory Vault. Each connector provides a step-by-step setup wizard.
+          Connect external systems to Kemory. Each connector provides a step-by-step setup wizard.
         </p>
       </div>
 
