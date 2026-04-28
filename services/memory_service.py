@@ -112,6 +112,13 @@ class MemoryResponse(BaseModel):
     compression_tier: str = "L1"
     # S9N-DEDUP: populated when dedup prevented a new memory from being created
     dedup: Optional[DedupInfo] = None
+    # Populated when the namespace matcher AUTO_REDIRECTed the write to a
+    # different namespace than the one requested. The caller can compare
+    # `redirected_from` against the namespace they sent to detect a silent
+    # merge — important for benchmarks and bulk-ingest tools that depend
+    # on namespace isolation. Only set when the matcher actually changed
+    # the target; absent (None) on REUSE-by-exact-match or CREATE_NEW.
+    redirected_from: Optional[str] = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -239,6 +246,7 @@ async def create_memory(
     # redirect; 0.60..0.90 ⇒ raise RelatedNamespaceConflict so the router
     # returns 409 (unless allow_duplicate=True); <0.60 ⇒ create fresh and
     # eagerly seed a NamespacePolicy row so description/summary can attach.
+    redirected_from: Optional[str] = None
     if not request.allow_duplicate:
         try:
             from backend.services.namespace_matcher import (
@@ -251,6 +259,15 @@ async def create_memory(
             if resolution.action == ResolutionAction.SUGGEST:
                 raise RelatedNamespaceConflict(request.namespace, resolution.candidates)
             if resolution.action in (ResolutionAction.REUSE, ResolutionAction.AUTO_REDIRECT):
+                # Capture the original requested namespace BEFORE rewriting
+                # so the response can surface the silent redirect to the
+                # caller. Only set for AUTO_REDIRECT (REUSE means the names
+                # were identical after normalization, which isn't surprising).
+                if (
+                    resolution.action == ResolutionAction.AUTO_REDIRECT
+                    and resolution.namespace != request.namespace
+                ):
+                    redirected_from = request.namespace
                 # Rewrite the request to the existing namespace before dedup/write
                 request = request.model_copy(update={"namespace": resolution.namespace})
                 await apply_resolution(resolution, request.namespace_description, db, user_id)
@@ -503,7 +520,16 @@ async def create_memory(
     except Exception:
         logger.debug("compression.hook_skipped", reason="import_or_task_error")
 
-    return _to_response(memory)
+    response = _to_response(memory)
+    if redirected_from is not None:
+        response.redirected_from = redirected_from
+        logger.info(
+            "namespace_matcher.auto_redirect",
+            requested=redirected_from,
+            resolved_to=request.namespace,
+            memory_id=str(memory.memory_id),
+        )
+    return response
 
 
 async def get_memory(

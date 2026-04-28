@@ -95,7 +95,73 @@ def normalize(ns: str) -> str:
     return _NORMALIZE_RE.sub("", ns.strip().lower())
 
 
+def _is_indexed_sibling_pair(a: str, b: str) -> bool:
+    """
+    Detect when two namespace strings look like structured siblings rather
+    than typos: shared substantial prefix (≥ 6 chars and ≥ 50% of the
+    shorter name) and at least one of the differing suffixes contains a
+    digit.
+
+    Used to short-circuit BOTH fuzzy and semantic matching, because
+    sentence-transformers embeddings on short namespace strings see
+    `lme_bench_ku-001` and `lme_bench_ie-001` as ~0.91 similar (both are
+    short structured tokens with near-identical character distributions),
+    which would otherwise drive a silent AUTO_REDIRECT.
+    """
+    if not a or not b:
+        return False
+    prefix_len = 0
+    for i in range(min(len(a), len(b))):
+        if a[i] != b[i]:
+            break
+        prefix_len = i + 1
+    shorter = min(len(a), len(b))
+    if not (
+        prefix_len >= 6
+        and prefix_len >= 0.5 * shorter
+        and prefix_len < len(a)
+        and prefix_len < len(b)
+    ):
+        return False
+    suffix_a = a[prefix_len:]
+    suffix_b = b[prefix_len:]
+    return any(c.isdigit() for c in suffix_a + suffix_b)
+
+
 def _fuzzy_ratio(a: str, b: str) -> float:
+    """
+    Fuzzy similarity tuned for namespace matching.
+
+    Plain SequenceMatcher.ratio() inflates similarity for sibling namespaces
+    that share a long prefix and only differ in a structured suffix
+    (e.g. `lme_bench_mr-002` vs `lme_bench_ie-001` ≈ 0.87 — well above
+    AUTO_REDIRECT). That triggers silent merging of obviously-distinct
+    buckets.
+
+    Heuristic: when two names share a substantial common prefix
+    (≥ 6 chars and ≥ 50% of the shorter name) AND the differing suffixes
+    contain a digit, treat them as a structured sibling pattern (xx-001
+    vs yy-002, _v1 vs _v2, run_2026_01 vs run_2026_02, etc.) rather than a
+    typo. Score them on suffix similarity alone, which is correctly low.
+
+    Typos are unaffected because:
+      • the changed character is usually a letter, not a digit
+        (`alice:privte` vs `alice:private` — suffixes `te` / `ate`,
+         no digits → fall through to full-string fuzzy = 0.96)
+      • or the common prefix is short
+        (`user_prefs` vs `userprefs` — prefix `user`, 4 chars → fall
+         through to full-string fuzzy = 0.95)
+    """
+    if _is_indexed_sibling_pair(a, b):
+        # Score on suffix-after-common-prefix only — correctly low for
+        # structured siblings (`lme_bench_mr-002` vs `lme_bench_ie-001`
+        # → suffix fuzzy ≈ 0.50; bench-001 vs bench-002 → 0.0).
+        prefix_len = 0
+        for i in range(min(len(a), len(b))):
+            if a[i] != b[i]:
+                break
+            prefix_len = i + 1
+        return SequenceMatcher(None, a[prefix_len:], b[prefix_len:]).ratio()
     return SequenceMatcher(None, a, b).ratio()
 
 
@@ -178,8 +244,16 @@ def _best_score(
     scored: list[NamespaceCandidate] = []
     for existing_ns, existing_desc in existing:
         fuzzy = _fuzzy_ratio(normalize(requested), normalize(existing_ns))
+        # Sentence-transformer embeddings on short structured names see
+        # `lme_bench_ku-001` ≈ `lme_bench_ie-001` at 0.91 — high enough
+        # to bypass the prefix-aware fuzzy fix and trigger AUTO_REDIRECT
+        # on what are obviously sibling buckets. Suppress semantic when
+        # the pair matches the indexed-sibling pattern.
+        is_sibling = _is_indexed_sibling_pair(
+            normalize(requested), normalize(existing_ns),
+        )
         semantic = 0.0
-        if req_vec is not None:
+        if req_vec is not None and not is_sibling:
             try:
                 ex_text = f"{existing_ns} {existing_desc or ''}".strip()
                 ex_vec = _embed(ex_text)
