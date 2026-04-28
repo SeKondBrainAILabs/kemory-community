@@ -4,7 +4,8 @@ Kemory CLI — MCP stdio bridge.
 Replaces the standalone ``mcp_bridge/server.py`` with one that:
   * Reads ``~/.kemory/credentials`` instead of an env-var API key.
   * Auto-refreshes the access token when it nears expiry.
-  * Falls back to ``S9NMV_API_KEY`` if set, so existing API-key-based
+  * Falls back to ``KEMORY_API_KEY`` (or the legacy aliases
+    ``S9NMV_API_KEY`` / ``KORA_API_KEY``) if set, so existing API-key-based
     setups keep working unchanged.
 
 The bridge subscribes to two stdio MCP methods (list_tools, call_tool) and
@@ -28,6 +29,10 @@ from kemory_cli.config import Credentials
 
 logger = logging.getLogger("kemory.mcp_bridge")
 
+# Process-local flag so the legacy-alias deprecation log fires once per
+# bridge process, not once per MCP tool call.
+_legacy_alias_warned = False
+
 server = Server("kemory")
 
 
@@ -50,12 +55,29 @@ def _resolve_url() -> str:
 def _build_headers() -> dict[str, str]:
     """Pick the right auth header.
 
-    1. ``S9NMV_API_KEY`` (or legacy ``KORA_API_KEY``) → X-API-Key
+    1. ``KEMORY_API_KEY`` (or legacy aliases ``S9NMV_API_KEY``, ``KORA_API_KEY``) → X-API-Key
     2. ``~/.kemory/credentials`` access_token → Authorization: Bearer
     3. neither → empty (calls will fail with a clear message)
+
+    P1 #9: KEMORY_API_KEY is the canonical name. Legacy aliases are
+    accepted (with a one-time deprecation log on first use) so existing
+    integrations don't break on upgrade. Drop the aliases in v0.3.
     """
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    api_key = os.environ.get("S9NMV_API_KEY") or os.environ.get("KORA_API_KEY")
+    api_key = (
+        os.environ.get("KEMORY_API_KEY")
+        or os.environ.get("S9NMV_API_KEY")
+        or os.environ.get("KORA_API_KEY")
+    )
+    # Warn once if the caller is on a legacy alias.
+    if api_key and not os.environ.get("KEMORY_API_KEY"):
+        global _legacy_alias_warned
+        if not _legacy_alias_warned:
+            logger.warning(
+                "Using deprecated env var (S9NMV_API_KEY / KORA_API_KEY). "
+                "Switch to KEMORY_API_KEY — legacy aliases will be removed in v0.3."
+            )
+            _legacy_alias_warned = True
     if api_key:
         headers["X-API-Key"] = api_key
         return headers
@@ -110,7 +132,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             type="text",
             text=(
                 "Kemory has no credentials. Run `kemory login` to authenticate, "
-                "or set S9NMV_API_KEY for API-key auth."
+                "or set KEMORY_API_KEY for API-key auth."
             ),
         )]
 

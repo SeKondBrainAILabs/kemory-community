@@ -93,21 +93,28 @@ def cli() -> None:
 @click.option("--no-browser", is_flag=True, help="Print the URL but don't open it.")
 @click.option("--local", "local_mode", is_flag=True,
               help="Skip OAuth and use a machine-local API key (dev mode). "
-                   "Reads S9NMV_API_KEY or KORA_API_KEY from the env, or "
-                   "registers a new agent against KEMORY_URL with a generated key.")
+                   "Reads KEMORY_API_KEY (or legacy S9NMV_API_KEY / "
+                   "KORA_API_KEY) from the env, or registers a new agent "
+                   "against KEMORY_URL with a generated key.")
 def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, local_mode: bool) -> None:
     """Log in. Default is OAuth 2.0 device flow against Keycloak; --local
     skips OAuth and stores a kemory API key at ~/.kemory/credentials so
     self-hosted / dev-mode users can onboard without a Keycloak install.
     """
     if local_mode:
-        api_key = os.environ.get("S9NMV_API_KEY") or os.environ.get("KORA_API_KEY")
+        # P1 #9: KEMORY_API_KEY is canonical; the older names still work
+        # for one minor version while existing integrations migrate.
+        api_key = (
+            os.environ.get("KEMORY_API_KEY")
+            or os.environ.get("S9NMV_API_KEY")
+            or os.environ.get("KORA_API_KEY")
+        )
         if not api_key:
             raise click.ClickException(
-                "--local mode needs an API key. Set S9NMV_API_KEY=<key> in the "
-                "environment, then re-run `kemory login --local`. Generate a "
-                "key by registering an agent against your local kemory: see "
-                "docs/getting-started.md."
+                "--local mode needs an API key. Set KEMORY_API_KEY=<key> in "
+                "the environment, then re-run `kemory login --local`. "
+                "Generate a key by registering an agent against your local "
+                "kemory: see docs/getting-started.md."
             )
         # Store the key as a pseudo-credential so the bridge can pick it up.
         # We use a far-future expiry and a placeholder issuer so refresh()
