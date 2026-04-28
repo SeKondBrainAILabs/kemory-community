@@ -1,5 +1,21 @@
 """
-S9N Memory Vault — Memory Service
+S9N Memory Vault — Memory Service (HTTP layer).
+
+This module is the REST-shaped layer. Its consumers are FastAPI route
+handlers (``backend/api/routes/memories.py``) and the MCP tool dispatcher
+(``backend/mcp/tools.py``). It speaks Pydantic request/response models,
+calls the Gatekeeper for permission checks, and emits audit events.
+
+It is intentionally distinct from ``memory_vault/service/memory_service.py``
+which is the library-shaped layer (StorageBackend interface, dual-mode for
+SQLite local and Postgres platform). The two services serve different
+consumers and have different APIs by design.
+
+The dedup-critical content-hash primitive lives in
+``memory_vault/utils/text.py`` so both layers compute identical hashes
+for the same content. Phase 2 of the consolidation work — delegating
+backend storage calls through the library's StorageBackend interface —
+is tracked as a follow-up to P0 #1 in the codebase review epic.
 
 Implements core memory CRUD operations with:
 - Namespace isolation: agents can only access their own namespace unless granted access
@@ -14,8 +30,6 @@ Stories: F04-US-001 (write), F04-US-002 (read), F04-US-003 (search),
          F04-US-004 (delete), F04-US-005 (namespace isolation)
 """
 import asyncio
-import hashlib
-import unicodedata
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -27,6 +41,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
+# Canonical dedup primitives — both this layer and memory_vault.MemoryService
+# import from here so writes via either path produce identical content_hashes.
+# See memory_vault/utils/text.py for why.
+from memory_vault.utils.text import content_hash as _content_hash, normalize_content as _normalize_content
 from backend.services.gatekeeper_service import (
     evaluate, EvaluationRequest, GatekeeperDecision,
     create_rule, PermissionRuleCreate,
@@ -854,15 +872,10 @@ def _resolve_date(value: str, now: datetime) -> Optional[datetime]:
 # ─── Deduplication Helpers (S9N-DEDUP) ───────────────────────────
 
 
-def _normalize_content(content: str) -> str:
-    """Normalise content for hashing: NFC unicode, strip, collapse whitespace."""
-    text = unicodedata.normalize("NFC", content)
-    return " ".join(text.split())
-
-
-def _content_hash(content: str) -> str:
-    """SHA-256 hex digest of normalised content."""
-    return hashlib.sha256(_normalize_content(content).encode("utf-8")).hexdigest()
+# NOTE: _normalize_content and _content_hash now imported from
+# memory_vault.utils.text (see top-of-file imports). Kept as private aliases
+# above to avoid touching every callsite in this 1276-LOC module — those
+# get migrated as part of P3 #16 when the file is split.
 
 
 async def _find_by_hash(
