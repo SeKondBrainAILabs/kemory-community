@@ -210,9 +210,12 @@ def generate_api_key() -> tuple[str, str, str]:
         The plaintext key is shown to the user ONCE and never stored.
     Uses SHA-256 pre-hash before bcrypt to handle the 72-byte limit.
     """
-    # Generate a 24-byte random key with 's9nmv_' prefix for identification
+    # P1 #9: new keys carry the `kemory_` identification prefix. Existing
+    # `s9nmv_…` (and `kora_…`) keys remain valid because the prefix is
+    # identification-only — the server stores api_key_prefix as the first
+    # 16 hex chars of SHA-256(plaintext), not the human-readable prefix.
     raw_key = secrets.token_urlsafe(24)
-    plaintext_key = f"s9nmv_{raw_key}"
+    plaintext_key = f"kemory_{raw_key}"
     # bcrypt.hashpw produces the same $2b$... wire format passlib was
     # producing — existing DB hashes verify unchanged.
     hashed_key = bcrypt.hashpw(

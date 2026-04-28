@@ -49,7 +49,12 @@ class Settings(BaseSettings):
     )
 
     # ─── Application ──────────────────────────────────────────────
-    app_name: str = "S9N Memory Vault"
+    # P1 #9: rebranded "S9N Memory Vault" → "Kemory" in the user-facing
+    # default. The DB table prefix `s9nmv_*` and the Python package
+    # `memory_vault` remain on legacy names until migration 011 (the
+    # follow-up that renames tables; not safe to do without a coordinated
+    # deploy + data migration).
+    app_name: str = "Kemory"
     app_version: str = "0.1.0"
     environment: str = "development"
     log_level: str = "INFO"
