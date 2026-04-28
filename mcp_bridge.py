@@ -12,6 +12,7 @@ The bridge subscribes to two stdio MCP methods (list_tools, call_tool) and
 forwards them to ``$KEMORY_URL/mcp/v1/*``. Identical wire shape to the
 old standalone bridge so no other code needs to change.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,9 +66,7 @@ def _build_headers() -> dict[str, str]:
     """
     headers: dict[str, str] = {"Content-Type": "application/json"}
     api_key = (
-        os.environ.get("KEMORY_API_KEY")
-        or os.environ.get("S9NMV_API_KEY")
-        or os.environ.get("KORA_API_KEY")
+        os.environ.get("KEMORY_API_KEY") or os.environ.get("S9NMV_API_KEY") or os.environ.get("KORA_API_KEY")
     )
     # Warn once if the caller is on a legacy alias.
     if api_key and not os.environ.get("KEMORY_API_KEY"):
@@ -128,13 +127,15 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     headers = _build_headers()
     if "Authorization" not in headers and "X-API-Key" not in headers:
-        return [TextContent(
-            type="text",
-            text=(
-                "Kemory has no credentials. Run `kemory login` to authenticate, "
-                "or set KEMORY_API_KEY for API-key auth."
-            ),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    "Kemory has no credentials. Run `kemory login` to authenticate, "
+                    "or set KEMORY_API_KEY for API-key auth."
+                ),
+            )
+        ]
 
     async with _client() as client:
         try:
@@ -154,16 +155,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         except httpx.HTTPStatusError as exc:
             return [TextContent(type="text", text=f"HTTP {exc.response.status_code}: {exc.response.text}")]
         except httpx.ConnectError:
-            return [TextContent(
-                type="text",
-                text=(
-                    f"Cannot connect to kemory at {_resolve_url()}.\n"
-                    f"Hints:\n"
-                    f"  • Is the URL correct? Try `kemory doctor`.\n"
-                    f"  • Set KEMORY_URL=<url> if you need to override.\n"
-                    f"  • For local dev, run `docker compose up -d kemory-api`."
-                ),
-            )]
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Cannot connect to kemory at {_resolve_url()}.\n"
+                        f"Hints:\n"
+                        f"  • Is the URL correct? Try `kemory doctor`.\n"
+                        f"  • Set KEMORY_URL=<url> if you need to override.\n"
+                        f"  • For local dev, run `docker compose up -d kemory-api`."
+                    ),
+                )
+            ]
         except Exception as exc:  # pragma: no cover — defensive
             return [TextContent(type="text", text=f"Bridge error: {type(exc).__name__}: {exc}")]
 

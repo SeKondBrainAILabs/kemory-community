@@ -12,6 +12,7 @@ Subcommands:
                 (Claude Code, Claude Desktop, Cursor, Continue.dev)
   mcp serve     Run the stdio MCP bridge (called by the MCP host, not humans)
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,6 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import click
 import httpx
@@ -29,10 +29,11 @@ from kemory_cli import __version__
 from kemory_cli.auth import (
     DeviceFlowError,
     get_valid_credentials,
+)
+from kemory_cli.auth import (
     login as run_login,
 )
-from kemory_cli.config import Credentials, credentials_path, kemory_dir
-
+from kemory_cli.config import Credentials, credentials_path
 
 # ─── Defaults ──────────────────────────────────────────────────────────────
 
@@ -85,17 +86,23 @@ def cli() -> None:
 
 
 @cli.command("login")
-@click.option("--kemory-url", default=DEFAULT_KEMORY_URL, show_default=True,
-              help="Base URL of the kemory API.")
-@click.option("--issuer", default=DEFAULT_KEYCLOAK_ISSUER, show_default=True,
-              help="Keycloak realm issuer URL.")
+@click.option(
+    "--kemory-url", default=DEFAULT_KEMORY_URL, show_default=True, help="Base URL of the kemory API."
+)
+@click.option(
+    "--issuer", default=DEFAULT_KEYCLOAK_ISSUER, show_default=True, help="Keycloak realm issuer URL."
+)
 @click.option("--client-id", default=DEFAULT_CLIENT_ID, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Print the URL but don't open it.")
-@click.option("--local", "local_mode", is_flag=True,
-              help="Skip OAuth and use a machine-local API key (dev mode). "
-                   "Reads KEMORY_API_KEY (or legacy S9NMV_API_KEY / "
-                   "KORA_API_KEY) from the env, or registers a new agent "
-                   "against KEMORY_URL with a generated key.")
+@click.option(
+    "--local",
+    "local_mode",
+    is_flag=True,
+    help="Skip OAuth and use a machine-local API key (dev mode). "
+    "Reads KEMORY_API_KEY (or legacy S9NMV_API_KEY / "
+    "KORA_API_KEY) from the env, or registers a new agent "
+    "against KEMORY_URL with a generated key.",
+)
 def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, local_mode: bool) -> None:
     """Log in. Default is OAuth 2.0 device flow against Keycloak; --local
     skips OAuth and stores a kemory API key at ~/.kemory/credentials so
@@ -128,10 +135,12 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, lo
             kemory_url=kemory_url,
         )
         creds.save()
-        click.echo(click.style(
-            f"✓ Local credential stored. The MCP bridge will forward "
-            f"X-API-Key to {kemory_url}.", fg="green"
-        ))
+        click.echo(
+            click.style(
+                f"✓ Local credential stored. The MCP bridge will forward X-API-Key to {kemory_url}.",
+                fg="green",
+            )
+        )
         return
 
     try:
@@ -158,12 +167,14 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, lo
             creds.email = data.get("email", "")
             creds.org_id = data.get("org_id", "")
             creds.save()
-            click.echo(click.style(
-                f"✓ Logged in as {creds.email or 'unknown'} · "
-                f"org={creds.org_id or '?'} · "
-                f"teams={[t['name'] for t in data.get('teams', [])]}",
-                fg="green",
-            ))
+            click.echo(
+                click.style(
+                    f"✓ Logged in as {creds.email or 'unknown'} · "
+                    f"org={creds.org_id or '?'} · "
+                    f"teams={[t['name'] for t in data.get('teams', [])]}",
+                    fg="green",
+                )
+            )
             return
     except httpx.HTTPError:
         pass
@@ -179,7 +190,8 @@ def telemetry_cmd(state: str) -> None:
     fields collected and a guarantee on what is NOT collected (no user
     identity, no memory contents, no file paths).
     """
-    from kemory_cli.telemetry import enable, disable, _enabled, _telemetry_path
+    from kemory_cli.telemetry import _enabled, _telemetry_path, disable, enable
+
     if state == "on":
         install_id = enable()
         click.echo(click.style(f"✓ Telemetry enabled. install_id={install_id[:8]}…", fg="green"))
@@ -238,8 +250,13 @@ def keys_grp() -> None:
 @keys_grp.command("create")
 @click.option("--name", required=True, help="Agent name (unique per user).")
 @click.option("--description", default="Issued via `kemory keys create`")
-@click.option("--write", "allow_write", is_flag=True, default=False,
-              help="Grant write access. Default is read-only (least privilege).")
+@click.option(
+    "--write",
+    "allow_write",
+    is_flag=True,
+    default=False,
+    help="Grant write access. Default is read-only (least privilege).",
+)
 @click.pass_context
 def keys_create(ctx: click.Context, name: str, description: str, allow_write: bool) -> None:
     """Create an org-scoped API key. Read-only by default — pass --write to allow mutations."""
@@ -306,14 +323,14 @@ def _host_config_paths() -> dict[str, list[Path]]:
     macos_app_support = home / "Library" / "Application Support"
     win_appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
     return {
-        "claude-code":     [home / ".claude.json"],
-        "claude-desktop":  [
+        "claude-code": [home / ".claude.json"],
+        "claude-desktop": [
             macos_app_support / "Claude" / "claude_desktop_config.json",
             win_appdata / "Claude" / "claude_desktop_config.json",
             home / ".config" / "Claude" / "claude_desktop_config.json",
         ],
-        "cursor":          [home / ".cursor" / "mcp.json"],
-        "continue":        [home / ".continue" / "config.json"],
+        "cursor": [home / ".cursor" / "mcp.json"],
+        "continue": [home / ".continue" / "config.json"],
     }
 
 
@@ -347,17 +364,22 @@ def _write_mcp_entry(config_path: Path, name: str) -> None:
 
 
 @mcp_grp.command("install")
-@click.option("--host", "hosts", multiple=True,
-              type=click.Choice(["claude-code", "claude-desktop", "cursor", "continue", "all"]),
-              default=("claude-code",),
-              help="MCP host(s) to configure. Pass --host all to wire every "
-                   "supported host on this machine.")
-@click.option("--config", "config_path",
-              type=click.Path(dir_okay=False, path_type=Path),
-              default=None,
-              help="Override host detection — write directly to this path.")
-@click.option("--name", default="kemory", show_default=True,
-              help="Server name to register under mcpServers.")
+@click.option(
+    "--host",
+    "hosts",
+    multiple=True,
+    type=click.Choice(["claude-code", "claude-desktop", "cursor", "continue", "all"]),
+    default=("claude-code",),
+    help="MCP host(s) to configure. Pass --host all to wire every supported host on this machine.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Override host detection — write directly to this path.",
+)
+@click.option("--name", default="kemory", show_default=True, help="Server name to register under mcpServers.")
 def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> None:
     """Write an MCP server entry into one or more MCP hosts. No API key
     is stored in the config — the bridge reads ~/.kemory/credentials at
@@ -397,6 +419,7 @@ def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> 
 def mcp_serve() -> None:
     """Run the kemory stdio MCP bridge. Invoked by the MCP host, not humans."""
     from kemory_cli.mcp_bridge import serve as run_bridge
+
     run_bridge()
 
 
@@ -453,7 +476,9 @@ def doctor_cmd(ctx: click.Context) -> None:
             )
             if resp.status_code == 200:
                 me = resp.json()
-                emit("auth round-trip", True, f"org={me.get('org_id', '?')}, teams={len(me.get('teams', []))}")
+                emit(
+                    "auth round-trip", True, f"org={me.get('org_id', '?')}, teams={len(me.get('teams', []))}"
+                )
             elif resp.status_code == 401:
                 emit("auth round-trip", False, "401 — token expired? run `kemory login` again")
             else:

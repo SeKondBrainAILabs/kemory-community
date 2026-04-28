@@ -30,6 +30,7 @@ Disabling
 This file is INTENTIONALLY small. If telemetry expands beyond these
 fields, that requires its own ADR and an opt-in screen on first run.
 """
+
 from __future__ import annotations
 
 import os
@@ -39,7 +40,6 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import httpx
 

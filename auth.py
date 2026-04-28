@@ -18,6 +18,7 @@ Flow:
      until it gets back access+refresh tokens (or times out).
   4. Tokens are cached in ~/.kemory/credentials.
 """
+
 from __future__ import annotations
 
 import base64
@@ -28,12 +29,10 @@ import sys
 import time
 import webbrowser
 from dataclasses import dataclass
-from typing import Optional
 
 import httpx
 
 from kemory_cli.config import Credentials
-
 
 # ─── PKCE (RFC 7636) ──────────────────────────────────────────────────────
 # Defense-in-depth on top of the device-flow spec. RFC 8628 doesn't
@@ -43,11 +42,7 @@ from kemory_cli.config import Credentials
 
 def _pkce_pair() -> tuple[str, str]:
     """Return (code_verifier, code_challenge) for an S256 PKCE flow."""
-    verifier = (
-        base64.urlsafe_b64encode(secrets.token_bytes(32))
-        .rstrip(b"=")
-        .decode("ascii")
-    )
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
     challenge = (
         base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
         .rstrip(b"=")
@@ -103,9 +98,7 @@ def request_device_code(
         data["code_challenge_method"] = "S256"
     resp = httpx.post(url, data=data, timeout=timeout)
     if resp.status_code != 200:
-        raise DeviceFlowError(
-            f"device_code request failed: {resp.status_code} {resp.text}"
-        )
+        raise DeviceFlowError(f"device_code request failed: {resp.status_code} {resp.text}")
     data = resp.json()
     return DeviceCodeResponse(
         device_code=data["device_code"],
@@ -155,9 +148,7 @@ def poll_for_token(
             continue
         if err in {"expired_token", "access_denied"}:
             raise DeviceFlowError(f"device flow {err}: {body.get('error_description', '')}")
-        raise DeviceFlowError(
-            f"device flow unexpected response: {resp.status_code} {resp.text}"
-        )
+        raise DeviceFlowError(f"device flow unexpected response: {resp.status_code} {resp.text}")
 
     raise DeviceFlowError("device code expired before approval")
 
@@ -219,9 +210,7 @@ def refresh(creds: Credentials) -> Credentials:
         timeout=10.0,
     )
     if resp.status_code != 200:
-        raise DeviceFlowError(
-            f"refresh failed: {resp.status_code} {resp.text}. Run `kemory login`."
-        )
+        raise DeviceFlowError(f"refresh failed: {resp.status_code} {resp.text}. Run `kemory login`.")
     token = resp.json()
     creds.access_token = token["access_token"]
     creds.refresh_token = token.get("refresh_token", creds.refresh_token)

@@ -16,6 +16,7 @@ Why a flat file and not the OS keychain?
   on the refresh token (Keycloak idle timeout, 7d default) is the
   ultimate gate — a stolen file expires in days.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,6 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 CREDENTIALS_VERSION = 1
 
@@ -51,9 +51,9 @@ class Credentials:
     access_token: str
     refresh_token: str
     expires_at: float  # epoch seconds
-    issuer: str        # e.g. https://accounts.prod.apps.s9n.ai/realms/s9n
-    client_id: str     # kemory-cli
-    kemory_url: str    # e.g. https://kemory.prod.apps.s9n.ai
+    issuer: str  # e.g. https://accounts.prod.apps.s9n.ai/realms/s9n
+    client_id: str  # kemory-cli
+    kemory_url: str  # e.g. https://kemory.prod.apps.s9n.ai
     email: str = ""
     org_id: str = ""
     version: int = CREDENTIALS_VERSION
