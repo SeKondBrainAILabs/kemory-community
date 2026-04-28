@@ -12,7 +12,7 @@ Architecture note:
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
 
 from backend.core.database import Base
 from backend.core.types import GUID
@@ -35,7 +35,7 @@ class NamespacePolicy(Base):
     Stable namespaces (skills, system) should set auto_consolidate=False.
     """
 
-    __tablename__ = "s9nmv_namespace_policies"
+    __tablename__ = "kemory_namespace_policies"
 
     # ── Identity ──────────────────────────────────────────────────
     policy_id = Column(
@@ -97,6 +97,33 @@ class NamespacePolicy(Base):
         nullable=True,
         comment="Human-readable description of why this policy exists.",
     )
+
+    # ── Consolidated cross-session summary (Namespace tab + agent summary) ─
+    consolidated_summary = Column(
+        Text, nullable=True,
+        comment=(
+            "Rolling cross-session summary of this namespace, kept in sync by "
+            "the L3.1 compression pipeline. When absent we fall back to the "
+            "latest L3 concept memory (L3.0 fallback)."
+        ),
+    )
+    consolidated_summary_tier = Column(
+        String(8), nullable=True,
+        comment="Tier label of the current consolidated_summary (e.g. L3, L3.1).",
+    )
+    consolidated_summary_updated_at = Column(
+        DateTime(timezone=True), nullable=True,
+        comment="Timestamp when consolidated_summary was last upserted.",
+    )
+    related_namespaces = Column(
+        JSON, nullable=True,
+        comment=(
+            "Array of {namespace, similarity, detected_at} entries — populated "
+            "when the namespace matcher detected a 60-90% similar namespace at "
+            "create time. Surfaced in the Namespaces tab so the user can merge."
+        ),
+    )
+
     created_by = Column(
         GUID(),
         nullable=True,

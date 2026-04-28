@@ -33,6 +33,7 @@ Stories: F04-US-001 (write), F04-US-002 (read), F04-US-003 (search),
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Optional  # used by remaining Optional[X] hints in this file
 
 import structlog
 from pydantic import BaseModel, Field, model_validator
@@ -81,6 +82,21 @@ class MemoryCreate(BaseModel):
         default="user-private", description="agent-private, user-private, team, org-public"
     )
     team_id: str | None = Field(None, description="Team ID when visibility='team'")
+    namespace_description: str | None = Field(
+        None,
+        max_length=500,
+        description=(
+            "Optional description of the namespace; used by the matcher to detect "
+            "related namespaces and persisted on NamespacePolicy."
+        ),
+    )
+    allow_duplicate: bool = Field(
+        default=False,
+        description=(
+            "If True, skip the related-namespace matcher and create the namespace "
+            "as-requested even if similar ones exist."
+        ),
+    )
 
 
 class MemoryUpdate(BaseModel):
@@ -130,14 +146,23 @@ class MemoryResponse(BaseModel):
     access_count: int = 0
     created_at: str
     updated_at: str
+    # F12: Compression tier — L1 raw / L2 AAAK / L3.1 concept synthesis.
+    # Pipeline stores it in meta["_compression_tier"]; we lift to the top
+    # level so clients don't have to reach into metadata (and so TS types
+    # line up with MemoryResponse.compression_tier).
+    compression_tier: str = "L1"
     # S9N-DEDUP: populated when dedup prevented a new memory from being created
     dedup: DedupInfo | None = None
-    # F12: Memory compression level — L1 (raw observation), L2 (AAAK lossless), L3.1 (concept synthesis)
-    # Derived from metadata._compression_tier if present, otherwise defaults to L1.
-    compression_tier: str = "L1"
     # F12: Source memory IDs for L3.1 synthesized concepts (provenance tracking)
     # Populated from metadata._source_memory_ids when compression_tier is L3.1.
     source_memory_ids: list[str] | None = None
+    # Populated when the namespace matcher AUTO_REDIRECTed the write to a
+    # different namespace than the one requested. The caller can compare
+    # `redirected_from` against the namespace they sent to detect a silent
+    # merge — important for benchmarks and bulk-ingest tools that depend
+    # on namespace isolation. Only set when the matcher actually changed
+    # the target; absent (None) on REUSE-by-exact-match or CREATE_NEW.
+    redirected_from: str | None = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -170,9 +195,22 @@ class MemorySearchRequest(BaseModel):
     date_to: str | None = Field(
         None, description="ISO date string — only return memories created on or before this date"
     )
-    # F12: Filter by compression tier (L1, L2, L3.1)
+    # F12: Filter by memory compression tier (L1 raw / L2 AAAK / L3.1 concept).
+    # Tier is stored in meta["_compression_tier"]; this filter is applied
+    # client-side after the SQL pass so it works on both raw and hybrid paths.
     compression_tier: str | None = Field(
-        None, description="Filter by compression tier: 'L1' (raw), 'L2' (AAAK), 'L3.1' (concept)"
+        None,
+        description="Filter by memory compression tier: L1 / L2 / L3.1",
+    )
+    # KMV-S8.3: Graph-augmented recall — expand results via Cognition OS concept graph
+    use_graph: bool = Field(
+        default=False,
+        description=(
+            "When True, expand search results via Cognition OS concept graph traversal. "
+            "Related entities are retrieved from the graph and merged with local vault results. "
+            "Gracefully degrades to standard search if Cognition OS is unavailable. "
+            "Story: KMV-S8.3"
+        ),
     )
 
     @model_validator(mode="after")
@@ -248,6 +286,43 @@ async def create_memory(
         raise ValueError(
             f"Invalid content_type: '{request.content_type}'. Valid types: {sorted(VALID_CONTENT_TYPES)}"
         )
+
+    # ── Related-namespace matcher (pre-create) ───────────────────
+    # Detect near-duplicate namespaces before we commit. >=0.90 ⇒ silent
+    # redirect; 0.60..0.90 ⇒ raise RelatedNamespaceConflict so the router
+    # returns 409 (unless allow_duplicate=True); <0.60 ⇒ create fresh and
+    # eagerly seed a NamespacePolicy row so description/summary can attach.
+    redirected_from: Optional[str] = None
+    if not request.allow_duplicate:
+        try:
+            from backend.services.namespace_matcher import (
+                resolve_namespace, apply_resolution,
+                ResolutionAction, RelatedNamespaceConflict,
+            )
+            resolution = await resolve_namespace(
+                user_id, request.namespace, request.namespace_description, db,
+            )
+            if resolution.action == ResolutionAction.SUGGEST:
+                raise RelatedNamespaceConflict(request.namespace, resolution.candidates)
+            if resolution.action in (ResolutionAction.REUSE, ResolutionAction.AUTO_REDIRECT):
+                # Capture the original requested namespace BEFORE rewriting
+                # so the response can surface the silent redirect to the
+                # caller. Only set for AUTO_REDIRECT (REUSE means the names
+                # were identical after normalization, which isn't surprising).
+                if (
+                    resolution.action == ResolutionAction.AUTO_REDIRECT
+                    and resolution.namespace != request.namespace
+                ):
+                    redirected_from = request.namespace
+                # Rewrite the request to the existing namespace before dedup/write
+                request = request.model_copy(update={"namespace": resolution.namespace})
+                await apply_resolution(resolution, request.namespace_description, db, user_id)
+            else:
+                await apply_resolution(resolution, request.namespace_description, db, user_id)
+        except RelatedNamespaceConflict:
+            raise
+        except Exception as exc:
+            logger.debug("namespace_matcher.skipped", reason=str(exc))
 
     # ── S9N-DEDUP: Two-layer deduplication gate ──────────────────
     from backend.config.settings import settings
@@ -403,6 +478,7 @@ async def create_memory(
         )
 
     # KMV-E8 S8.1: Write-through hook — publish to Cognition OS (fire-and-forget)
+    # Cognition bridge is HTTP, no DB dependency, safe to schedule directly.
     try:
         from backend.services.cognition_bridge import get_cognition_bridge
 
@@ -410,7 +486,7 @@ async def create_memory(
         if bridge.enabled:
             asyncio.create_task(
                 bridge.publish_memory_event(
-                    memory_id=str(memory.id),
+                    memory_id=str(memory.memory_id),  # PK is memory_id, not id
                     content=memory.content,
                     namespace=memory.namespace,
                     user_id=str(user_id),
@@ -421,51 +497,75 @@ async def create_memory(
     except Exception:
         logger.debug("cognition_bridge.hook_skipped", reason="import_or_init_error")
 
+    # F14: Background tasks must NOT reuse the request-scoped `db` session —
+    # FastAPI's Depends(get_db) closes it as soon as create_memory returns,
+    # which means any later use throws InvalidRequestError silently and the
+    # task fails. Each fire-and-forget task below opens its own session via
+    # _get_session_factory(); that's the same pattern compression_pipeline
+    # uses successfully today.
+    from backend.core.database import _get_session_factory as _db_factory
+
     # S9N-EMBED: Fire-and-forget embedding generation (bge-small-en-v1.5, 384-dim).
-    # Runs in a background task so create_memory returns immediately.
-    async def _bg_embed(mem_id: uuid.UUID, content: str):
+    async def _bg_embed(mem_id: uuid.UUID, content: str) -> None:
         try:
             from memory_vault.embeddings.encoder import encode as _embed
-
-            vec = _embed(content)
-            # Direct SQL update — avoids loading the ORM object again
             from sqlalchemy import text as _sql
 
-            async with db.begin():
-                await db.execute(
-                    _sql(
-                        "UPDATE kora_memories SET embedding = :vec, embedding_model = :model WHERE memory_id = :mid"
-                    ),
-                    {"vec": list(vec), "model": "bge-small-en-v1.5", "mid": str(mem_id)},
-                )
+            vec = _embed(content)
+            async with _db_factory()() as own_db:
+                async with own_db.begin():
+                    await own_db.execute(
+                        _sql(
+                            "UPDATE kemory_memories "
+                            "SET embedding = :vec, embedding_model = :model "
+                            "WHERE memory_id = :mid"
+                        ),
+                        {
+                            "vec": list(vec),
+                            "model": "bge-small-en-v1.5",
+                            "mid": str(mem_id),
+                        },
+                    )
         except Exception as exc:
-            logger.debug("embedding.bg_failed", memory_id=str(mem_id), error=str(exc))
+            logger.warning(
+                "embedding.bg_failed",
+                memory_id=str(mem_id),
+                error=str(exc),
+            )
 
     try:
-        asyncio.create_task(_bg_embed(memory.memory_id, request.content))
+        asyncio.create_task(
+            _bg_embed(memory.memory_id, request.content),
+            name=f"embed:{memory.memory_id}",
+        )
     except Exception:
         logger.debug("embedding.task_skipped")
 
     # S9N-ENRICH: Fire-and-forget enrichment (entity extraction, concept tagging,
     # quality scoring). Runs in the background so create_memory returns fast.
-    try:
-        from backend.services.enrichment_service import enrich_memory as _enrich
+    # enrich_memory only flushes — we own the commit here; without it the
+    # quality_score / enrichment_status / enrichment metadata get rolled back
+    # when the session context exits.
+    async def _bg_enrich(mem_id: uuid.UUID, uid: uuid.UUID) -> None:
+        try:
+            from backend.services.enrichment_service import enrich_memory as _enrich
+            async with _db_factory()() as own_db:
+                await _enrich(mem_id, uid, own_db)
+                await own_db.commit()
+        except Exception as exc:
+            logger.warning(
+                "enrichment.bg_failed",
+                memory_id=str(mem_id),
+                error=str(exc),
+            )
 
-        asyncio.create_task(_enrich(memory.memory_id, user_id, db))
+    try:
+        asyncio.create_task(
+            _bg_enrich(memory.memory_id, user_id),
+            name=f"enrich:{memory.memory_id}",
+        )
     except Exception:
         logger.debug("enrichment.hook_skipped", reason="import_or_task_error")
-
-    # F12: Fire-and-forget write-time compression pipeline.
-    # Promotes the new memory to L2 (AAAK) and, when the namespace has
-    # accumulated enough similar memories, synthesizes an L3.1 concept.
-    # Never blocks the write path.
-    if memory.content_type != "concept":  # Don't compress synthesized concepts
-        try:
-            from backend.services.compression_pipeline import schedule_compression
-
-            schedule_compression(user_id, memory.memory_id, request.namespace)
-        except Exception:
-            logger.debug("compression_pipeline.hook_skipped", reason="import_or_task_error")
     # BUG-007 fix: log audit event for memory creation
     try:
         await log_audit_event(
@@ -482,7 +582,25 @@ async def create_memory(
     except Exception:
         logger.debug("audit.log_skipped", reason="audit_error")
 
-    return _to_response(memory)
+    # F12: Fire-and-forget compression pipeline (L1→L2 AAAK, L3 Groq summary,
+    # L3.1 CognitionOS concept synthesis) + namespace summary rollup.
+    try:
+        from backend.services.compression_pipeline import schedule_compression
+
+        schedule_compression(user_id, memory.memory_id, request.namespace)
+    except Exception:
+        logger.debug("compression.hook_skipped", reason="import_or_task_error")
+
+    response = _to_response(memory)
+    if redirected_from is not None:
+        response.redirected_from = redirected_from
+        logger.info(
+            "namespace_matcher.auto_redirect",
+            requested=redirected_from,
+            resolved_to=request.namespace,
+            memory_id=str(memory.memory_id),
+        )
+    return response
 
 
 async def get_memory(
@@ -739,23 +857,8 @@ async def search_memories(
         if dt_to:
             query = query.where(Memory.created_at <= dt_to)
 
-    # F12: Compression tier filter — matches on metadata._compression_tier JSON key.
-    # L1 = no _compression_tier key OR value is 'L1'.
-    if request.compression_tier:
-        tier = request.compression_tier.upper().replace("L3.1", "L3.1")  # normalise
-        if tier == "L1":
-            # L1 = raw memories that have not yet been promoted
-            from sqlalchemy import or_
-
-            query = query.where(
-                or_(
-                    Memory.meta == None,  # noqa: E711
-                    Memory.meta["_compression_tier"].as_string() == "L1",
-                    ~Memory.meta.has_key("_compression_tier"),
-                )
-            )
-        else:
-            query = query.where(Memory.meta["_compression_tier"].as_string() == tier)
+    # F12 compression_tier filter is applied client-side via _tier_from_meta()
+    # after the SQL pass — keeps it consistent across both fts and hybrid paths.
 
     # ── Hybrid search path (S9N-3074-SUB2) ──────────────────────────────────
     if getattr(request, "search_mode", "fts") == "hybrid" and request.query:
@@ -798,13 +901,32 @@ async def search_memories(
                         access_count=r.get("access_count", 0),
                         created_at=r.get("created_at", ""),
                         updated_at=r.get("updated_at", ""),
+                        compression_tier=_tier_from_meta(r.get("metadata")),
                     )
                 )
             except Exception:
                 pass
+        # KMV-S8.3: Graph-augmented recall for hybrid path
+        if request.use_graph and request.query:
+            graph_items = await _expand_with_graph(
+                query=request.query,
+                existing_ids={item.memory_id for item in items},
+            )
+            items = items + graph_items
+            logger.debug(
+                "memory.search.hybrid.graph_expanded",
+                vault_count=len(items) - len(graph_items),
+                graph_count=len(graph_items),
+            )
+
+        # F12: filter by compression tier after assembly so it applies to
+        # both vault + graph items regardless of which SQL path ran.
+        if request.compression_tier:
+            items = [i for i in items if i.compression_tier == request.compression_tier]
+
         return MemoryListResponse(
             items=items,
-            total=len(hybrid_results),
+            total=len(hybrid_results) + (len(items) - len(hybrid_results)),
             limit=request.limit,
             offset=request.offset,
         )
@@ -826,33 +948,112 @@ async def search_memories(
     result = await db.execute(query)
     memories = result.scalars().all()
 
-    logger.debug("memory.search.ok", total=total, returned=len(memories))
+    vault_items = [_to_response(m) for m in memories]
+    logger.debug("memory.search.ok", total=total, returned=len(vault_items))
+
+    # KMV-S8.3: Graph-augmented recall — expand via Cognition OS concept graph
+    if request.use_graph and request.query:
+        graph_items = await _expand_with_graph(
+            query=request.query,
+            existing_ids={item.memory_id for item in vault_items},
+        )
+        vault_items = vault_items + graph_items
+        logger.debug(
+            "memory.search.graph_expanded",
+            vault_count=len(vault_items) - len(graph_items),
+            graph_count=len(graph_items),
+        )
+
+    # F12: filter by compression tier after assembly (FTS path).
+    if request.compression_tier:
+        vault_items = [i for i in vault_items if i.compression_tier == request.compression_tier]
+
     return MemoryListResponse(
-        items=[_to_response(m) for m in memories],
-        total=total,
+        items=vault_items,
+        total=total + (len(vault_items) - len(memories)),
         limit=request.limit,
         offset=request.offset,
     )
+
+
+async def _expand_with_graph(
+    query: str,
+    existing_ids: set[str],
+    top_k: int = 5,
+) -> list["MemoryResponse"]:
+    """
+    KMV-S8.3: Expand a recall query via the Cognition OS concept graph.
+
+    Calls CognitionBridge.expand_recall() to retrieve related entities from the
+    knowledge graph that are semantically related to the query but may not appear
+    verbatim in the local vault. Results are converted to synthetic MemoryResponse
+    objects tagged with source='cognition_os' so callers can distinguish them.
+
+    Gracefully returns an empty list if:
+    - Cognition OS is not configured (bridge.enabled is False)
+    - The network call fails or times out
+    - The bridge circuit-breaker is open
+    """
+    try:
+        from backend.services.cognition_bridge import get_cognition_bridge
+        bridge = get_cognition_bridge()
+        if not bridge.enabled:
+            return []
+        graph_results = await bridge.expand_recall(query=query, top_k=top_k)
+    except Exception as exc:
+        logger.debug("memory.search.graph_expand_failed", error=str(exc))
+        return []
+
+    now_str = datetime.now(timezone.utc).isoformat()
+    items: list[MemoryResponse] = []
+    for r in graph_results:
+        entity_id = r.get("entity_id", "")
+        # Skip if already present in vault results (entity_id == memory_id for vault memories)
+        if entity_id in existing_ids:
+            continue
+        items.append(MemoryResponse(
+            memory_id=entity_id or f"cog-{len(items)}",
+            user_id="cognition_os",
+            namespace="cognition_os",
+            content=r.get("content") or r.get("title", ""),
+            content_type="fact",
+            metadata={"source": "cognition_os", "score": r.get("score", 0.0), "title": r.get("title", "")},
+            source_agent_id=None,
+            source_type="cognition_os",
+            quality_score=r.get("score"),
+            enrichment_status="done",
+            version=1,
+            ttl_seconds=None,
+            expires_at=None,
+            created_at=now_str,
+            updated_at=now_str,
+            # Cognition OS entities are synthesized concepts — L3.1 tier.
+            compression_tier="L3.1",
+        ))
+    return items
 
 
 async def list_namespaces(
     user_id: uuid.UUID,
     db: AsyncSession,
     admin_view: bool = False,
+    agent_id: Optional[uuid.UUID] = None,
 ) -> list[dict]:
     """
-    List namespaces with memory counts.
+    List namespaces with memory counts + policy metadata.
 
-    Fix KMV-QA-007: When ``admin_view`` is True (Memory Vault admin role)
-    the user_id filter is omitted so the Analytics page receives a real
-    aggregated count across all users instead of returning an empty list.
+    When ``agent_id`` is provided and ``admin_view`` is False, each namespace
+    is filtered by the Gatekeeper on scope ``memory:read`` — namespaces the
+    agent has no read rule for are omitted from the response. This closes
+    the ACL leak where agents could enumerate namespaces they couldn't read.
 
-    Returns a list of {namespace, count} objects.
+    Each returned dict includes description, consolidated_summary, tier,
+    updated_at timestamp, and related_namespaces from NamespacePolicy.
     """
     if admin_view:
         query = (
             select(Memory.namespace, func.count(Memory.memory_id).label("count"))
-            .where(Memory.invalid_at == None)
+            .where(Memory.invalid_at == None)  # noqa: E711
             .group_by(Memory.namespace)
             .order_by(Memory.namespace)
         )
@@ -861,14 +1062,139 @@ async def list_namespaces(
             select(Memory.namespace, func.count(Memory.memory_id).label("count"))
             .where(
                 Memory.user_id == user_id,
-                Memory.invalid_at == None,
+                Memory.invalid_at == None,  # noqa: E711
             )
             .group_by(Memory.namespace)
             .order_by(Memory.namespace)
         )
     result = await db.execute(query)
     rows = result.all()
-    return [{"namespace": row[0], "count": row[1]} for row in rows]
+    namespaces = [(row[0], row[1]) for row in rows]
+
+    # Pull policy metadata in one shot
+    from backend.models.namespace_policy import NamespacePolicy
+    policy_rows = (await db.execute(select(NamespacePolicy))).scalars().all()
+    policy_by_ns = {p.namespace: p for p in policy_rows}
+
+    # Permission-aware filtering: if we have an agent_id (not admin), ask the
+    # gatekeeper for memory:read on each namespace.
+    filtered: list[tuple[str, int]] = []
+    if agent_id is not None and not admin_view:
+        for ns, count in namespaces:
+            try:
+                decision = await evaluate(
+                    user_id,
+                    EvaluationRequest(
+                        agent_id=str(agent_id),
+                        scope="memory:read",
+                        namespace=ns,
+                    ),
+                    db,
+                )
+                if decision.allowed:
+                    filtered.append((ns, count))
+            except Exception:
+                # Fail closed on evaluation errors to preserve isolation
+                continue
+    else:
+        filtered = namespaces
+
+    output: list[dict] = []
+    for ns, count in filtered:
+        policy = policy_by_ns.get(ns)
+        output.append({
+            "namespace": ns,
+            "count": count,
+            "description": getattr(policy, "description", None),
+            "consolidated_summary": getattr(policy, "consolidated_summary", None),
+            "consolidated_summary_tier": getattr(policy, "consolidated_summary_tier", None),
+            "consolidated_summary_updated_at": (
+                policy.consolidated_summary_updated_at.isoformat()
+                if policy and policy.consolidated_summary_updated_at else None
+            ),
+            "related_namespaces": getattr(policy, "related_namespaces", None) or [],
+        })
+    return output
+
+
+async def get_namespace_summary(
+    user_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    namespace: str,
+    db: AsyncSession,
+    skip_gatekeeper: bool = False,
+) -> dict:
+    """
+    Fetch the consolidated cross-session summary for a single namespace.
+
+    Returns the L3.1 rollup from NamespacePolicy.consolidated_summary when
+    present; otherwise falls back to the most recent concept memory (L3.0
+    fallback) in the namespace. If neither exists, returns an empty summary
+    with tier=None so clients can render "not yet consolidated".
+    """
+    if not skip_gatekeeper:
+        decision = await evaluate(
+            user_id,
+            EvaluationRequest(
+                agent_id=str(agent_id),
+                scope="memory:read",
+                namespace=namespace,
+            ),
+            db,
+        )
+        if not decision.allowed:
+            raise PermissionError(
+                f"Access denied: {decision.reason} (outcome: {decision.outcome})"
+            )
+
+    from backend.models.namespace_policy import NamespacePolicy
+    policy = (
+        await db.execute(
+            select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
+        )
+    ).scalar_one_or_none()
+
+    tier: Optional[str] = None
+    summary: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    if policy and policy.consolidated_summary:
+        summary = policy.consolidated_summary
+        tier = policy.consolidated_summary_tier or "L3.1"
+        updated_at = (
+            policy.consolidated_summary_updated_at.isoformat()
+            if policy.consolidated_summary_updated_at else None
+        )
+    else:
+        # Fallback: latest L3.0 concept memory in the namespace
+        concept = (
+            await db.execute(
+                select(Memory)
+                .where(
+                    Memory.user_id == user_id,
+                    Memory.namespace == namespace,
+                    Memory.content_type == "concept",
+                    Memory.invalid_at.is_(None),
+                )
+                .order_by(Memory.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if concept is not None:
+            summary = concept.content
+            tier = "L3.0"
+            updated_at = concept.created_at.isoformat() if concept.created_at else None
+
+    return {
+        "namespace": namespace,
+        "description": getattr(policy, "description", None) if policy else None,
+        "consolidated_summary": summary,
+        "consolidated_summary_tier": tier,
+        "consolidated_summary_updated_at": updated_at,
+        "related_namespaces": (
+            getattr(policy, "related_namespaces", None) or []
+        ) if policy else [],
+    }
 
 
 # ─── Temporal Date Resolution ────────────────────────────────────
@@ -1060,6 +1386,18 @@ async def _get_active_memory(
     return memory
 
 
+def _tier_from_meta(meta: Optional[dict]) -> str:
+    """Extract compression tier from Memory.meta._compression_tier.
+
+    Values are normalised to the public tier names: L1 / L2 / L3.1.
+    Unknown or missing tiers default to 'L1' (raw).
+    """
+    if not meta:
+        return "L1"
+    tier = str(meta.get("_compression_tier") or "L1")
+    return tier if tier in {"L1", "L2", "L3.1"} else "L1"
+
+
 def _to_response(memory: Memory) -> MemoryResponse:
     """Convert a Memory ORM object to a response (unified model)."""
     return MemoryResponse(
@@ -1086,43 +1424,13 @@ def _to_response(memory: Memory) -> MemoryResponse:
         access_count=memory.access_count or 0,
         created_at=memory.created_at.isoformat() if memory.created_at else "",
         updated_at=memory.updated_at.isoformat() if memory.updated_at else "",
-        # F12: Derive compression tier from metadata field
-        compression_tier=_derive_compression_tier(memory.meta),
-        source_memory_ids=_derive_source_memory_ids(memory.meta),
+        compression_tier=_tier_from_meta(memory.meta),
     )
 
 
-# ─── F12: Compression Tier Helpers ──────────────────────────────────────────
-
-_VALID_TIERS = {"L1", "L2", "L3.1"}
-
-
-def _derive_compression_tier(meta: dict | None) -> str:
-    """Derive the compression tier from memory metadata.
-
-    The tier is stored as metadata._compression_tier by the compression
-    pipeline. Valid values: 'L1' (raw), 'L2' (AAAK), 'L3.1' (concept).
-    Defaults to 'L1' if not present or invalid.
-    """
-    if not meta:
-        return "L1"
-    tier = meta.get("_compression_tier", "L1")
-    return tier if tier in _VALID_TIERS else "L1"
-
-
-def _derive_source_memory_ids(meta: dict | None) -> list[str] | None:
-    """Derive source memory IDs for L3.1 synthesized concepts.
-
-    Stored as metadata._source_memory_ids by the concept synthesis pipeline.
-    Returns None for L1/L2 memories.
-    """
-    if not meta:
-        return None
-    ids = meta.get("_source_memory_ids")
-    if isinstance(ids, list):
-        return [str(i) for i in ids]
-    return None
-
+# Compression-tier helpers: see `_tier_from_meta` and `_source_ids_from_meta`
+# above — both layers (HTTP + library) read meta["_compression_tier"] /
+# meta["_source_memory_ids"] from the compression pipeline.
 
 # ─── L1 / L2 / L3 Compression Service (KMV-COMPRESS-01 / S9N-3050) ──────
 
@@ -1145,11 +1453,6 @@ def _memory_to_dict(memory: Memory) -> dict:
         "tier": memory.tier,
         "visibility": memory.visibility,
         "org_id": str(memory.user_id),
-        # KMV-S13.4: Consolidation fields for dashboard visibility and weighted synthesis
-        "consolidation_status": getattr(memory, "consolidation_status", "pending"),
-        "consolidation_weight": getattr(memory, "consolidation_weight", 1.0),
-        "cognition_entity_id": getattr(memory, "cognition_entity_id", None),
-        "epoch_date": getattr(memory, "epoch_date", None),
     }
 
 
@@ -1157,25 +1460,17 @@ async def _list_namespace_active_memories(
     user_id: uuid.UUID,
     namespace: str,
     db: AsyncSession,
-    *,
-    include_archived: bool = False,
 ) -> list[Memory]:
-    """Return active memories in a namespace for a user (no pagination).
-
-    KMV-S13.4: By default, excludes archived memories (consolidation_status='archived').
-    L1/L2/L3 reads use include_archived=False (short-term working memory view).
-    L3.1 consolidated reads use include_archived=True for reconciliation with Cognition OS.
-    """
-    where_clauses = [
-        Memory.user_id == user_id,
-        Memory.namespace == namespace,
-        Memory.invalid_at == None,
-    ]
-    if not include_archived:
-        # KMV-S13.4: Exclude archived memories from default short-term reads
-        # Also exclude memories currently being consolidated (immutability signal)
-        where_clauses.append(Memory.consolidation_status.notin_(["archived", "consolidating"]))
-    result = await db.execute(select(Memory).where(*where_clauses).order_by(Memory.created_at))
+    """Return every active memory in a namespace for a user (no pagination)."""
+    result = await db.execute(
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.namespace == namespace,
+            Memory.invalid_at.is_(None),
+        )
+        .order_by(Memory.created_at)
+    )
     return list(result.scalars().all())
 
 
@@ -1222,20 +1517,26 @@ async def get_namespace_compressed(
     namespace: str,
     db: AsyncSession,
     *,
-    mode: str = "concept",  # "raw" | "aaak" | "concept"
+    mode: str = "concept",  # "raw" | "aaak" | "concept" | "cognition"
     merge_mode: str = "current",  # "current" | "aggregate"
     skip_gatekeeper: bool = False,
 ) -> dict:
-    """Tiered memory compression entry point — L1 raw, L2 AAAK, L3.1 concept.
+    """Tiered memory compression entry point — L1 raw, L2 AAAK, L3.1 concept, L4 cognition.
 
     Caches results in a process-level NamespaceCompressionCache keyed by the
     sorted memory IDs in the namespace plus mode + merge_mode. Auto-invalidates
     on any namespace change.
 
-    Story: KMV-COMPRESS-01 / S9N-3050
+    Modes:
+      raw       — L1: every active memory as raw dicts
+      aaak      — L2: lossless AAAK dialect encoding with compression metrics
+      concept   — L3.1: LLM-synthesized concepts via CoreAIBackendClient
+      cognition — L4: concept synthesis augmented with Cognition OS graph entities
+
+    Story: KMV-COMPRESS-01 / S9N-3050 | KMV-S11.1
     """
-    if mode not in {"raw", "aaak", "concept", "consolidated", "cognition"}:
-        raise ValueError(f"mode must be raw|aaak|concept|consolidated|cognition, got {mode!r}")
+    if mode not in {"raw", "aaak", "concept", "cognition"}:
+        raise ValueError(f"mode must be raw|aaak|concept|cognition, got {mode!r}")
     if merge_mode not in {"current", "aggregate"}:
         raise ValueError(f"merge_mode must be current|aggregate, got {merge_mode!r}")
 
@@ -1259,11 +1560,7 @@ async def get_namespace_compressed(
     from memory_vault.compression.concept import synthesize_namespace_local
     from memory_vault.compression.llm_client import CoreAIBackendClient
 
-    # KMV-S13.4: consolidated and cognition modes include archived memories for reconciliation
-    include_archived = mode in {"consolidated", "cognition"}
-    memories = await _list_namespace_active_memories(
-        user_id, namespace, db, include_archived=include_archived
-    )
+    memories = await _list_namespace_active_memories(user_id, namespace, db)
     memory_ids = [str(m.memory_id) for m in memories]
     memory_dicts = [_memory_to_dict(m) for m in memories]
 
@@ -1294,7 +1591,7 @@ async def get_namespace_compressed(
             "content": encoded,
             "source": "local",
         }
-    elif mode in {"concept", "consolidated"}:
+    else:  # concept
         # Build a tiny adapter so the compression module can talk to SQLAlchemy
         class _DBAdapter:
             def __init__(self, mems: list[dict]) -> None:
@@ -1306,17 +1603,13 @@ async def get_namespace_compressed(
 
             async def find_similar(self, *, content, org_id, limit=20):
                 # Cheap content-equality fallback when no real backend is wired.
+                # Concept dedup falls through and we treat each memory as its own group.
                 return []
 
             async def get_related(self, *, episode_id, relation_type, limit=10):
                 return []
 
-        # KMV-S13.4: Pass consolidation_weight to synthesis so newer memories
-        # have stronger influence on concept generation.
-        # Archived memories (included in 'consolidated' mode) are passed with
-        # their decayed weight so they contribute proportionally less.
-        weighted_dicts = [{**m, "weight": m.get("consolidation_weight", 1.0)} for m in memory_dicts]
-        adapter = _DBAdapter(weighted_dicts)
+        adapter = _DBAdapter(memory_dicts)
         client = CoreAIBackendClient()
         synthesis = await synthesize_namespace_local(
             adapter,
@@ -1331,16 +1624,76 @@ async def get_namespace_compressed(
             synthesis["concepts"],
             namespace=namespace,
         )
-        is_consolidated = mode == "consolidated"
         payload = {
-            "mode": mode,
+            "mode": "concept",
             "merge_mode": merge_mode,
             "namespace": namespace,
             "source_count": synthesis.get("source_count", 0),
             "concepts": synthesis["concepts"],
             "source": synthesis.get("source", "local"),
-            # KMV-S13.4: Indicate whether archived memories were included in synthesis
-            "includes_archived": is_consolidated,
+        }
+
+    if mode == "cognition":
+        # L4: concept synthesis augmented with Cognition OS graph entities
+        # First synthesize concepts (same as L3.1)
+        class _DBAdapterCog:
+            def __init__(self, mems: list[dict]) -> None:
+                self._mems = mems
+
+            async def list_episodes(self, *, org_id, limit=200, offset=0, include_invalid=False):
+                return self._mems[offset : offset + limit]
+
+            async def find_similar(self, *, content, org_id, limit=20):
+                return []
+
+            async def get_related(self, *, episode_id, relation_type, limit=10):
+                return []
+
+        adapter_cog = _DBAdapterCog(memory_dicts)
+        client_cog = CoreAIBackendClient()
+        synthesis_cog = await synthesize_namespace_local(
+            adapter_cog, llm_client=client_cog,
+            org_id=str(user_id), namespace=namespace,
+            merge_mode=merge_mode,
+        )
+        synthesis_cog["concepts"] = await round_trip_concepts(
+            None, synthesis_cog["concepts"], namespace=namespace,
+        )
+        # Now augment with Cognition OS graph entities (graceful degradation)
+        graph_entities: list[dict] = []
+        cognition_available = False
+        try:
+            from backend.services.cognition_bridge import get_cognition_bridge
+            bridge = get_cognition_bridge()
+            if bridge.enabled and not bridge.circuit_open:
+                # Use the namespace as the query to find related graph entities
+                query_terms = namespace
+                if synthesis_cog["concepts"]:
+                    # Extract key terms from the first concept for a richer query
+                    first_concept = synthesis_cog["concepts"][0]
+                    if isinstance(first_concept, dict):
+                        query_terms = first_concept.get("summary", namespace) or namespace
+                    elif isinstance(first_concept, str):
+                        query_terms = first_concept[:200]
+                graph_entities = await bridge.expand_recall(
+                    query=query_terms,
+                    org_id=str(user_id),
+                    top_k=10,
+                    min_score=0.3,
+                )
+                cognition_available = True
+        except Exception:  # noqa: BLE001
+            # Graceful degradation: Cognition OS unavailable — return concept-only payload
+            pass
+        payload = {
+            "mode": "cognition",
+            "merge_mode": merge_mode,
+            "namespace": namespace,
+            "source_count": synthesis_cog.get("source_count", 0),
+            "concepts": synthesis_cog["concepts"],
+            "graph_entities": graph_entities,
+            "cognition_os_available": cognition_available,
+            "source": "cognition_os" if cognition_available else "local",
         }
 
     cache.put(str(user_id), namespace, mode, merge_mode, memory_ids, payload)

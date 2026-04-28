@@ -50,6 +50,50 @@ logger = structlog.get_logger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
+# Minimum number of active memories in a namespace before L3 narrative summary runs
+L3_SUMMARY_THRESHOLD: int = 2
+
+# Minimum number of *new* memories added since last L3 summary before we re-run
+# (3 = a small batch — at 3-turn granularity the summary captures essentially
+# the same content; under heavy parallel ingest this naturally batches the
+# Groq calls without losing freshness for human-pace usage).
+L3_SUMMARY_MIN_NEW_MEMORIES: int = 3
+
+# When the new memory's embedding is at least this similar to the *existing
+# summary's* embedding, the summary already represents this content and we
+# skip regen. This is the F13 cosine gate the user asked for, applied at
+# memory→summary granularity (vs F13's existing memory→prior-memories gate).
+# Calibrated against typical conversational-turn-vs-paragraph-summary
+# similarity: aligned content lands in 0.7–0.9, unrelated content drops
+# below 0.6. 0.72 catches "this turn is already in the summary" while still
+# triggering regen for genuinely new topics within the namespace.
+L3_SUMMARY_COVERS_THRESHOLD: float = 0.72
+
+# Maximum source memories fed into a single L3 summary call
+L3_SUMMARY_MAX_SOURCES: int = 50
+
+# Below this count, L3 falls back to a deterministic Python-generated bullet
+# list instead of calling Groq. Avoids Groq's tendency to over-elaborate on
+# tiny inputs (observed in v0.13.x: user:preferences with 3 memories totalling
+# 953 chars produced a 787-char "summary" — 1.21× expansion). Saves cost AND
+# guarantees that L3 is always at least as compact as the source.
+L3_GROQ_MIN_MEMORIES: int = 5
+
+# Groq model used for L3 narrative summarization (cheap, fast, faithful prose)
+L3_SUMMARY_GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
+# Novelty gate: if the new memory's max cosine similarity to any prior
+# memory in scope is ≥ this threshold, the pipeline SKIPS the LLM re-summary
+# — the new memory is a near-duplicate of something already captured, so
+# re-running Groq wouldn't change the summary meaningfully.
+#
+# Embeddings are L2-normalised, so similarity = dot product ∈ [-1, 1];
+# typical range for real text is ~[0, 1]. 0.92 is a conservative gate that
+# catches paraphrases / restatements but still triggers on genuinely new
+# information. Tune down to 0.85 if cost becomes an issue; tune up to 0.95
+# if summaries feel stale.
+L3_NOVELTY_SKIP_THRESHOLD: float = 0.92
+
 # Minimum number of active memories in a namespace before L3.1 synthesis runs
 L3_SYNTHESIS_THRESHOLD: int = 3
 
@@ -60,8 +104,26 @@ L3_SYNTHESIS_MIN_NEW_MEMORIES: int = 2
 L3_SYNTHESIS_MAX_SOURCES: int = 50
 
 # ── In-process debounce state ──────────────────────────────────────────────
-# Maps (user_id_str, namespace) → count of memories at last synthesis run
+# Maps (user_id_str, namespace) → count of memories at last L3.1 synthesis run
 _last_synthesis_count: dict[tuple[str, str], int] = {}
+
+# Maps (user_id_str, namespace) → count of memories at last L3 summary run
+_last_summary_count: dict[tuple[str, str], int] = {}
+
+# Per-namespace asyncio locks coalesce concurrent L3 regen calls. Without
+# these, 16 parallel writes to the same namespace all read the same
+# `_last_summary_count` snapshot, all decide "yes, regen", and all fire
+# Groq simultaneously — wasting LLM cost AND piling onto the policy row
+# upsert. With the lock, the first concurrent writer runs the summary,
+# updates `_last_summary_count`, and subsequent writers see the new count
+# and short-circuit on the debounce check.
+_l3_summary_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+# Cache the embedding of the most recent summary text so the
+# summary-coverage gate doesn't re-encode on every write. Keyed by the
+# summary text itself so a stale entry self-invalidates as soon as the
+# summary changes.
+_summary_embedding_cache: dict[str, list[float]] = {}
 
 
 # ── Public entry point ─────────────────────────────────────────────────────
@@ -91,14 +153,35 @@ async def _run_compression(
     memory_id: str,
     namespace: str,
 ) -> None:
-    """Full compression pipeline for one newly written memory."""
+    """Full compression pipeline for one newly written memory.
+
+    Stages (each independent, each fire-and-forget w.r.t. failure):
+      L2            — AAAK encoding of this memory (always, threshold=1)
+      L3 namespace  — Groq LLM narrative summary of the namespace (threshold=2)
+      L3 session    — Groq LLM summary over memories in this session + a
+                      point-in-time cumulative summary of the namespace as of
+                      the latest memory in the session. Only runs when the
+                      memory has a session_id. (threshold=1 for session, ≥2
+                      for cumulative — both use L3_SUMMARY_THRESHOLD.)
+      L3.1          — CognitionOS concept synthesis of the namespace
+                      (threshold=3, requires near-duplicate cluster)
+    """
     try:
         async with _get_session_factory()() as db:
             await _promote_to_l2(db, memory_id)
             await db.commit()
 
         async with _get_session_factory()() as db:
-            await _maybe_synthesize_l3(db, user_id, namespace)
+            await _maybe_summarize_l3(db, user_id, namespace, trigger_memory_id=memory_id)
+            await db.commit()
+
+        # Session-level L3 only runs if this memory has a session_id.
+        async with _get_session_factory()() as db:
+            await _maybe_summarize_session_l3(db, user_id, memory_id, namespace)
+            await db.commit()
+
+        async with _get_session_factory()() as db:
+            await _maybe_synthesize_l3_1(db, user_id, namespace)
             await db.commit()
 
     except Exception as exc:
@@ -132,13 +215,30 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
     encoded = encode_aaak([mem_dict])
     ratio = compression_ratio([mem_dict], encoded)
 
-    # Merge into existing metadata (preserve all existing keys)
-    meta = dict(memory.meta or {})
-    meta["_compression_tier"] = "L2"
-    meta["_aaak_ratio"] = ratio
-    meta["_compressed_at"] = datetime.now(UTC).isoformat()
+    # F14: Use a JSONB merge (`metadata = metadata || patch`) so a concurrent
+    # enrichment write doesn't clobber our L2 fields and vice versa. Before
+    # this fix, both this stage and enrichment did read-modify-write of the
+    # whole `metadata` column — last writer won, so memories ended up with
+    # only one of the two key sets (compression won OR enrichment won, never
+    # both). The race was hidden when embeddings were broken (only one
+    # background task actually committed), but exposed by the P1 fix.
+    import json as _json
 
-    await db.execute(update(Memory).where(Memory.memory_id == uuid.UUID(memory_id)).values(meta=meta))
+    from sqlalchemy import text as _sql
+
+    patch = {
+        "_compression_tier": "L2",
+        "_aaak_ratio": ratio,
+        "_compressed_at": datetime.now(UTC).isoformat(),
+    }
+    await db.execute(
+        _sql(
+            "UPDATE kemory_memories "
+            "SET metadata = COALESCE(metadata, '{}'::jsonb) || CAST(:patch AS jsonb) "
+            "WHERE memory_id = :mid"
+        ),
+        {"patch": _json.dumps(patch), "mid": str(memory_id)},
+    )
     logger.debug(
         "compression_pipeline.l2_promoted",
         memory_id=memory_id,
@@ -146,12 +246,660 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
     )
 
 
-async def _maybe_synthesize_l3(
+# ── Novelty gate ───────────────────────────────────────────────────────────
+
+async def _max_similarity_to_prior(
+    db: AsyncSession,
+    memory_id: str,
+    user_id: str,
+    namespace: str,
+    *,
+    session_id: str | None = None,
+    up_to_ts: datetime | None = None,
+) -> float | None:
+    """Max cosine similarity of `memory_id` to any OTHER active non-concept
+    memory in scope. Returns:
+
+      * None   — the target memory has no embedding yet (background task
+                 hasn't written one); caller should fall back to running the
+                 pipeline, since we can't judge novelty.
+      * -1.0   — scope has no prior memories at all; also a "run the
+                 pipeline" signal (caller interprets None/-1 as "no gate").
+      * float in [-1, 1] — actual max similarity.
+
+    Scope options (at most one of):
+      * session_id  — restrict to memories in the same session
+      * up_to_ts    — restrict to memories with created_at ≤ ts
+
+    Embeddings are L2-normalised per the `embedding` column comment in
+    backend/models/memory.py, so similarity = dot product.
+    """
+    target_row = (await db.execute(
+        select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id))
+    )).first()
+    if target_row is None:
+        return None
+    target_vec = target_row[0]
+    if not target_vec:
+        return None  # Embedding not yet populated by background task.
+
+    stmt = select(Memory.embedding).where(
+        Memory.user_id == uuid.UUID(user_id),
+        Memory.namespace == namespace,
+        Memory.invalid_at == None,  # noqa: E711
+        Memory.content_type != "concept",
+        Memory.memory_id != uuid.UUID(memory_id),
+        Memory.embedding.isnot(None),
+    )
+    if session_id is not None:
+        stmt = stmt.where(Memory.session_id == session_id)
+    if up_to_ts is not None:
+        stmt = stmt.where(Memory.created_at <= up_to_ts)
+
+    prior_rows = (await db.execute(stmt)).scalars().all()
+    if not prior_rows:
+        return -1.0
+
+    # L2-normalised vectors → similarity = dot product. Pure Python is fine
+    # at the volumes we deal with here (tens of memories per namespace);
+    # if this grows, swap for numpy.
+    best = -2.0
+    for vec in prior_rows:
+        if not vec or len(vec) != len(target_vec):
+            continue
+        sim = 0.0
+        for a, b in zip(target_vec, vec):
+            sim += a * b
+        if sim > best:
+            best = sim
+    return best if best > -2.0 else -1.0
+
+
+async def _summary_already_covers(
+    db: AsyncSession,
+    memory_id: str,
+    namespace: str,
+) -> bool:
+    """True iff the new memory's content is already represented in the
+    existing namespace summary — regen would not add information.
+
+    Compares the new memory's embedding against the existing summary's
+    embedding. If similarity ≥ L3_SUMMARY_COVERS_THRESHOLD, the summary
+    already covers this content and we skip the Groq call.
+
+    Returns False (run regen) when:
+      • no existing summary
+      • new memory has no embedding yet
+      • similarity below threshold
+
+    The summary embedding is cached in-process keyed by the summary text,
+    so a stale entry self-invalidates as soon as the summary changes.
+    """
+    from backend.models.namespace_policy import NamespacePolicy
+    from backend.models.memory import Memory
+
+    # New memory's embedding
+    target_vec = (await db.execute(
+        select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id))
+    )).scalar_one_or_none()
+    if not target_vec:
+        return False
+
+    # Existing summary text
+    summary_text = (await db.execute(
+        select(NamespacePolicy.consolidated_summary).where(
+            NamespacePolicy.namespace == namespace
+        )
+    )).scalar_one_or_none()
+    if not summary_text:
+        return False
+
+    # Encode summary (cached by exact text)
+    summary_vec = _summary_embedding_cache.get(summary_text)
+    if summary_vec is None:
+        try:
+            from memory_vault.embeddings.encoder import encode
+            summary_vec = list(encode(summary_text))
+            # Bound the cache so it doesn't grow without limit. We only need
+            # the *current* summary per namespace; keep at most 256 entries.
+            if len(_summary_embedding_cache) > 256:
+                # Drop oldest by simple FIFO eviction.
+                for k in list(_summary_embedding_cache.keys())[:64]:
+                    _summary_embedding_cache.pop(k, None)
+            _summary_embedding_cache[summary_text] = summary_vec
+        except Exception:
+            return False
+
+    if len(target_vec) != len(summary_vec):
+        return False
+
+    sim = sum(a * b for a, b in zip(target_vec, summary_vec))
+    return sim >= L3_SUMMARY_COVERS_THRESHOLD
+
+
+async def _has_sufficient_novelty(
+    db: AsyncSession,
+    memory_id: str,
+    user_id: str,
+    namespace: str,
+    *,
+    session_id: str | None = None,
+    up_to_ts: datetime | None = None,
+    stage_label: str = "l3",
+) -> bool:
+    """True if the pipeline should proceed; False if the new memory is a
+    near-duplicate of something already captured.
+
+    When embeddings aren't available (new memory or prior memories not yet
+    embedded), we return True — "when in doubt, summarize". Correctness
+    over optimization.
+    """
+    max_sim = await _max_similarity_to_prior(
+        db, memory_id, user_id, namespace,
+        session_id=session_id, up_to_ts=up_to_ts,
+    )
+    if max_sim is None or max_sim < 0:
+        # No embedding yet, or no prior memories to compare against.
+        return True
+    is_novel = max_sim < L3_NOVELTY_SKIP_THRESHOLD
+    if not is_novel:
+        logger.info(
+            f"{stage_label}.skipped_as_duplicate",
+            namespace=namespace,
+            session_id=session_id,
+            max_similarity=round(max_sim, 4),
+            threshold=L3_NOVELTY_SKIP_THRESHOLD,
+        )
+    return is_novel
+
+
+async def _maybe_summarize_l3(
+    db: AsyncSession,
+    user_id: str,
+    namespace: str,
+    *,
+    trigger_memory_id: str | None = None,
+    force: bool = False,
+) -> None:
+    """Run L3 narrative summary (Groq LLM) if the namespace is ready.
+
+    L3 is a faithful prose summary of all active non-concept memories in a
+    namespace. Unlike L3.1 (CognitionOS concept synthesis), L3 does not
+    extract opinions or pick sides — it just distils the content into a
+    readable paragraph. Cheap (Groq llama-3.3-70b-versatile), runs often.
+
+    `trigger_memory_id` is the memory whose write triggered this run; used
+    for the novelty gate. `force=True` bypasses the gate (used by the
+    backfill script). Writes result to NamespacePolicy.consolidated_summary
+    with tier="L3". L3.1 will later overwrite with tier="L3.1" when its
+    threshold is met.
+    """
+    import os
+    if not os.environ.get("GROQ_API_KEY", "").strip():
+        logger.debug("l3_summary.skipped", reason="no_groq_api_key", namespace=namespace)
+        return
+
+    # Count active non-concept memories in the namespace
+    result = await db.execute(
+        select(Memory).where(
+            Memory.user_id == uuid.UUID(user_id),
+            Memory.namespace == namespace,
+            Memory.invalid_at == None,  # noqa: E711
+            Memory.content_type != "concept",
+        ).order_by(Memory.created_at.desc())
+    )
+    source_memories = result.scalars().all()
+    count = len(source_memories)
+
+    if count < L3_SUMMARY_THRESHOLD:
+        return
+
+    # Per-namespace lock — coalesce concurrent regen calls into one. Under
+    # bulk parallel ingest (e.g. 16 LME ingest workers all writing to the
+    # same multi-session namespace), without this lock all 16 read the
+    # same `_last_summary_count` snapshot, all pass the debounce, and all
+    # fire Groq concurrently. With the lock the first writer runs the
+    # summary and advances `_last_summary_count`; subsequent writers
+    # acquire the lock, see the new count, and short-circuit.
+    key = (user_id, namespace)
+    lock = _l3_summary_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _l3_summary_locks[key] = lock
+
+    # Skip immediately if another coroutine is already regenerating for
+    # this namespace — they'll cover the work that's pending.
+    if lock.locked() and not force:
+        logger.debug(
+            "l3_summary.skipped.lock_held",
+            namespace=namespace,
+        )
+        return
+
+    async with lock:
+        # Re-check debounce inside the lock so we use the latest count.
+        last_count = _last_summary_count.get(key, 0)
+        if not force and count - last_count < L3_SUMMARY_MIN_NEW_MEMORIES and last_count > 0:
+            return
+
+        # F13 cosine gate: is the triggering memory a near-duplicate of any
+        # prior memory in the corpus? If so, regen wouldn't add information.
+        if not force and trigger_memory_id is not None:
+            if not await _has_sufficient_novelty(
+                db, trigger_memory_id, user_id, namespace,
+                stage_label="l3_namespace",
+            ):
+                _last_summary_count[key] = count
+                return
+
+            # F13 extension: is the triggering memory already represented in
+            # the existing summary? Cheaper than a full regen — single SBERT
+            # encode of the summary (cached) + one dot product.
+            if await _summary_already_covers(db, trigger_memory_id, namespace):
+                logger.info(
+                    "l3_summary.skipped.summary_covers",
+                    namespace=namespace,
+                    threshold=L3_SUMMARY_COVERS_THRESHOLD,
+                )
+                _last_summary_count[key] = count
+                return
+
+        await _do_summarize_l3(
+            db, user_id, namespace, source_memories, count, key,
+        )
+
+
+async def _do_summarize_l3(
+    db: AsyncSession,
+    user_id: str,
+    namespace: str,
+    source_memories: list,
+    count: int,
+    key: tuple[str, str],
+) -> None:
+    """Generate the L3 summary and upsert it. Only called by
+    `_maybe_summarize_l3` after debounce + novelty + coverage gates have
+    decided this run is needed. Caller holds `_l3_summary_locks[key]`.
+    """
+    sources = source_memories[:L3_SUMMARY_MAX_SOURCES]
+
+    # P3: tiny-namespace fallback. Groq over-elaborates on a handful of
+    # short memories and can produce *more* text than the source. For small
+    # namespaces (count < L3_GROQ_MIN_MEMORIES) emit a deterministic bullet
+    # list — guaranteed compact, no LLM cost, no hallucination risk.
+    if count < L3_GROQ_MIN_MEMORIES:
+        summary_text = _bullet_list_summary(sources, namespace, scope="namespace")
+        logger.info(
+            "l3_summary.bullet_fallback",
+            namespace=namespace,
+            source_count=len(sources),
+            threshold=L3_GROQ_MIN_MEMORIES,
+            summary_chars=len(summary_text),
+        )
+    else:
+        try:
+            summary_text = await _summarize_with_groq(sources, namespace)
+        except Exception as exc:
+            logger.warning(
+                "l3_summary.groq_failed",
+                namespace=namespace,
+                error=str(exc),
+            )
+            return
+
+    if not summary_text:
+        return
+
+    # Upsert the summary on NamespacePolicy. Only write if the current tier
+    # is "L3" or None — never downgrade an existing L3.1 summary.
+    # ON CONFLICT keeps the row lock to microseconds.
+    try:
+        from backend.models.namespace_policy import NamespacePolicy
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        now = datetime.now(timezone.utc)
+        stmt = pg_insert(NamespacePolicy).values(
+            namespace=namespace,
+            consolidated_summary=summary_text,
+            consolidated_summary_tier="L3",
+            consolidated_summary_updated_at=now,
+            created_by=uuid.UUID(user_id),
+        ).on_conflict_do_update(
+            index_elements=[NamespacePolicy.namespace],
+            set_={
+                "consolidated_summary": summary_text,
+                "consolidated_summary_tier": "L3",
+                "consolidated_summary_updated_at": now,
+            },
+            where=(
+                (NamespacePolicy.consolidated_summary_tier == None)  # noqa: E711
+                | (NamespacePolicy.consolidated_summary_tier == "L3")
+            ),
+        )
+        await db.execute(stmt)
+    except Exception as exc:
+        logger.debug(
+            "l3_summary.upsert_failed",
+            namespace=namespace,
+            error=str(exc),
+        )
+        return
+
+    _last_summary_count[key] = count
+
+    logger.info(
+        "l3_summary.generated",
+        namespace=namespace,
+        source_count=len(sources),
+        summary_chars=len(summary_text),
+    )
+
+
+# ── Session-level L3 ───────────────────────────────────────────────────────
+
+# Maps (user_id_str, namespace, session_id) → memory_count at last run
+_last_session_summary_count: dict[tuple[str, str, str], int] = {}
+
+
+async def _maybe_summarize_session_l3(
+    db: AsyncSession,
+    user_id: str,
+    memory_id: str,
+    namespace: str,
+    *,
+    force: bool = False,
+) -> None:
+    """Run the session-level L3 pipeline when the new memory has a session_id.
+
+    Produces / updates two summaries on the `kemory_session_summary` row
+    keyed by (user_id, namespace, session_id):
+
+      session_summary    — faithful rollup over memories in this session only.
+                           Answers "what happened in this session so far".
+      cumulative_summary — faithful rollup over all active memories in the
+                           namespace with created_at ≤ up_to_ts (the created_at
+                           of the latest memory in the session). Answers "what
+                           was the namespace state at this session's boundary".
+
+    Each sub-summary is gated independently by a vector-similarity novelty
+    check against its own scope — a new memory may be novel to its session
+    but a near-duplicate of something already in the namespace (or vice
+    versa). `force=True` bypasses the gate (used by backfill).
+
+    Debounced per (user, namespace, session) — only runs when ≥1 new memory
+    has arrived since the last pipeline run for that tuple.
+    """
+    import os
+    if not os.environ.get("GROQ_API_KEY", "").strip():
+        logger.debug("session_l3.skipped", reason="no_groq_api_key", namespace=namespace)
+        return
+
+    # Fetch the triggering memory to extract session_id + created_at anchor.
+    result = await db.execute(
+        select(Memory).where(Memory.memory_id == uuid.UUID(memory_id))
+    )
+    memory = result.scalar_one_or_none()
+    if memory is None:
+        return
+    session_id = (memory.session_id or "").strip()
+    if not session_id:
+        return  # This memory isn't part of any session — nothing to do.
+
+    up_to_ts = memory.created_at
+    key = (user_id, namespace, session_id)
+
+    # ── Gather session-scoped memories ─────────────────────────────
+    session_rows = (await db.execute(
+        select(Memory).where(
+            Memory.user_id == uuid.UUID(user_id),
+            Memory.namespace == namespace,
+            Memory.session_id == session_id,
+            Memory.invalid_at == None,  # noqa: E711
+            Memory.content_type != "concept",
+        ).order_by(Memory.created_at.asc())
+    )).scalars().all()
+    session_count = len(session_rows)
+
+    # ── Gather cumulative (namespace-wide, up to up_to_ts) memories ─
+    cumulative_rows = (await db.execute(
+        select(Memory).where(
+            Memory.user_id == uuid.UUID(user_id),
+            Memory.namespace == namespace,
+            Memory.created_at <= up_to_ts,
+            Memory.invalid_at == None,  # noqa: E711
+            Memory.content_type != "concept",
+        ).order_by(Memory.created_at.asc())
+    )).scalars().all()
+    cumulative_count = len(cumulative_rows)
+
+    # Debounce — only re-run if at least one new memory since last time.
+    last_count = _last_session_summary_count.get(key, 0)
+    if session_count <= last_count:
+        return
+
+    # ── Novelty gates (independent per sub-summary) ────────────────
+    session_novel = force or await _has_sufficient_novelty(
+        db, memory_id, user_id, namespace,
+        session_id=session_id,
+        stage_label="l3_session",
+    )
+    cumulative_novel = force or await _has_sufficient_novelty(
+        db, memory_id, user_id, namespace,
+        up_to_ts=up_to_ts,
+        stage_label="l3_cumulative",
+    )
+    # If neither scope has enough novelty to warrant a re-summary, advance
+    # the debounce counter and bail — skip both LLM calls.
+    if not session_novel and not cumulative_novel:
+        _last_session_summary_count[key] = session_count
+        return
+
+    # ── Generate summaries ─────────────────────────────────────────
+    session_summary_text: str | None = None
+    cumulative_summary_text: str | None = None
+
+    if session_novel:
+        session_sources = session_rows[:L3_SUMMARY_MAX_SOURCES]
+        if session_count < L3_GROQ_MIN_MEMORIES:
+            session_summary_text = _bullet_list_summary(
+                session_sources, namespace, scope="session",
+            )
+            logger.info(
+                "session_l3.session_bullet_fallback",
+                namespace=namespace,
+                session_id=session_id,
+                source_count=session_count,
+            )
+        else:
+            try:
+                session_summary_text = await _summarize_with_groq(
+                    session_sources, namespace, scope="session",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "session_l3.session_summary_failed",
+                    namespace=namespace,
+                    session_id=session_id,
+                    error=str(exc),
+                )
+
+    # Only produce a cumulative summary if there are ≥2 memories in the
+    # namespace up to now AND the new memory was novel vs. that scope.
+    if cumulative_novel and cumulative_count >= L3_SUMMARY_THRESHOLD:
+        cumulative_sources = cumulative_rows[:L3_SUMMARY_MAX_SOURCES]
+        if cumulative_count < L3_GROQ_MIN_MEMORIES:
+            cumulative_summary_text = _bullet_list_summary(
+                cumulative_sources, namespace,
+                scope=f"cumulative-as-of-{up_to_ts.isoformat() if up_to_ts else 'now'}",
+            )
+            logger.info(
+                "session_l3.cumulative_bullet_fallback",
+                namespace=namespace,
+                session_id=session_id,
+                source_count=cumulative_count,
+            )
+        else:
+            try:
+                cumulative_summary_text = await _summarize_with_groq(
+                    cumulative_sources, namespace,
+                    scope=f"cumulative-as-of-{up_to_ts.isoformat() if up_to_ts else 'now'}",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "session_l3.cumulative_summary_failed",
+                    namespace=namespace,
+                    session_id=session_id,
+                    error=str(exc),
+                )
+
+    if not session_summary_text and not cumulative_summary_text:
+        return  # nothing to persist
+
+    # ── Upsert the SessionSummary row ──────────────────────────────
+    try:
+        from backend.models.session_summary import SessionSummary
+        existing = (await db.execute(
+            select(SessionSummary).where(
+                SessionSummary.user_id == uuid.UUID(user_id),
+                SessionSummary.namespace == namespace,
+                SessionSummary.session_id == session_id,
+            )
+        )).scalar_one_or_none()
+
+        now = datetime.now(timezone.utc)
+        if existing is None:
+            existing = SessionSummary(
+                user_id=uuid.UUID(user_id),
+                namespace=namespace,
+                session_id=session_id,
+                session_summary=session_summary_text,
+                session_summary_tier="L3" if session_summary_text else None,
+                session_memory_count=session_count,
+                cumulative_summary=cumulative_summary_text,
+                cumulative_summary_tier="L3" if cumulative_summary_text else None,
+                cumulative_memory_count=cumulative_count,
+                up_to_ts=up_to_ts,
+            )
+            db.add(existing)
+        else:
+            if session_summary_text:
+                existing.session_summary = session_summary_text
+                existing.session_summary_tier = "L3"
+            existing.session_memory_count = session_count
+            if cumulative_summary_text:
+                existing.cumulative_summary = cumulative_summary_text
+                existing.cumulative_summary_tier = "L3"
+            existing.cumulative_memory_count = cumulative_count
+            existing.up_to_ts = up_to_ts
+            existing.updated_at = now
+    except Exception as exc:
+        logger.debug(
+            "session_l3.upsert_failed",
+            namespace=namespace,
+            session_id=session_id,
+            error=str(exc),
+        )
+        return
+
+    _last_session_summary_count[key] = session_count
+
+    logger.info(
+        "session_l3.generated",
+        namespace=namespace,
+        session_id=session_id,
+        session_count=session_count,
+        cumulative_count=cumulative_count,
+        session_chars=len(session_summary_text or ""),
+        cumulative_chars=len(cumulative_summary_text or ""),
+    )
+
+
+def _bullet_list_summary(
+    memories: list[Memory],
+    namespace: str,
+    *,
+    scope: str = "namespace",
+    per_item_chars: int = 200,
+) -> str:
+    """Deterministic, no-LLM fallback used when memory count is below
+    L3_GROQ_MIN_MEMORIES. Produces a compact bullet list of the source
+    memories (truncated per item) so the consolidated_summary slot is
+    populated with something useful even when calling Groq would
+    over-elaborate.
+
+    Guaranteed to be ≤ source size — never causes expansion.
+    """
+    if not memories:
+        return ""
+    header = f"{scope.capitalize()} of '{namespace}' ({len(memories)} memor{'y' if len(memories) == 1 else 'ies'}):"
+    bullets = []
+    for m in memories:
+        text = (m.content or "").strip().replace("\n", " ")
+        if len(text) > per_item_chars:
+            text = text[: per_item_chars - 1] + "…"
+        bullets.append(f"- {text}")
+    return header + "\n" + "\n".join(bullets)
+
+
+async def _summarize_with_groq(
+    memories: list[Memory],
+    namespace: str,
+    *,
+    scope: str = "namespace",
+) -> str:
+    """Call Groq to produce a faithful narrative summary of a memory set.
+
+    `scope` describes what the memories represent — "namespace", "session",
+    or "cumulative (as of <ts>)". Shown to the LLM in the prompt so the
+    produced prose frames itself correctly.
+    """
+    try:
+        from groq import AsyncGroq  # type: ignore[import]
+    except ImportError:
+        raise RuntimeError("groq package not installed. pip install groq")
+
+    import os
+    client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
+
+    memories_text = "\n".join(
+        f"[{i+1}] {(m.content or '').strip()[:500]}"
+        for i, m in enumerate(memories)
+    )
+
+    prompt = (
+        f"You are summarizing the {scope} of memory records for namespace "
+        f"'{namespace}'.\n\n"
+        "Below are individual memory records. Produce a faithful narrative "
+        "summary in plain prose (3-6 sentences). Rules:\n"
+        "- Do NOT infer facts not present in the memories.\n"
+        "- Do NOT pick sides, argue, or editorialize.\n"
+        "- Preserve specific names, dates, numbers when present.\n"
+        "- Organize chronologically where created_at implies an order.\n"
+        "- If memories conflict, note both rather than choosing one.\n\n"
+        f"Memories:\n{memories_text}\n\n"
+        "Summary:"
+    )
+
+    response = await client.chat.completions.create(
+        model=L3_SUMMARY_GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=512,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
+async def _maybe_synthesize_l3_1(
     db: AsyncSession,
     user_id: str,
     namespace: str,
 ) -> None:
-    """Run L3.1 concept synthesis if the namespace is ready for it."""
+    """Run L3.1 concept synthesis if the namespace is ready for it.
+
+    Emits a structured `l3_1.skipped` log line for every silent-skip path
+    (threshold not met, debounced, no clusters formed, LLM unreachable)
+    so operators can distinguish "no clusters yet, working as designed"
+    from "CoreAIBackend is offline".
+    """
     # Count active non-concept memories in the namespace
     result = await db.execute(
         select(Memory).where(
@@ -165,12 +913,27 @@ async def _maybe_synthesize_l3(
     count = len(source_memories)
 
     if count < L3_SYNTHESIS_THRESHOLD:
+        logger.info(
+            "l3_1.skipped",
+            namespace=namespace,
+            reason="below_threshold",
+            count=count,
+            threshold=L3_SYNTHESIS_THRESHOLD,
+        )
         return
 
     # Debounce: only re-run if enough new memories have been added
     key = (user_id, namespace)
     last_count = _last_synthesis_count.get(key, 0)
     if count - last_count < L3_SYNTHESIS_MIN_NEW_MEMORIES and last_count > 0:
+        logger.info(
+            "l3_1.skipped",
+            namespace=namespace,
+            reason="debounced",
+            count=count,
+            last_run_count=last_count,
+            min_new_required=L3_SYNTHESIS_MIN_NEW_MEMORIES,
+        )
         return
 
     # Cap sources
@@ -183,9 +946,34 @@ async def _maybe_synthesize_l3(
         concept = await _synthesize_concept(source_dicts, user_id, namespace)
     except Exception as exc:
         logger.warning(
-            "compression_pipeline.l3_synthesis_failed",
+            "l3_1.skipped",
             namespace=namespace,
+            reason="synthesis_exception",
+            exception_class=type(exc).__name__,
             error=str(exc),
+        )
+        return
+
+    # Surface degraded synthesis modes (raw_fallback, raw_passthrough,
+    # synthesis_unavailable). These mean the concept row was written but
+    # CoreAIBackendClient was not the one who wrote it — important signal
+    # that L3.1 quality is degraded.
+    synthesis_source = concept.get("source", "unknown")
+    if synthesis_source in {"raw_fallback", "raw_passthrough"}:
+        logger.warning(
+            "l3_1.degraded",
+            namespace=namespace,
+            reason=synthesis_source,
+            source_count=len(sources),
+            note="CoreAIBackendClient unreachable or no cluster formed; concept row was written but quality is degraded",
+        )
+    if not concept.get("synthesis"):
+        logger.warning(
+            "l3_1.skipped",
+            namespace=namespace,
+            reason="empty_synthesis",
+            source=synthesis_source,
+            source_count=len(sources),
         )
         return
 
@@ -231,6 +1019,39 @@ async def _maybe_synthesize_l3(
         team_id=None,
     )
     db.add(concept_memory)
+
+    # Upsert the rolling namespace summary on NamespacePolicy so agents and
+    # the dashboard can read a cross-session rollup without re-running
+    # synthesis. Piggy-backs on the same L3.1 run — no extra LLM cost.
+    # Atomic UPSERT (see L3 site above for rationale) — under concurrent
+    # multi-session ingest, the previous SELECT-then-modify pattern
+    # serialised on the policy row.
+    try:
+        from backend.models.namespace_policy import NamespacePolicy
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        summary_text = concept.get("synthesis", "") or ""
+        now = datetime.now(timezone.utc)
+        stmt = pg_insert(NamespacePolicy).values(
+            namespace=namespace,
+            consolidated_summary=summary_text,
+            consolidated_summary_tier="L3.1",
+            consolidated_summary_updated_at=now,
+            created_by=uuid.UUID(user_id),
+        ).on_conflict_do_update(
+            index_elements=[NamespacePolicy.namespace],
+            set_={
+                "consolidated_summary": summary_text,
+                "consolidated_summary_tier": "L3.1",
+                "consolidated_summary_updated_at": now,
+            },
+        )
+        await db.execute(stmt)
+    except Exception as exc:
+        logger.debug(
+            "compression_pipeline.summary_upsert_failed",
+            namespace=namespace,
+            error=str(exc),
+        )
 
     # Update debounce counter
     _last_synthesis_count[key] = count

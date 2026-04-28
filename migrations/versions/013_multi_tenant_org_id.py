@@ -1,39 +1,39 @@
 """Multi-tenant foundation: add org_id to tenant-scoped tables.
 
-This is step 1 of the 3-step nullable→backfill→NOT NULL chain described in
-docs/architecture/KEMORY_MULTI_TENANT_AUTH_PLAN.md (WS-1).
+Renumbered from the original 009 to 013 during merge with main — main's
+009/010 dropped waitlist + renamed `s9nmv_*` tables to `kemory_*`. This
+migration runs against the post-rename `kemory_*` tables.
 
 What this migration does:
   - Adds a nullable `org_id VARCHAR(64)` column to:
-      * s9nmv_memories
-      * s9nmv_agent_registry
-      * s9nmv_audit_log         (also adds team_id for WS-8)
-      * s9nmv_permission_rules
-  - Backfills every existing row with org_id='legacy' so future NOT NULL
-    enforcement (revision 011) can run without scanning for orphans.
+      * kemory_memories
+      * kemory_agent_registry
+      * kemory_audit_log         (also adds team_id for WS-8)
+      * kemory_permission_rules
+  - Backfills every existing row with org_id='legacy' so the NOT NULL
+    enforcement in revision 014 can run without scanning for orphans.
   - Adds composite indexes (org_id, user_id) on the hot read paths so the
     tenant filter introduced in WS-3 keeps p95 read latency within budget.
 
 What this migration does NOT do:
-  - It does NOT mark org_id NOT NULL — that's revision 011, gated on WS-2
-    being live in shadow mode for ≥72h so producers populate the column.
-  - It does NOT enforce any tenant filtering — TENANT_ENFORCEMENT defaults
-    to "off" until WS-3 lands.
-  - It does NOT touch teams / team_members tables (those already have org_id
-    via 004_mv3_visibility_teams).
+  - It does NOT mark org_id NOT NULL — that's revision 014.
+  - It does NOT enforce any tenant filtering — controlled at runtime by
+    settings.tenant_enforcement.
+  - It does NOT touch teams / team_members tables (those already have
+    org_id via 004_mv3_visibility_teams).
 
-Safe to deploy alongside the current binary: the new column is invisible to
-SQLAlchemy 2.x model code that hasn't been updated yet, and the backfill
-runs as a single bounded UPDATE per table (low row count today).
+Safe to deploy alongside the current binary: the new column is invisible
+to SQLAlchemy 2.x model code that hasn't been updated yet, and the
+backfill runs as a single bounded UPDATE per table (low row count today).
 
-Revision ID: 009
+Revision ID: 013
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
-
-revision = "009"
-down_revision = "008"
+revision = "013"
+down_revision = "012"
 branch_labels = None
 depends_on = None
 
@@ -42,10 +42,10 @@ depends_on = None
 # already has it from 004_mv3_visibility_teams; agent_registry/permission_rules
 # don't need it.
 _TABLES_WITH_ORG_ID = [
-    ("s9nmv_memories", False),
-    ("s9nmv_agent_registry", False),
-    ("s9nmv_audit_log", True),
-    ("s9nmv_permission_rules", False),
+    ("kemory_memories", False),
+    ("kemory_agent_registry", False),
+    ("kemory_audit_log", True),
+    ("kemory_permission_rules", False),
 ]
 
 # Sentinel value for existing rows. Ops reassigns to real org_ids in P4
@@ -79,8 +79,6 @@ def upgrade() -> None:
             )
 
     # ── Backfill ────────────────────────────────────────────────────
-    # Single statement per table — row counts in staging are low today.
-    # If this needs to scale, switch to batched UPDATE LIMIT N.
     for table, _ in _TABLES_WITH_ORG_ID:
         bind.execute(
             sa.text(f"UPDATE {table} SET org_id = :sentinel WHERE org_id IS NULL"),
@@ -93,31 +91,31 @@ def upgrade() -> None:
     # next-most-selective predicate on memories/agents.
     op.create_index(
         "idx_memories_org_user",
-        "s9nmv_memories",
+        "kemory_memories",
         ["org_id", "user_id"],
     )
     op.create_index(
         "idx_agent_registry_org_user",
-        "s9nmv_agent_registry",
+        "kemory_agent_registry",
         ["org_id", "user_id"],
     )
     op.create_index(
         "idx_audit_log_org_time",
-        "s9nmv_audit_log",
+        "kemory_audit_log",
         ["org_id", "created_at"],
     )
     op.create_index(
         "idx_permission_rules_org_user",
-        "s9nmv_permission_rules",
+        "kemory_permission_rules",
         ["org_id", "user_id"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("idx_permission_rules_org_user", table_name="s9nmv_permission_rules")
-    op.drop_index("idx_audit_log_org_time", table_name="s9nmv_audit_log")
-    op.drop_index("idx_agent_registry_org_user", table_name="s9nmv_agent_registry")
-    op.drop_index("idx_memories_org_user", table_name="s9nmv_memories")
+    op.drop_index("idx_permission_rules_org_user", table_name="kemory_permission_rules")
+    op.drop_index("idx_audit_log_org_time", table_name="kemory_audit_log")
+    op.drop_index("idx_agent_registry_org_user", table_name="kemory_agent_registry")
+    op.drop_index("idx_memories_org_user", table_name="kemory_memories")
 
     for table, add_team_id in reversed(_TABLES_WITH_ORG_ID):
         if add_team_id:

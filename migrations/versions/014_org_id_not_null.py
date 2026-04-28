@@ -5,35 +5,35 @@ no production users yet, we skip the shadow-mode bake the original plan
 called for and flip enforcement on directly:
 
   * org_id NOT NULL on:
-      s9nmv_memories
-      s9nmu_agent_registry  (typo-safe alias — actual: s9nmv_agent_registry)
-      s9nmv_audit_log
-      s9nmv_permission_rules
+      kemory_memories
+      kemory_agent_registry
+      kemory_audit_log
+      kemory_permission_rules
   * teams.org_id changes type GUID → VARCHAR(64) so it matches the
     string-shaped tenant identifier used by Cognition OS, the CCB Kafka
-    envelope, and the new columns from revision 009.
+    envelope, and the new columns from revision 013.
 
 Pre-condition: every row carries a real org_id or the legacy sentinel.
-Revision 009's backfill already wrote the sentinel into pre-existing
+Revision 013's backfill already wrote the sentinel into pre-existing
 rows, so this migration sets NOT NULL safely.
 
-Revision ID: 010
+Revision ID: 014
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
-
-revision = "010"
-down_revision = "009"
+revision = "014"
+down_revision = "013"
 branch_labels = None
 depends_on = None
 
 
 _TABLES = [
-    "s9nmv_memories",
-    "s9nmv_agent_registry",
-    "s9nmv_audit_log",
-    "s9nmv_permission_rules",
+    "kemory_memories",
+    "kemory_agent_registry",
+    "kemory_audit_log",
+    "kemory_permission_rules",
 ]
 
 

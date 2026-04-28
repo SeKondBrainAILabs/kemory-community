@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes.agents import router as agents_router
 from backend.api.routes.audit import router as audit_router
+from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
 from backend.api.routes.enrichment import router as enrichment_router
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
 from backend.api.routes.health import router as health_router
@@ -21,8 +22,6 @@ from backend.api.routes.memories import router as memories_router
 from backend.api.routes.permissions import gatekeeper_router, permissions_router
 from backend.api.routes.security import router as security_router
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
-from backend.api.routes.waitlist import admin_router as waitlist_admin_router
-from backend.api.routes.waitlist import public_router as waitlist_router
 from backend.config.settings import settings
 from backend.core.body_size_limit import body_size_limit_middleware
 from backend.core.database import close_db, init_db
@@ -111,8 +110,7 @@ app.include_router(mcp_router)
 app.include_router(enrichment_router)
 app.include_router(audit_router)
 app.include_router(security_router)
-app.include_router(waitlist_router)
-app.include_router(waitlist_admin_router)
 app.include_router(graph_router)  # F12: Access Graph
 app.include_router(me_router)  # WS-11: GET /api/v1/me
 app.include_router(teams_router)  # WS-9: org/team admin
+app.include_router(consolidation_router)  # KMV-E14: namespace policies + consolidation stats

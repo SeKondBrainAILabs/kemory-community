@@ -440,21 +440,38 @@ async def enrich_memory(
     # Stage 4: Graph relationship building
     graph_rels = await build_graph_relationships(str(memory_id), entities, tags)
 
-    # Stage 5: Update memory record
-    memory.quality_score = quality.overall
-    memory.enrichment_status = "completed"
-
-    # Store enrichment data in metadata
-    enrichment_meta = memory.meta or {}
-    enrichment_meta["enrichment"] = {
-        "entities": [e.model_dump() for e in entities],
-        "concept_tags": [t.model_dump() for t in tags],
-        "quality_score": quality.model_dump(),
-        "entity_count": len(entities),
-        "tag_count": len(tags),
-        "relationship_count": len(graph_rels),
+    # Stage 5: Update memory record.
+    # F14: Use a JSONB merge for the metadata write so a concurrent
+    # compression_pipeline._promote_to_l2 write doesn't clobber our
+    # `enrichment` key (and vice versa). Before this fix, both stages
+    # did read-modify-write of the whole metadata column and the last
+    # writer won — memories ended up with only ONE of the two key sets.
+    import json as _json
+    from sqlalchemy import text as _sql
+    enrichment_payload = {
+        "enrichment": {
+            "entities": [e.model_dump() for e in entities],
+            "concept_tags": [t.model_dump() for t in tags],
+            "quality_score": quality.model_dump(),
+            "entity_count": len(entities),
+            "tag_count": len(tags),
+            "relationship_count": len(graph_rels),
+        }
     }
-    memory.meta = enrichment_meta
+    await db.execute(
+        _sql(
+            "UPDATE kemory_memories "
+            "SET quality_score = :qscore, "
+            "    enrichment_status = 'completed', "
+            "    metadata = COALESCE(metadata, '{}'::jsonb) || CAST(:patch AS jsonb) "
+            "WHERE memory_id = :mid"
+        ),
+        {
+            "qscore": quality.overall,
+            "patch": _json.dumps(enrichment_payload),
+            "mid": str(memory_id),
+        },
+    )
     await db.flush()
 
     # KMV-E8 S8.2: Upsert entities to Cognition OS concept graph

@@ -23,11 +23,32 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
 from backend.models.agent import AgentRegistry
+
+async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
+    """Update kemory_agent_registry.last_active_at on its own short-lived
+    session, then commit immediately. Keeping this out of the request
+    transaction prevents row-lock contention on the agent row when many
+    concurrent authenticated writes share the same agent_id (e.g. the
+    LongMemEval ingest harness running 16 worker threads).
+    """
+    try:
+        from backend.core.database import _get_session_factory
+        async with _get_session_factory()() as own_db:
+            async with own_db.begin():
+                await own_db.execute(
+                    update(AgentRegistry)
+                    .where(AgentRegistry.agent_id == agent_id)
+                    .values(last_active_at=datetime.now(UTC))
+                )
+    except Exception:
+        # Last-active is advisory; never block the request on its failure.
+        pass
+
 
 # ─── Password / API Key Hashing ──────────────────────────────────
 # P4 #24: dropped passlib (depends on stdlib `crypt` removed in Python 3.13).
@@ -343,9 +364,15 @@ async def authenticate_api_key(
 
     if agent and verify_api_key(api_key, agent.api_key_hash):
         ctx = _build_auth_context(agent)
+        # P1 #8 lock-protected cache write (replaces direct dict assignment
+        # to fix the thundering-herd-on-rotation concurrency bug).
         await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
-        agent.last_active_at = datetime.now(UTC)
-        await db.flush()
+        # Defer last_active_at to a short-lived session — under bulk parallel
+        # writes (e.g. 16-worker LME ingest) holding this update inside the
+        # request transaction pins the agent row until commit and exhausts
+        # the connection pool. Same contention reasoning as
+        # gatekeeper._increment_agent_stats.
+        await _bg_touch_last_active(agent.agent_id)
         return ctx
 
     # 3. Fallback: scan all active agents (for legacy keys without prefix)
@@ -359,10 +386,13 @@ async def authenticate_api_key(
         agents = result.scalars().all()
         for agent in agents:
             if verify_api_key(api_key, agent.api_key_hash):
-                # Backfill the prefix for next time
+                # Backfill the prefix for next time. This is a one-shot
+                # write per agent (only matters on the first request after
+                # the prefix column was added), so it's fine to keep it
+                # in the request transaction. last_active_at is deferred.
                 agent.api_key_prefix = prefix
-                agent.last_active_at = datetime.now(UTC)
                 await db.flush()
+                await _bg_touch_last_active(agent.agent_id)
 
                 ctx = _build_auth_context(agent)
                 await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)

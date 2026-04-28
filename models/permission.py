@@ -1,7 +1,7 @@
 """
 S9N Memory Vault — Permission Rule Model
 
-Spec reference: Appendix A.1, Table s9nmv_permission_rules
+Spec reference: Appendix A.1, Table kemory_permission_rules
 Stores user-defined permission rules evaluated by the Gatekeeper.
 """
 
@@ -23,7 +23,7 @@ class PermissionRule(Base):
     If no rule matches, the default action is DENY (default-deny posture).
     """
 
-    __tablename__ = "s9nmv_permission_rules"
+    __tablename__ = "kemory_permission_rules"
 
     rule_id = Column(
         GUID(),

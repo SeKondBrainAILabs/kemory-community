@@ -2,7 +2,7 @@
 S9N Memory Vault — Keycloak Admin API Client
 
 Manages realm roles for users via Keycloak's Admin REST API.
-Used to assign/remove `beta_approved` role on waitlist approval/rejection.
+Used to assign/remove `beta_approved` role on beta approval/rejection.
 
 Requires a service account client (kemory-api) with realm-management roles.
 """

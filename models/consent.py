@@ -1,7 +1,7 @@
 """
 S9N Memory Vault — JIT Consent Request Model
 
-Spec reference: Appendix A.1, Table s9nmv_consent_requests
+Spec reference: Appendix A.1, Table kemory_consent_requests
 Stores Just-in-Time consent prompts sent to users when agents request elevated access.
 """
 
@@ -23,7 +23,9 @@ class ConsentRequest(Base):
     If the timeout expires, the default action is DENY.
     """
 
-    __tablename__ = "s9nmv_consent_requests"
+
+    __tablename__ = "kemory_consent_requests"
+
 
     consent_id = Column(
         GUID(),

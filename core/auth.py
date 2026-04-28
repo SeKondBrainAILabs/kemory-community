@@ -223,7 +223,7 @@ async def require_beta_access(
     if auth.auth_method == "keycloak" and "beta_approved" not in auth.scopes:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is on the waitlist. You'll be notified when approved.",
+            detail="Your account is pending beta approval. You'll be notified when approved.",
         )
     return auth
 

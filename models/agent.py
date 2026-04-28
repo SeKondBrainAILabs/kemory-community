@@ -1,7 +1,7 @@
 """
 S9N Memory Vault — Agent Registry Model
 
-Spec reference: Appendix A.1, Table s9nmv_agent_registry
+Spec reference: Appendix A.1, Table kemory_agent_registry
 Stores registered agents with their declared scopes, API key hashes, and usage stats.
 """
 
@@ -25,7 +25,7 @@ class AgentRegistry(Base):
     - Usage counters for reads, writes, and denied requests
     """
 
-    __tablename__ = "s9nmv_agent_registry"
+    __tablename__ = "kemory_agent_registry"
 
     # Primary key
     agent_id = Column(

@@ -50,10 +50,9 @@ class Settings(BaseSettings):
 
     # ─── Application ──────────────────────────────────────────────
     # P1 #9: rebranded "S9N Memory Vault" → "Kemory" in the user-facing
-    # default. The DB table prefix `s9nmv_*` and the Python package
-    # `memory_vault` remain on legacy names until migration 011 (the
-    # follow-up that renames tables; not safe to do without a coordinated
-    # deploy + data migration).
+    # default. The DB table prefix is now `kemory_*` (renamed via the
+    # P1 #9 phase 2 migration on main); the Python package `memory_vault`
+    # remains on its legacy name (a refactor for a separate change).
     app_name: str = "Kemory"
     app_version: str = "0.1.0"
     environment: str = "development"
@@ -168,7 +167,7 @@ class Settings(BaseSettings):
     # ─── Email ──────────────────────────────────────────────────────
     email_enabled: bool = False
     email_provider: str = "smtp"  # "smtp" (add "sendgrid" / "resend" later)
-    email_from: str = "S9N Memory Vault <hello@sekondbrain.ai>"
+    email_from: str = "Kemory <hello@sekondbrain.ai>"
     smtp_host: str = "localhost"
     smtp_port: int = 587
     smtp_user: str = ""

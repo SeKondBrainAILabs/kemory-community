@@ -10,8 +10,8 @@ from backend.models.audit import AuditLog
 from backend.models.consent import ConsentRequest
 from backend.models.memory import Memory
 from backend.models.permission import PermissionRule
+from backend.models.session_summary import SessionSummary
 from backend.models.team import Team, TeamMember  # WS-4 + WS-9
-from backend.models.waitlist import ReferralEvent, WaitlistEntry
 
 __all__ = [
     "AgentRegistry",
@@ -19,8 +19,7 @@ __all__ = [
     "AuditLog",
     "ConsentRequest",
     "Memory",
+    "SessionSummary",
     "Team",
     "TeamMember",
-    "WaitlistEntry",
-    "ReferralEvent",
 ]

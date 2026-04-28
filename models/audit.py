@@ -1,7 +1,7 @@
 """
 S9N Memory Vault — Audit Log Model
 
-Spec reference: Appendix A.1, Table s9nmv_audit_log
+Spec reference: Appendix A.1, Table kemory_audit_log
 Append-only audit trail for all agent access attempts and permission evaluations.
 Includes hash chain for tamper detection.
 """
@@ -24,7 +24,7 @@ class AuditLog(Base):
     tamper detection. Supports GDPR compliance by recording all data access.
     """
 
-    __tablename__ = "s9nmv_audit_log"
+    __tablename__ = "kemory_audit_log"
 
     audit_id = Column(
         GUID(),

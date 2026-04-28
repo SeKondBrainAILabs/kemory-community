@@ -2,19 +2,21 @@
 S9N Memory Vault — Memory API Routes
 
 Endpoints for memory CRUD operations:
-- POST   /api/v1/memories              — Create a memory
-- GET    /api/v1/memories/{memory_id}  — Get a memory
-- PUT    /api/v1/memories/{memory_id}  — Update a memory
-- DELETE /api/v1/memories/{memory_id}  — Delete a memory (soft)
-- POST   /api/v1/memories/search       — Search memories
-- GET    /api/v1/namespaces            — List namespaces
+- POST   /api/v1/memories                                    — Create a memory
+- GET    /api/v1/memories/{memory_id}                        — Get a memory
+- PUT    /api/v1/memories/{memory_id}                        — Update a memory
+- DELETE /api/v1/memories/{memory_id}                        — Delete a memory (soft)
+- POST   /api/v1/memories/search                             — Search memories
+- GET    /api/v1/namespaces                                  — List namespaces
+- GET    /api/v1/namespaces/{namespace}/compressed           — Multi-level memory read (L1-L4)
 
 Spec reference: Section 10 (API Contracts), Section 7.4 (Memory Operations)
+Story: KMV-S11.2
 """
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,10 +31,13 @@ from backend.services.memory_service import (
     create_memory,
     delete_memory,
     get_memory,
+    get_namespace_compressed,
+    get_namespace_summary,
     list_namespaces,
     search_memories,
     update_memory,
 )
+from backend.services.namespace_matcher import RelatedNamespaceConflict
 
 router = APIRouter(prefix="/api/v1", tags=["Memories"])
 
@@ -62,6 +67,11 @@ async def create_memory_endpoint(
             content=memory.model_dump(mode="json"),
             status_code=201,
         )
+    except RelatedNamespaceConflict as e:
+        # 409 — the agent tried to create a namespace that's 60..90% similar
+        # to an existing one. Surface the suggestions so the agent can pick
+        # an existing namespace or re-submit with allow_duplicate=true.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.to_dict())
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -206,216 +216,190 @@ async def list_namespaces_endpoint(
 
     Fix KMV-QA-007: Admin users receive an aggregated view across all
     users so the Analytics page shows real data instead of "No namespace data".
+
+    Non-admin callers are filtered by the Gatekeeper on memory:read so agents
+    cannot enumerate namespaces they have no access to.
     """
-    return await list_namespaces(auth.user_id, db, admin_view=is_admin(auth))
-
-
-# ─── Consolidation Endpoints (KMV-E13/E14) ──────────────────────────────────
-
-
-@router.post(
-    "/namespaces/{namespace}/consolidate",
-    summary="Trigger memory consolidation for a namespace",
-    tags=["Consolidation"],
-)
-async def trigger_consolidation_endpoint(
-    namespace: str,
-    auth: AuthContext = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    KMV-S13.2 / KMV-S14.3: Manually trigger the consolidation pipeline for a namespace.
-
-    Runs the full pipeline:
-      1. Apply weight decay to all pending memories
-      2. Auto-archive memories past the retention window
-      3. Push remaining pending memories to Cognition OS
-
-    Admin-only. Returns a summary of actions taken.
-    """
-    if not is_admin(auth):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin users can trigger consolidation.",
-        )
-    from backend.services.consolidation_service import run_daily_consolidation
-
-    try:
-        summary = await run_daily_consolidation(db, namespace=namespace)
-        return JSONResponse(content={"status": "ok", "summary": summary})
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Consolidation failed: {exc}",
-        )
-
-
-@router.get(
-    "/namespaces/{namespace}/consolidation-stats",
-    summary="Get consolidation statistics for a namespace",
-    tags=["Consolidation"],
-)
-async def get_consolidation_stats_endpoint(
-    namespace: str,
-    auth: AuthContext = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    KMV-S14.2: Return consolidation statistics for a namespace.
-
-    Returns counts of pending/consolidating/archived memories and average weights.
-    Used by the Admin Dashboard Memory Explorer.
-    """
-    from backend.services.consolidation_service import get_consolidation_stats
-
-    try:
-        stats = await get_consolidation_stats(db, namespace=namespace)
-        return JSONResponse(content={"namespace": namespace, "stats": stats})
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get consolidation stats: {exc}",
-        )
-
-
-@router.get(
-    "/namespaces/consolidation-stats",
-    summary="Get consolidation statistics for all namespaces",
-    tags=["Consolidation"],
-)
-async def get_all_consolidation_stats_endpoint(
-    auth: AuthContext = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    KMV-S14.2: Return consolidation statistics for all namespaces.
-
-    Admin-only. Returns counts and average weights grouped by namespace and status.
-    """
-    if not is_admin(auth):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin users can view all namespace consolidation stats.",
-        )
-    from backend.services.consolidation_service import get_consolidation_stats
-
-    try:
-        stats = await get_consolidation_stats(db)
-        return JSONResponse(content={"stats": stats})
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get consolidation stats: {exc}",
-        )
-
-
-@router.get(
-    "/namespaces/{namespace}/policy",
-    summary="Get consolidation policy for a namespace",
-    tags=["Consolidation"],
-)
-async def get_namespace_policy_endpoint(
-    namespace: str,
-    auth: AuthContext = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    KMV-S14.1: Get the consolidation policy for a namespace.
-
-    Returns the decay_rate, retention_days, and auto_consolidate settings.
-    Returns default values if no policy has been explicitly configured.
-    """
-    from sqlalchemy import select
-
-    from backend.models.namespace_policy import EXEMPT_NAMESPACES, NamespacePolicy
-
-    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
-    policy = result.scalar_one_or_none()
-    if policy is None:
-        return JSONResponse(
-            content={
-                "namespace": namespace,
-                "decay_rate": 0.1,
-                "retention_days": 10,
-                "auto_consolidate": namespace not in EXEMPT_NAMESPACES,
-                "is_default": True,
-            }
-        )
-    return JSONResponse(
-        content={
-            "namespace": policy.namespace,
-            "decay_rate": policy.decay_rate,
-            "retention_days": policy.retention_days,
-            "auto_consolidate": policy.auto_consolidate,
-            "consolidation_hour_utc": policy.consolidation_hour_utc,
-            "description": policy.description,
-            "is_default": False,
-        }
+    # Consolidation + policy endpoints have moved to backend/api/routes/consolidation.py
+    # (KMV-E14). list_namespaces is now agent-scoped for non-admin callers.
+    admin = is_admin(auth)
+    return await list_namespaces(
+        auth.user_id,
+        db,
+        admin_view=admin,
+        agent_id=None if admin else auth.agent_id,
     )
 
 
-@router.put(
-    "/namespaces/{namespace}/policy",
-    summary="Update consolidation policy for a namespace",
-    tags=["Consolidation"],
+@router.get(
+    "/namespaces/{namespace}/summary",
+    summary="Get consolidated cross-session summary for a namespace",
 )
-async def update_namespace_policy_endpoint(
+async def get_namespace_summary_endpoint(
     namespace: str,
-    body: dict,
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    KMV-S14.1: Create or update the consolidation policy for a namespace.
+    Return the rolling L3.1 consolidated summary for a namespace.
 
-    Admin-only. Allows configuring decay_rate, retention_days, auto_consolidate,
-    and consolidation_hour_utc per namespace.
+    Falls back to the latest L3.0 concept memory when L3.1 hasn't been
+    synthesized yet. Gatekeeper-gated on memory:read.
     """
-    if not is_admin(auth):
+    admin = is_admin(auth)
+    try:
+        return await get_namespace_summary(
+            auth.user_id, auth.agent_id, namespace, db, skip_gatekeeper=admin,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.get(
+    "/namespaces/{namespace}/sessions/{session_id}/summary",
+    summary="Get per-session L3 rollup (session + cumulative-to-this-point)",
+)
+async def get_session_summary_endpoint(
+    namespace: str,
+    session_id: str,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the session's L3 rollup for this namespace.
+
+    Response shape:
+      {
+        namespace, session_id,
+        session_summary, session_summary_tier, session_memory_count,
+        cumulative_summary, cumulative_summary_tier, cumulative_memory_count,
+        up_to_ts, updated_at
+      }
+
+    `session_summary` covers only memories with session_id=<session_id>.
+    `cumulative_summary` covers all active namespace memories with
+    created_at ≤ up_to_ts — a point-in-time snapshot of the namespace as
+    of this session's boundary. Returns 404 if no summary has been
+    generated yet (e.g. the session has <2 memories).
+    """
+    from backend.models.session_summary import SessionSummary
+    from sqlalchemy import select as _select
+
+    # Gatekeeper: agents need memory:read on the namespace. Admins bypass.
+    admin = is_admin(auth)
+    if not admin:
+        from backend.services.gatekeeper_service import (
+            evaluate, EvaluationRequest,
+        )
+        decision = await evaluate(
+            auth.user_id,
+            EvaluationRequest(
+                agent_id=str(auth.agent_id),
+                scope="memory:read",
+                namespace=namespace,
+            ),
+            db,
+        )
+        if decision.decision != "allow":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"memory:read on '{namespace}' denied by gatekeeper",
+            )
+
+    row = (await db.execute(
+        _select(SessionSummary).where(
+            SessionSummary.user_id == auth.user_id,
+            SessionSummary.namespace == namespace,
+            SessionSummary.session_id == session_id,
+        )
+    )).scalar_one_or_none()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No session summary for namespace='{namespace}' "
+                f"session_id='{session_id}'. Needs ≥1 memory in the session "
+                f"(and ≥2 in the namespace for the cumulative summary)."
+            ),
+        )
+
+    return {
+        "namespace": row.namespace,
+        "session_id": row.session_id,
+        "session_summary": row.session_summary,
+        "session_summary_tier": row.session_summary_tier,
+        "session_memory_count": row.session_memory_count,
+        "cumulative_summary": row.cumulative_summary,
+        "cumulative_summary_tier": row.cumulative_summary_tier,
+        "cumulative_memory_count": row.cumulative_memory_count,
+        "up_to_ts": row.up_to_ts.isoformat() if row.up_to_ts else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+_VALID_MEMORY_MODES = {"raw", "aaak", "concept", "cognition"}
+
+
+@router.get(
+    "/namespaces/{namespace}/compressed",
+    summary="Multi-level memory read (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)",
+)
+async def get_namespace_compressed_endpoint(
+    namespace: str,
+    mode: str = Query(
+        default="concept",
+        description="Memory read level: raw (L1), aaak (L2), concept (L3.1), cognition (L4)",
+    ),
+    merge_mode: str = Query(
+        default="current",
+        description="Merge strategy: current (latest only) or aggregate (all history)",
+    ),
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return namespace memories at the requested compression level.
+
+    | Mode      | Level | Description                                      |
+    |-----------|-------|--------------------------------------------------|
+    | raw       | L1    | Every active memory as raw dicts                 |
+    | aaak      | L2    | Lossless AAAK encoding with compression metrics  |
+    | concept   | L3.1  | LLM-synthesized concepts                         |
+    | cognition | L4    | Concepts + Cognition OS graph entities           |
+
+    Story: KMV-S11.2
+    """
+    if mode not in _VALID_MEMORY_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid mode '{mode}'. Must be one of: {', '.join(sorted(_VALID_MEMORY_MODES))}",
+        )
+    if merge_mode not in {"current", "aggregate"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="merge_mode must be 'current' or 'aggregate'",
+        )
+    try:
+        # Use a dummy agent_id for dashboard reads (admin context)
+        import uuid as _uuid
+        agent_id = auth.agent_id if hasattr(auth, "agent_id") and auth.agent_id else _uuid.UUID(int=0)
+        payload = await get_namespace_compressed(
+            auth.user_id,
+            agent_id,
+            namespace,
+            db,
+            mode=mode,
+            merge_mode=merge_mode,
+            skip_gatekeeper=is_admin(auth),
+        )
+        return JSONResponse(content=payload)
+    except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin users can update namespace policies.",
-        )
-    from sqlalchemy import select
-
-    from backend.models.namespace_policy import NamespacePolicy
-
-    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
-    policy = result.scalar_one_or_none()
-    if policy is None:
-        policy = NamespacePolicy(namespace=namespace, created_by=auth.user_id)
-        db.add(policy)
-
-    # Update allowed fields
-    if "decay_rate" in body:
-        val = float(body["decay_rate"])
-        if not 0.0 <= val <= 1.0:
-            raise HTTPException(status_code=400, detail="decay_rate must be between 0.0 and 1.0")
-        policy.decay_rate = val
-    if "retention_days" in body:
-        val = int(body["retention_days"])
-        if not 1 <= val <= 365:
-            raise HTTPException(status_code=400, detail="retention_days must be between 1 and 365")
-        policy.retention_days = val
-    if "auto_consolidate" in body:
-        policy.auto_consolidate = bool(body["auto_consolidate"])
-    if "consolidation_hour_utc" in body:
-        val = int(body["consolidation_hour_utc"])
-        if not 0 <= val <= 23:
-            raise HTTPException(status_code=400, detail="consolidation_hour_utc must be between 0 and 23")
-        policy.consolidation_hour_utc = val
-    if "description" in body:
-        policy.description = str(body["description"])[:500]
-
-    await db.commit()
-    return JSONResponse(
-        content={
-            "namespace": policy.namespace,
-            "decay_rate": policy.decay_rate,
-            "retention_days": policy.retention_days,
-            "auto_consolidate": policy.auto_consolidate,
-            "consolidation_hour_utc": policy.consolidation_hour_utc,
-            "description": policy.description,
-            "updated": True,
-        }
-    )
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc

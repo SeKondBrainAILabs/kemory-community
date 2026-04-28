@@ -2,7 +2,7 @@
 S9N Memory Vault — Unified Memory Model (MV2-S01.2)
 
 Single storage table that supports both REST API and core library operations.
-Merges s9nmv_memories (REST) and episodes (core library) schemas.
+Merges kemory_memories (REST) and episodes (core library) schemas.
 
 Bi-temporal model: valid_at (when fact became true) + invalid_at (soft delete).
 Replaces the legacy is_deleted/deleted_at pattern.
@@ -33,7 +33,7 @@ class Memory(Base):
     - Supports TTL, versioning, and decay-based forgetting
     """
 
-    __tablename__ = "s9nmv_memories"
+    __tablename__ = "kemory_memories"
 
     # ── Identity ──────────────────────────────────────────────────
     memory_id = Column(
