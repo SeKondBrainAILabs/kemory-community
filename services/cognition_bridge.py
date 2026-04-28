@@ -75,7 +75,13 @@ class CognitionBridge:
     ) -> None:
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._auth_token = auth_token
-        self._org_id = org_id
+        # P3 #19: ``org_id`` here is now a fallback for unauthenticated /
+        # background-task callers (e.g. periodic consolidation worker).
+        # The primary source is the active TenantScope ContextVar at
+        # request time, read in ``_request``. Keeping this constructor
+        # arg for one minor version of compat with callers passing it
+        # explicitly; remove in v0.3.
+        self._fallback_org_id = org_id
         self._timeout = timeout
 
         # Circuit breaker state
@@ -106,18 +112,31 @@ class CognitionBridge:
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def _get_client(self) -> httpx.AsyncClient:
+        # P3 #19: only static headers (auth token) baked at client creation.
+        # The X-Org-Id header is dynamic per-request (see _request).
         if self._client is None or self._client.is_closed:
             headers: dict[str, str] = {}
             if self._auth_token:
                 headers["Authorization"] = f"Bearer {self._auth_token}"
-            if self._org_id:
-                headers["X-Org-Id"] = self._org_id
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers=headers,
                 timeout=self._timeout,
             )
         return self._client
+
+    def _resolve_org_id(self) -> str:
+        """Return the org_id to send on this request.
+
+        Priority:
+          1. Active TenantScope ContextVar (the request's actual org).
+          2. Constructor fallback (for background tasks running outside
+             a request scope, e.g. periodic consolidation).
+        Returns "" if neither is set — callers see no X-Org-Id header.
+        """
+        # Lazy import: tenancy → auth → settings cycles otherwise.
+        from backend.core.tenancy import current_org_id
+        return current_org_id() or self._fallback_org_id
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
@@ -141,7 +160,14 @@ class CognitionBridge:
 
         client = await self._get_client()
         try:
-            resp = await client.request(method, path, json=json)
+            # P3 #19: per-request X-Org-Id from the active TenantScope.
+            # Pass via the request's headers kwarg so the client's static
+            # headers (auth) are merged with the dynamic per-request one.
+            request_headers: dict[str, str] = {}
+            org_id = self._resolve_org_id()
+            if org_id:
+                request_headers["X-Org-Id"] = org_id
+            resp = await client.request(method, path, json=json, headers=request_headers)
             resp.raise_for_status()
             self._consecutive_failures = 0
             return resp.json() if resp.content else {}

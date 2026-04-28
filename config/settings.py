@@ -167,7 +167,10 @@ class Settings(BaseSettings):
     cognition_os_auth_token: str = ""
     """SERVICE_AUTH_SECRET for Cognition OS API."""
     cognition_os_org_id: str = ""
-    """X-Org-Id header value for Cognition OS tenant isolation."""
+    """DEPRECATED (P3 #19) — fallback X-Org-Id only for background tasks
+    that run outside a request scope (e.g. periodic consolidation worker).
+    The primary source is the active TenantScope's org_id, derived from
+    the caller's auth at request time. Will be removed in v0.3."""
 
     # ─── Deduplication ────────────────────────────────────────────
     dedup_exact_enabled: bool = True
