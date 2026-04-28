@@ -28,9 +28,9 @@ test.describe('Smoke: App Reachability', () => {
     const title = await page.title()
     console.log('Final URL:', url)
     console.log('Final Title:', title)
-    await page.screenshot({ 
+    await page.screenshot({
       path: '/home/ubuntu/agent_memory_vault/qa_output/screenshots/app_state.png',
-      fullPage: true 
+      fullPage: true
     })
   })
 })

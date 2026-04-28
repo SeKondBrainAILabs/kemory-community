@@ -17,9 +17,9 @@ for (const p of pages) {
   test(`screenshot: ${p.name}`, async ({ page }) => {
     await page.goto(p.path, { waitUntil: 'domcontentloaded', timeout: 20_000 })
     await page.waitForTimeout(3000)
-    await page.screenshot({ 
+    await page.screenshot({
       path: `/home/ubuntu/agent_memory_vault/qa_output/screenshots/${p.name}.png`,
-      fullPage: true 
+      fullPage: true
     })
   })
 }
