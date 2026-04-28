@@ -134,6 +134,15 @@ async def init_db():
         async with _get_engine().begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     else:
+        # Codebase review P1 #4 — running `alembic upgrade head` on every
+        # container start blocks the readiness probe under a slow ALTER.
+        # Production deployments should run a kemory-migrate Job instead
+        # (Core_Infrastructure/k8s/.../kemory-migrate-job.yaml) and set
+        # KEMORY_RUN_MIGRATIONS=false on the app Deployment.
+        # Local docker-compose still defaults to true so contributors don't
+        # have to run a separate command.
+        if os.environ.get("KEMORY_RUN_MIGRATIONS", "true").lower() not in {"true", "1", "yes"}:
+            return
         # PostgreSQL path — run Alembic migrations (S9N-3073)
         import subprocess
         import sys

@@ -47,7 +47,12 @@ class Settings(BaseSettings):
     weaviate_url: str = "http://localhost:8080"
 
     # ─── JWT Authentication (internal HS256 for agents) ─────────
-    jwt_secret_key: str = "dev-secret-change-in-production"
+    # SECURITY: fail-closed in non-development environments. The previous
+    # default ("dev-secret-change-in-production") meant a misconfigured env
+    # would silently ship that hard-coded secret to prod. See codebase review
+    # P1 #5. Empty in dev → an ephemeral random key is generated at startup
+    # (logged WARN). Empty in staging/prod → kemory refuses to start.
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 15
 
@@ -137,6 +142,35 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """Parse comma-separated CORS origins into a list."""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    def model_post_init(self, __context) -> None:
+        """Apply security policies that depend on multiple fields.
+
+        Codebase review P1 #5 — JWT secret fail-closed:
+        * non-dev with empty/placeholder secret → refuse to start.
+        * dev with empty secret → generate an ephemeral random key
+          (different on every process boot) and log a clear WARNING.
+          Never reuse the placeholder string the previous default shipped.
+        """
+        legacy_placeholders = {"", "dev-secret-change-in-production", "change-me"}
+        if self.jwt_secret_key in legacy_placeholders:
+            if self.environment in {"staging", "production", "prod"}:
+                raise ValueError(
+                    "JWT_SECRET_KEY is empty or a placeholder in a non-dev "
+                    "environment. Refusing to start. Set a real secret in "
+                    "the deployment env (32+ random bytes)."
+                )
+            # Dev: generate an ephemeral key. Use object.__setattr__ because
+            # pydantic v2 freezes fields after validation by default.
+            import secrets
+            import structlog as _structlog
+            ephemeral = secrets.token_urlsafe(48)
+            object.__setattr__(self, "jwt_secret_key", ephemeral)
+            _structlog.get_logger("kemory.config").warning(
+                "jwt.ephemeral_secret_generated",
+                environment=self.environment,
+                hint="Set JWT_SECRET_KEY in your env to keep tokens valid across restarts.",
+            )
 
 
 # Singleton settings instance
