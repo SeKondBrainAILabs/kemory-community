@@ -49,6 +49,19 @@ _auth_cache: dict[str, tuple["AuthContext", float]] = {}
 _auth_cache_by_agent: dict[str, set[str]] = {}
 _AUTH_CACHE_TTL = 300  # seconds
 
+# P1 #8: protect the cache + reverse-index dicts under concurrent writes.
+# Single dict ops are GIL-atomic; the COMBINED operations (insert into
+# cache + insert into reverse index, or expiry-eviction across both) are
+# not. Without this lock, a rotation racing with a verification can leave
+# an orphan reverse-index entry pointing at a dropped cache key, or vice
+# versa — symptoms: stale-after-rotation auth, occasional misses on
+# clear_auth_cache_for_agent, slow memory growth under churn.
+# An asyncio.Lock is the right primitive here because every caller is on
+# the asyncio event loop (FastAPI request handlers). The critical sections
+# are tiny (a handful of dict ops) so contention is negligible.
+import asyncio as _asyncio
+_auth_cache_lock = _asyncio.Lock()
+
 
 class AuthContext(BaseModel):
     """Represents the authenticated identity for a request.
@@ -234,7 +247,7 @@ def _cache_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
-def clear_auth_cache_for_agent(agent_id: uuid.UUID | str) -> None:
+async def clear_auth_cache_for_agent(agent_id: uuid.UUID | str) -> None:
     """Drop any AuthContext entries belonging to a specific agent.
 
     Called on key rotation (WS-5). The reverse-index map ``_auth_cache_by_agent``
@@ -242,20 +255,31 @@ def clear_auth_cache_for_agent(agent_id: uuid.UUID | str) -> None:
     in the rotation cost rather than O(N) in the cache size — preventing
     the thundering-herd of bcrypt verifications a full cache wipe would
     cause at scale.
+
+    P1 #8: holds ``_auth_cache_lock`` for the cross-dict pop sequence so a
+    concurrent ``_cache_auth_context`` can't slot a new entry into the
+    reverse index after we've cleared its agent_id but before we drop
+    its cache key.
     """
     if not agent_id:
         return
     aid = str(agent_id)
-    keys = _auth_cache_by_agent.pop(aid, set())
-    for ck in keys:
-        _auth_cache.pop(ck, None)
+    async with _auth_cache_lock:
+        keys = _auth_cache_by_agent.pop(aid, set())
+        for ck in keys:
+            _auth_cache.pop(ck, None)
 
 
-def _cache_auth_context(cache_key: str, ctx: "AuthContext", expiry: float) -> None:
-    """Store an AuthContext and update the reverse index."""
-    _auth_cache[cache_key] = (ctx, expiry)
-    if ctx.agent_id is not None:
-        _auth_cache_by_agent.setdefault(str(ctx.agent_id), set()).add(cache_key)
+async def _cache_auth_context(cache_key: str, ctx: "AuthContext", expiry: float) -> None:
+    """Store an AuthContext and update the reverse index.
+
+    P1 #8: locks the cross-dict insert pair so a concurrent expiry-eviction
+    can't drop one without the other.
+    """
+    async with _auth_cache_lock:
+        _auth_cache[cache_key] = (ctx, expiry)
+        if ctx.agent_id is not None:
+            _auth_cache_by_agent.setdefault(str(ctx.agent_id), set()).add(cache_key)
 
 
 async def authenticate_api_key(
@@ -277,23 +301,28 @@ async def authenticate_api_key(
     Returns:
         AuthContext if valid, None if no matching active agent found
     """
-    # 1. Check in-memory cache first
+    # 1. Check in-memory cache first.
+    # Read is lock-free (single dict.get is GIL-atomic and we're fine
+    # with a stale snapshot for the hit path). The cleanup of an expired
+    # entry crosses both _auth_cache and _auth_cache_by_agent though, so
+    # P1 #8 holds the lock for that section.
     ck = _cache_key(api_key)
     cached = _auth_cache.get(ck)
     if cached:
         ctx, expiry = cached
         if time.monotonic() < expiry:
             return ctx
-        # Expired — drop and clean up the reverse-index entry so it
-        # doesn't pile up unbounded under churn (heavy rotation, leaked
-        # key spam, etc.).
-        _auth_cache.pop(ck, None)
-        if ctx.agent_id is not None:
-            agent_keys = _auth_cache_by_agent.get(str(ctx.agent_id))
-            if agent_keys is not None:
-                agent_keys.discard(ck)
-                if not agent_keys:
-                    _auth_cache_by_agent.pop(str(ctx.agent_id), None)
+        # Expired — drop and clean up the reverse-index entry under lock
+        # so a concurrent _cache_auth_context can't insert a colliding
+        # entry mid-cleanup.
+        async with _auth_cache_lock:
+            _auth_cache.pop(ck, None)
+            if ctx.agent_id is not None:
+                agent_keys = _auth_cache_by_agent.get(str(ctx.agent_id))
+                if agent_keys is not None:
+                    agent_keys.discard(ck)
+                    if not agent_keys:
+                        _auth_cache_by_agent.pop(str(ctx.agent_id), None)
 
     # 2. Try prefix-based O(1) lookup
     prefix = _compute_key_prefix(api_key)
@@ -307,7 +336,7 @@ async def authenticate_api_key(
 
     if agent and verify_api_key(api_key, agent.api_key_hash):
         ctx = _build_auth_context(agent)
-        _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
+        await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
         agent.last_active_at = datetime.now(timezone.utc)
         await db.flush()
         return ctx
@@ -329,7 +358,7 @@ async def authenticate_api_key(
                 await db.flush()
 
                 ctx = _build_auth_context(agent)
-                _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
+                await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
                 return ctx
 
     return None

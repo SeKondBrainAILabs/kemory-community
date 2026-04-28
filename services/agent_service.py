@@ -256,7 +256,8 @@ async def rotate_agent_key(
 
     # Drop only this agent's cached AuthContexts (O(k) by agent_id, not O(N)
     # over the whole cache — see auth_service.clear_auth_cache_for_agent).
-    clear_auth_cache_for_agent(agent.agent_id)
+    # P1 #8: clear_auth_cache_for_agent is async (locks the cache+index).
+    await clear_auth_cache_for_agent(agent.agent_id)
 
     return AgentRegistrationResponse(
         agent_id=str(agent.agent_id),

@@ -47,6 +47,14 @@ _REDIS_PREFIX = "kemory:teams:"
 
 # L1 — bounded so a high-churn workload (millions of distinct keys) cannot
 # leak memory. cachetools.TTLCache evicts on TTL AND on max size (LRU).
+#
+# Concurrency (P1 #8 — investigated, not locked):
+#   cachetools.TTLCache uses an internal RLock for individual operations
+#   (get, set, pop, iteration), so single-step access is thread-safe.
+#   The residual concern is CACHE STAMPEDE on a cold key — N concurrent
+#   misses produce N DB round-trips when 1 would suffice. That is a
+#   perf concern at scale, not a correctness bug, and is tracked as a
+#   separate follow-up (single-flight via per-key asyncio.Lock dict).
 _l1: TTLCache[tuple[str, str], tuple[str, ...]] = TTLCache(
     maxsize=L1_MAX_ENTRIES, ttl=L1_TTL_SECONDS
 )
