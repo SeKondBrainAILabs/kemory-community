@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from jose import jwt, JWTError
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,12 @@ from backend.models.agent import AgentRegistry
 
 
 # ─── Password / API Key Hashing ──────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# P4 #24: dropped passlib (depends on stdlib `crypt` removed in Python 3.13).
+# We were only ever using the bcrypt scheme, so call bcrypt directly. The
+# wire format is identical ($2b$... bcrypt strings), so existing hashes
+# in the DB validate without re-hashing. bcrypt.hashpw / bcrypt.checkpw
+# are the canonical primitives.
+_BCRYPT_ROUNDS = 12  # matches passlib's default; tunable via env if needed
 
 # ─── Auth Cache ──────────────────────────────────────────────────
 # Cache verified API keys for 5 minutes to avoid repeated bcrypt calls.
@@ -195,16 +200,33 @@ def generate_api_key() -> tuple[str, str, str]:
     # Generate a 24-byte random key with 's9nmv_' prefix for identification
     raw_key = secrets.token_urlsafe(24)
     plaintext_key = f"s9nmv_{raw_key}"
-    hashed_key = pwd_context.hash(_prehash_key(plaintext_key))
+    # bcrypt.hashpw produces the same $2b$... wire format passlib was
+    # producing — existing DB hashes verify unchanged.
+    hashed_key = bcrypt.hashpw(
+        _prehash_key(plaintext_key).encode("utf-8"),
+        bcrypt.gensalt(rounds=_BCRYPT_ROUNDS),
+    ).decode("utf-8")
     key_prefix = _compute_key_prefix(plaintext_key)
     return plaintext_key, hashed_key, key_prefix
 
 
 def verify_api_key(plaintext_key: str, hashed_key: str) -> bool:
-    """Verify a plaintext API key against its bcrypt hash."""
-    if not plaintext_key:
+    """Verify a plaintext API key against its bcrypt hash.
+
+    Returns False on any error (invalid hash format, empty key, etc.) to
+    avoid leaking timing/error info to a probe. Reads the same $2b$...
+    wire format as the passlib-era hashes — no migration needed.
+    """
+    if not plaintext_key or not hashed_key:
         return False
-    return pwd_context.verify(_prehash_key(plaintext_key), hashed_key)
+    try:
+        return bcrypt.checkpw(
+            _prehash_key(plaintext_key).encode("utf-8"),
+            hashed_key.encode("utf-8"),
+        )
+    except (ValueError, TypeError):
+        # Malformed hash string — treat as non-match.
+        return False
 
 
 def _cache_key(api_key: str) -> str:
