@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config.settings import settings
 from backend.models.agent import AgentRegistry
 
+
 async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
     """Update kemory_agent_registry.last_active_at on its own short-lived
     session, then commit immediately. Keeping this out of the request
@@ -38,6 +39,7 @@ async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
     """
     try:
         from backend.core.database import _get_session_factory
+
         async with _get_session_factory()() as own_db:
             async with own_db.begin():
                 await own_db.execute(

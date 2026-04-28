@@ -33,7 +33,6 @@ Stories: F04-US-001 (write), F04-US-002 (read), F04-US-003 (search),
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Optional  # used by remaining Optional[X] hints in this file
 
 import structlog
 from pydantic import BaseModel, Field, model_validator
@@ -292,15 +291,21 @@ async def create_memory(
     # redirect; 0.60..0.90 ⇒ raise RelatedNamespaceConflict so the router
     # returns 409 (unless allow_duplicate=True); <0.60 ⇒ create fresh and
     # eagerly seed a NamespacePolicy row so description/summary can attach.
-    redirected_from: Optional[str] = None
+    redirected_from: str | None = None
     if not request.allow_duplicate:
         try:
             from backend.services.namespace_matcher import (
-                resolve_namespace, apply_resolution,
-                ResolutionAction, RelatedNamespaceConflict,
+                RelatedNamespaceConflict,
+                ResolutionAction,
+                apply_resolution,
+                resolve_namespace,
             )
+
             resolution = await resolve_namespace(
-                user_id, request.namespace, request.namespace_description, db,
+                user_id,
+                request.namespace,
+                request.namespace_description,
+                db,
             )
             if resolution.action == ResolutionAction.SUGGEST:
                 raise RelatedNamespaceConflict(request.namespace, resolution.candidates)
@@ -508,8 +513,9 @@ async def create_memory(
     # S9N-EMBED: Fire-and-forget embedding generation (bge-small-en-v1.5, 384-dim).
     async def _bg_embed(mem_id: uuid.UUID, content: str) -> None:
         try:
-            from memory_vault.embeddings.encoder import encode as _embed
             from sqlalchemy import text as _sql
+
+            from memory_vault.embeddings.encoder import encode as _embed
 
             vec = _embed(content)
             async with _db_factory()() as own_db:
@@ -549,6 +555,7 @@ async def create_memory(
     async def _bg_enrich(mem_id: uuid.UUID, uid: uuid.UUID) -> None:
         try:
             from backend.services.enrichment_service import enrich_memory as _enrich
+
             async with _db_factory()() as own_db:
                 await _enrich(mem_id, uid, own_db)
                 await own_db.commit()
@@ -996,6 +1003,7 @@ async def _expand_with_graph(
     """
     try:
         from backend.services.cognition_bridge import get_cognition_bridge
+
         bridge = get_cognition_bridge()
         if not bridge.enabled:
             return []
@@ -1011,25 +1019,31 @@ async def _expand_with_graph(
         # Skip if already present in vault results (entity_id == memory_id for vault memories)
         if entity_id in existing_ids:
             continue
-        items.append(MemoryResponse(
-            memory_id=entity_id or f"cog-{len(items)}",
-            user_id="cognition_os",
-            namespace="cognition_os",
-            content=r.get("content") or r.get("title", ""),
-            content_type="fact",
-            metadata={"source": "cognition_os", "score": r.get("score", 0.0), "title": r.get("title", "")},
-            source_agent_id=None,
-            source_type="cognition_os",
-            quality_score=r.get("score"),
-            enrichment_status="done",
-            version=1,
-            ttl_seconds=None,
-            expires_at=None,
-            created_at=now_str,
-            updated_at=now_str,
-            # Cognition OS entities are synthesized concepts — L3.1 tier.
-            compression_tier="L3.1",
-        ))
+        items.append(
+            MemoryResponse(
+                memory_id=entity_id or f"cog-{len(items)}",
+                user_id="cognition_os",
+                namespace="cognition_os",
+                content=r.get("content") or r.get("title", ""),
+                content_type="fact",
+                metadata={
+                    "source": "cognition_os",
+                    "score": r.get("score", 0.0),
+                    "title": r.get("title", ""),
+                },
+                source_agent_id=None,
+                source_type="cognition_os",
+                quality_score=r.get("score"),
+                enrichment_status="done",
+                version=1,
+                ttl_seconds=None,
+                expires_at=None,
+                created_at=now_str,
+                updated_at=now_str,
+                # Cognition OS entities are synthesized concepts — L3.1 tier.
+                compression_tier="L3.1",
+            )
+        )
     return items
 
 
@@ -1037,7 +1051,7 @@ async def list_namespaces(
     user_id: uuid.UUID,
     db: AsyncSession,
     admin_view: bool = False,
-    agent_id: Optional[uuid.UUID] = None,
+    agent_id: uuid.UUID | None = None,
 ) -> list[dict]:
     """
     List namespaces with memory counts + policy metadata.
@@ -1073,6 +1087,7 @@ async def list_namespaces(
 
     # Pull policy metadata in one shot
     from backend.models.namespace_policy import NamespacePolicy
+
     policy_rows = (await db.execute(select(NamespacePolicy))).scalars().all()
     policy_by_ns = {p.namespace: p for p in policy_rows}
 
@@ -1102,18 +1117,21 @@ async def list_namespaces(
     output: list[dict] = []
     for ns, count in filtered:
         policy = policy_by_ns.get(ns)
-        output.append({
-            "namespace": ns,
-            "count": count,
-            "description": getattr(policy, "description", None),
-            "consolidated_summary": getattr(policy, "consolidated_summary", None),
-            "consolidated_summary_tier": getattr(policy, "consolidated_summary_tier", None),
-            "consolidated_summary_updated_at": (
-                policy.consolidated_summary_updated_at.isoformat()
-                if policy and policy.consolidated_summary_updated_at else None
-            ),
-            "related_namespaces": getattr(policy, "related_namespaces", None) or [],
-        })
+        output.append(
+            {
+                "namespace": ns,
+                "count": count,
+                "description": getattr(policy, "description", None),
+                "consolidated_summary": getattr(policy, "consolidated_summary", None),
+                "consolidated_summary_tier": getattr(policy, "consolidated_summary_tier", None),
+                "consolidated_summary_updated_at": (
+                    policy.consolidated_summary_updated_at.isoformat()
+                    if policy and policy.consolidated_summary_updated_at
+                    else None
+                ),
+                "related_namespaces": getattr(policy, "related_namespaces", None) or [],
+            }
+        )
     return output
 
 
@@ -1143,27 +1161,25 @@ async def get_namespace_summary(
             db,
         )
         if not decision.allowed:
-            raise PermissionError(
-                f"Access denied: {decision.reason} (outcome: {decision.outcome})"
-            )
+            raise PermissionError(f"Access denied: {decision.reason} (outcome: {decision.outcome})")
 
     from backend.models.namespace_policy import NamespacePolicy
+
     policy = (
-        await db.execute(
-            select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-        )
+        await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     ).scalar_one_or_none()
 
-    tier: Optional[str] = None
-    summary: Optional[str] = None
-    updated_at: Optional[str] = None
+    tier: str | None = None
+    summary: str | None = None
+    updated_at: str | None = None
 
     if policy and policy.consolidated_summary:
         summary = policy.consolidated_summary
         tier = policy.consolidated_summary_tier or "L3.1"
         updated_at = (
             policy.consolidated_summary_updated_at.isoformat()
-            if policy.consolidated_summary_updated_at else None
+            if policy.consolidated_summary_updated_at
+            else None
         )
     else:
         # Fallback: latest L3.0 concept memory in the namespace
@@ -1191,9 +1207,7 @@ async def get_namespace_summary(
         "consolidated_summary": summary,
         "consolidated_summary_tier": tier,
         "consolidated_summary_updated_at": updated_at,
-        "related_namespaces": (
-            getattr(policy, "related_namespaces", None) or []
-        ) if policy else [],
+        "related_namespaces": (getattr(policy, "related_namespaces", None) or []) if policy else [],
     }
 
 
@@ -1318,7 +1332,7 @@ async def _find_semantic_duplicate(
         if mem.embedding is None:
             continue
         # Dot product of L2-normalised vectors = cosine similarity
-        sim = sum(a * b for a, b in zip(query_vec, mem.embedding))
+        sim = sum(a * b for a, b in zip(query_vec, mem.embedding, strict=False))
         if sim > best_sim:
             best_sim = sim
             best_match = mem
@@ -1386,7 +1400,7 @@ async def _get_active_memory(
     return memory
 
 
-def _tier_from_meta(meta: Optional[dict]) -> str:
+def _tier_from_meta(meta: dict | None) -> str:
     """Extract compression tier from Memory.meta._compression_tier.
 
     Values are normalised to the public tier names: L1 / L2 / L3.1.
@@ -1652,18 +1666,23 @@ async def get_namespace_compressed(
         adapter_cog = _DBAdapterCog(memory_dicts)
         client_cog = CoreAIBackendClient()
         synthesis_cog = await synthesize_namespace_local(
-            adapter_cog, llm_client=client_cog,
-            org_id=str(user_id), namespace=namespace,
+            adapter_cog,
+            llm_client=client_cog,
+            org_id=str(user_id),
+            namespace=namespace,
             merge_mode=merge_mode,
         )
         synthesis_cog["concepts"] = await round_trip_concepts(
-            None, synthesis_cog["concepts"], namespace=namespace,
+            None,
+            synthesis_cog["concepts"],
+            namespace=namespace,
         )
         # Now augment with Cognition OS graph entities (graceful degradation)
         graph_entities: list[dict] = []
         cognition_available = False
         try:
             from backend.services.cognition_bridge import get_cognition_bridge
+
             bridge = get_cognition_bridge()
             if bridge.enabled and not bridge.circuit_open:
                 # Use the namespace as the query to find related graph entities

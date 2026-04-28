@@ -284,9 +284,7 @@ async def _increment_agent_stats(
     async with _get_session_factory()() as own_db:
         async with own_db.begin():
             await own_db.execute(
-                update(AgentRegistry)
-                .where(AgentRegistry.agent_id == agent_id)
-                .values({column: column + 1})
+                update(AgentRegistry).where(AgentRegistry.agent_id == agent_id).values({column: column + 1})
             )
 
 

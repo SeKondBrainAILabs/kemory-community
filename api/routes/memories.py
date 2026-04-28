@@ -249,7 +249,11 @@ async def get_namespace_summary_endpoint(
     admin = is_admin(auth)
     try:
         return await get_namespace_summary(
-            auth.user_id, auth.agent_id, namespace, db, skip_gatekeeper=admin,
+            auth.user_id,
+            auth.agent_id,
+            namespace,
+            db,
+            skip_gatekeeper=admin,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
@@ -281,15 +285,18 @@ async def get_session_summary_endpoint(
     of this session's boundary. Returns 404 if no summary has been
     generated yet (e.g. the session has <2 memories).
     """
-    from backend.models.session_summary import SessionSummary
     from sqlalchemy import select as _select
+
+    from backend.models.session_summary import SessionSummary
 
     # Gatekeeper: agents need memory:read on the namespace. Admins bypass.
     admin = is_admin(auth)
     if not admin:
         from backend.services.gatekeeper_service import (
-            evaluate, EvaluationRequest,
+            EvaluationRequest,
+            evaluate,
         )
+
         decision = await evaluate(
             auth.user_id,
             EvaluationRequest(
@@ -305,13 +312,15 @@ async def get_session_summary_endpoint(
                 detail=f"memory:read on '{namespace}' denied by gatekeeper",
             )
 
-    row = (await db.execute(
-        _select(SessionSummary).where(
-            SessionSummary.user_id == auth.user_id,
-            SessionSummary.namespace == namespace,
-            SessionSummary.session_id == session_id,
+    row = (
+        await db.execute(
+            _select(SessionSummary).where(
+                SessionSummary.user_id == auth.user_id,
+                SessionSummary.namespace == namespace,
+                SessionSummary.session_id == session_id,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
 
     if row is None:
         raise HTTPException(
@@ -382,6 +391,7 @@ async def get_namespace_compressed_endpoint(
     try:
         # Use a dummy agent_id for dashboard reads (admin context)
         import uuid as _uuid
+
         agent_id = auth.agent_id if hasattr(auth, "agent_id") and auth.agent_id else _uuid.UUID(int=0)
         payload = await get_namespace_compressed(
             auth.user_id,

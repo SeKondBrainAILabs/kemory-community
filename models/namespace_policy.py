@@ -100,7 +100,8 @@ class NamespacePolicy(Base):
 
     # ── Consolidated cross-session summary (Namespace tab + agent summary) ─
     consolidated_summary = Column(
-        Text, nullable=True,
+        Text,
+        nullable=True,
         comment=(
             "Rolling cross-session summary of this namespace, kept in sync by "
             "the L3.1 compression pipeline. When absent we fall back to the "
@@ -108,15 +109,18 @@ class NamespacePolicy(Base):
         ),
     )
     consolidated_summary_tier = Column(
-        String(8), nullable=True,
+        String(8),
+        nullable=True,
         comment="Tier label of the current consolidated_summary (e.g. L3, L3.1).",
     )
     consolidated_summary_updated_at = Column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
         comment="Timestamp when consolidated_summary was last upserted.",
     )
     related_namespaces = Column(
-        JSON, nullable=True,
+        JSON,
+        nullable=True,
         comment=(
             "Array of {namespace, similarity, detected_at} entries — populated "
             "when the namespace matcher detected a 60-90% similar namespace at "

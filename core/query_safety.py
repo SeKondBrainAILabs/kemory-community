@@ -22,6 +22,7 @@ Production runs with KEMORY_QUERY_SAFETY=off so this never adds latency
 to the request path. Dev / CI runs with =raise so a regression on a hot
 query path fails the test suite instead of waiting for prod symptoms.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,6 +46,7 @@ def _mode() -> str:
         return env_override.lower()
     # Lazy import to avoid module-load cycles.
     from backend.config.settings import settings
+
     return settings.query_safety_mode.lower()
 
 
@@ -57,7 +59,11 @@ def _select_has_limit(stmt: Select) -> bool:
     # column is a func.count / max / sum / etc., it's a scalar aggregate.
     for col in stmt.exported_columns:
         if hasattr(col, "is_clause_element") and getattr(col, "name", "") in {
-            "count", "max", "min", "sum", "avg",
+            "count",
+            "max",
+            "min",
+            "sum",
+            "avg",
         }:
             return True
     # Primary-key equality WHERE counts as bounded — find a where clause

@@ -19,11 +19,18 @@ Architectural note:
 
 Story: F12 v2 — session-aware L3
 """
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
-    Column, String, DateTime, Integer, Text, UniqueConstraint, Index,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
 
 from backend.core.database import Base
@@ -68,18 +75,20 @@ class SessionSummary(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "namespace", "session_id",
+            "user_id",
+            "namespace",
+            "session_id",
             name="uq_session_summary_user_ns_session",
         ),
         Index("ix_session_summary_user_ns", "user_id", "namespace"),

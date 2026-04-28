@@ -447,7 +447,9 @@ async def enrich_memory(
     # did read-modify-write of the whole metadata column and the last
     # writer won — memories ended up with only ONE of the two key sets.
     import json as _json
+
     from sqlalchemy import text as _sql
+
     enrichment_payload = {
         "enrichment": {
             "entities": [e.model_dump() for e in entities],

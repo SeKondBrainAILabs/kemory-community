@@ -27,16 +27,16 @@ Thresholds (both contribute; best score wins):
 
 If no existing namespaces are found, the result is always ``CREATE_NEW``.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import Optional
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,10 +66,10 @@ SUGGEST_THRESHOLD = 0.85
 
 
 class ResolutionAction(str, Enum):
-    REUSE = "reuse"              # exact match after normalization
+    REUSE = "reuse"  # exact match after normalization
     AUTO_REDIRECT = "auto_redirect"  # >= 0.90 similarity
-    SUGGEST = "suggest"          # 0.60..0.90 — return 409 to caller
-    CREATE_NEW = "create_new"    # < 0.60 or no existing namespaces
+    SUGGEST = "suggest"  # 0.60..0.90 — return 409 to caller
+    CREATE_NEW = "create_new"  # < 0.60 or no existing namespaces
 
 
 @dataclass
@@ -116,12 +116,7 @@ def _is_indexed_sibling_pair(a: str, b: str) -> bool:
             break
         prefix_len = i + 1
     shorter = min(len(a), len(b))
-    if not (
-        prefix_len >= 6
-        and prefix_len >= 0.5 * shorter
-        and prefix_len < len(a)
-        and prefix_len < len(b)
-    ):
+    if not (prefix_len >= 6 and prefix_len >= 0.5 * shorter and prefix_len < len(a) and prefix_len < len(b)):
         return False
     suffix_a = a[prefix_len:]
     suffix_b = b[prefix_len:]
@@ -168,7 +163,7 @@ def _fuzzy_ratio(a: str, b: str) -> float:
 def _cosine(vec_a, vec_b) -> float:
     import math
 
-    dot = sum(x * y for x, y in zip(vec_a, vec_b))
+    dot = sum(x * y for x, y in zip(vec_a, vec_b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in vec_a))
     norm_b = math.sqrt(sum(x * x for x in vec_b))
     if norm_a == 0.0 or norm_b == 0.0:
@@ -179,12 +174,14 @@ def _cosine(vec_a, vec_b) -> float:
 def _embed(text: str):
     """Reuse the same encoder the rest of the pipeline uses."""
     from memory_vault.embeddings.encoder import encode
+
     return encode(text)
 
 
 async def _existing_namespaces(
-    user_id: uuid.UUID, db: AsyncSession,
-) -> list[tuple[str, Optional[str]]]:
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[tuple[str, str | None]]:
     """
     Return [(namespace, description)] for every active namespace the user has.
 
@@ -212,15 +209,16 @@ async def _existing_namespaces(
     # "alice:workspace" scored 0.75 fuzzy.
     pol_rows = (
         await db.execute(
-            select(NamespacePolicy.namespace, NamespacePolicy.description)
-            .where(or_(
-                NamespacePolicy.created_by == user_id,
-                NamespacePolicy.created_by.is_(None),
-            ))
+            select(NamespacePolicy.namespace, NamespacePolicy.description).where(
+                or_(
+                    NamespacePolicy.created_by == user_id,
+                    NamespacePolicy.created_by.is_(None),
+                )
+            )
         )
     ).all()
 
-    desc_by_ns: dict[str, Optional[str]] = {}
+    desc_by_ns: dict[str, str | None] = {}
     for ns, desc in pol_rows:
         desc_by_ns[ns] = desc
     for (ns,) in mem_rows:
@@ -230,8 +228,8 @@ async def _existing_namespaces(
 
 def _best_score(
     requested: str,
-    requested_desc: Optional[str],
-    existing: list[tuple[str, Optional[str]]],
+    requested_desc: str | None,
+    existing: list[tuple[str, str | None]],
 ) -> list[NamespaceCandidate]:
     """Score every candidate with the max of (embedding cosine, fuzzy ratio)."""
     req_text = f"{requested} {requested_desc or ''}".strip()
@@ -250,7 +248,8 @@ def _best_score(
         # on what are obviously sibling buckets. Suppress semantic when
         # the pair matches the indexed-sibling pattern.
         is_sibling = _is_indexed_sibling_pair(
-            normalize(requested), normalize(existing_ns),
+            normalize(requested),
+            normalize(existing_ns),
         )
         semantic = 0.0
         if req_vec is not None and not is_sibling:
@@ -290,7 +289,7 @@ def _best_score(
 async def resolve_namespace(
     user_id: uuid.UUID,
     requested: str,
-    description: Optional[str],
+    description: str | None,
     db: AsyncSession,
 ) -> NamespaceResolution:
     normalized = normalize(requested)
@@ -366,8 +365,7 @@ class RelatedNamespaceConflict(Exception):
             ),
             "requested": self.requested,
             "suggested": [
-                {"namespace": c.namespace, "similarity": round(c.similarity, 3)}
-                for c in self.candidates
+                {"namespace": c.namespace, "similarity": round(c.similarity, 3)} for c in self.candidates
             ],
             "force_create_param": "allow_duplicate=true",
         }
@@ -375,7 +373,7 @@ class RelatedNamespaceConflict(Exception):
 
 async def apply_resolution(
     resolution: NamespaceResolution,
-    description: Optional[str],
+    description: str | None,
     db: AsyncSession,
     user_id: uuid.UUID,
 ) -> None:
@@ -392,9 +390,7 @@ async def apply_resolution(
 
     ns = resolution.namespace
     existing = (
-        await db.execute(
-            select(NamespacePolicy).where(NamespacePolicy.namespace == ns)
-        )
+        await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == ns))
     ).scalar_one_or_none()
 
     if existing is not None:
@@ -403,10 +399,12 @@ async def apply_resolution(
             existing.description = (base + ("\n" if base else "") + description)[:500]
         related = list(existing.related_namespaces or [])
         top = resolution.candidates[0] if resolution.candidates else None
-        related.append({
-            "namespace": resolution.normalized_requested,
-            "similarity": round(top.similarity, 3) if top else None,
-            "detected_at": datetime.now(timezone.utc).isoformat(),
-            "action": "auto_redirect",
-        })
+        related.append(
+            {
+                "namespace": resolution.normalized_requested,
+                "similarity": round(top.similarity, 3) if top else None,
+                "detected_at": datetime.now(UTC).isoformat(),
+                "action": "auto_redirect",
+            }
+        )
         existing.related_namespaces = related[-20:]

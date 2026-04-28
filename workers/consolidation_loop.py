@@ -26,6 +26,7 @@ Env:
 
 Story: F14-US-003
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,10 +34,9 @@ import logging
 import os
 import signal
 import sys
-from typing import Optional
 
 import structlog
-from sqlalchemy import select, distinct
+from sqlalchemy import distinct, select
 
 from backend.core.database import _get_session_factory, init_db
 from backend.models.memory import Memory
@@ -83,16 +83,22 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
 async def _list_active_namespaces() -> list[str]:
     """Distinct namespace strings across all active, non-concept memories."""
     async with _get_session_factory()() as db:
-        rows = (await db.execute(
-            select(distinct(Memory.namespace)).where(
-                Memory.invalid_at == None,  # noqa: E711
-                Memory.content_type != "concept",
+        rows = (
+            (
+                await db.execute(
+                    select(distinct(Memory.namespace)).where(
+                        Memory.invalid_at == None,  # noqa: E711
+                        Memory.content_type != "concept",
+                    )
+                )
             )
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
     return sorted([r for r in rows if r])
 
 
-async def _run_one_namespace(namespace: str) -> Optional[dict]:
+async def _run_one_namespace(namespace: str) -> dict | None:
     try:
         async with _get_session_factory()() as db:
             summary = await run_daily_consolidation(db, namespace=namespace)
@@ -146,7 +152,7 @@ async def _main() -> int:
         try:
             await asyncio.wait_for(_shutdown.wait(), timeout=first_delay)
             return 0  # shutdown during initial delay
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
     while not _shutdown.is_set():
@@ -161,7 +167,7 @@ async def _main() -> int:
         # Interruptible sleep so SIGTERM doesn't have to wait `interval`.
         try:
             await asyncio.wait_for(_shutdown.wait(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
     logger.info("consolidation_loop.exit")

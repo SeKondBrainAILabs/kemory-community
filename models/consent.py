@@ -23,9 +23,7 @@ class ConsentRequest(Base):
     If the timeout expires, the default action is DENY.
     """
 
-
     __tablename__ = "kemory_consent_requests"
-
 
     consent_id = Column(
         GUID(),

@@ -16,16 +16,16 @@ block:
 
 All endpoints require authentication (Bearer or X-API-Key).
 """
-from datetime import datetime, timezone
-from typing import Optional
+
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext
 from backend.models.namespace_policy import NamespacePolicy
 from backend.services.consolidation_service import get_consolidation_stats
 
@@ -41,17 +41,17 @@ class NamespacePolicyResponse(BaseModel):
     retention_days: int
     auto_consolidate: bool
     consolidation_hour_utc: int = 2
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    description: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class NamespacePolicyUpdate(BaseModel):
-    decay_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
-    retention_days: Optional[int] = Field(None, ge=1, le=3650)
-    auto_consolidate: Optional[bool] = None
-    consolidation_hour_utc: Optional[int] = Field(None, ge=0, le=23)
-    description: Optional[str] = Field(None, max_length=500)
+    decay_rate: float | None = Field(None, ge=0.0, le=1.0)
+    retention_days: int | None = Field(None, ge=1, le=3650)
+    auto_consolidate: bool | None = None
+    consolidation_hour_utc: int | None = Field(None, ge=0, le=23)
+    description: str | None = Field(None, max_length=500)
 
 
 class ConsolidationTriggerResponse(BaseModel):
@@ -116,9 +116,7 @@ async def get_policy(
     _: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
     if policy is None:
         # Synthesize a default response so the dashboard never shows a 404
@@ -144,11 +142,9 @@ async def upsert_policy(
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if policy is None:
         policy = NamespacePolicy(
@@ -156,7 +152,9 @@ async def upsert_policy(
             decay_rate=patch.decay_rate if patch.decay_rate is not None else 0.1,
             retention_days=patch.retention_days if patch.retention_days is not None else 10,
             auto_consolidate=patch.auto_consolidate if patch.auto_consolidate is not None else True,
-            consolidation_hour_utc=patch.consolidation_hour_utc if patch.consolidation_hour_utc is not None else 2,
+            consolidation_hour_utc=patch.consolidation_hour_utc
+            if patch.consolidation_hour_utc is not None
+            else 2,
             description=patch.description,
             created_by=getattr(auth, "user_id", None),
             created_at=now,
@@ -204,9 +202,7 @@ async def trigger_consolidation(
             detail=f"Consolidation runner not available: {exc}",
         )
 
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
     if policy is not None and not policy.auto_consolidate:
         raise HTTPException(
@@ -256,7 +252,9 @@ async def trigger_consolidation_all(
     immediately.
     """
     from sqlalchemy import distinct
+
     from backend.models.memory import Memory
+
     try:
         from backend.services.consolidation_service import run_daily_consolidation
     except ImportError as exc:
@@ -265,12 +263,18 @@ async def trigger_consolidation_all(
             detail=f"Consolidation runner not available: {exc}",
         )
 
-    namespaces = (await db.execute(
-        select(distinct(Memory.namespace)).where(
-            Memory.invalid_at == None,  # noqa: E711
-            Memory.content_type != "concept",
+    namespaces = (
+        (
+            await db.execute(
+                select(distinct(Memory.namespace)).where(
+                    Memory.invalid_at == None,  # noqa: E711
+                    Memory.content_type != "concept",
+                )
+            )
         )
-    )).scalars().all()
+        .scalars()
+        .all()
+    )
 
     ok = 0
     failed: list[str] = []

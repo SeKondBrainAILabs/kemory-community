@@ -248,6 +248,7 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
 
 # ── Novelty gate ───────────────────────────────────────────────────────────
 
+
 async def _max_similarity_to_prior(
     db: AsyncSession,
     memory_id: str,
@@ -274,9 +275,9 @@ async def _max_similarity_to_prior(
     Embeddings are L2-normalised per the `embedding` column comment in
     backend/models/memory.py, so similarity = dot product.
     """
-    target_row = (await db.execute(
-        select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id))
-    )).first()
+    target_row = (
+        await db.execute(select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id)))
+    ).first()
     if target_row is None:
         return None
     target_vec = target_row[0]
@@ -308,7 +309,7 @@ async def _max_similarity_to_prior(
         if not vec or len(vec) != len(target_vec):
             continue
         sim = 0.0
-        for a, b in zip(target_vec, vec):
+        for a, b in zip(target_vec, vec, strict=False):
             sim += a * b
         if sim > best:
             best = sim
@@ -335,22 +336,22 @@ async def _summary_already_covers(
     The summary embedding is cached in-process keyed by the summary text,
     so a stale entry self-invalidates as soon as the summary changes.
     """
-    from backend.models.namespace_policy import NamespacePolicy
     from backend.models.memory import Memory
+    from backend.models.namespace_policy import NamespacePolicy
 
     # New memory's embedding
-    target_vec = (await db.execute(
-        select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id))
-    )).scalar_one_or_none()
+    target_vec = (
+        await db.execute(select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id)))
+    ).scalar_one_or_none()
     if not target_vec:
         return False
 
     # Existing summary text
-    summary_text = (await db.execute(
-        select(NamespacePolicy.consolidated_summary).where(
-            NamespacePolicy.namespace == namespace
+    summary_text = (
+        await db.execute(
+            select(NamespacePolicy.consolidated_summary).where(NamespacePolicy.namespace == namespace)
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if not summary_text:
         return False
 
@@ -359,6 +360,7 @@ async def _summary_already_covers(
     if summary_vec is None:
         try:
             from memory_vault.embeddings.encoder import encode
+
             summary_vec = list(encode(summary_text))
             # Bound the cache so it doesn't grow without limit. We only need
             # the *current* summary per namespace; keep at most 256 entries.
@@ -373,7 +375,7 @@ async def _summary_already_covers(
     if len(target_vec) != len(summary_vec):
         return False
 
-    sim = sum(a * b for a, b in zip(target_vec, summary_vec))
+    sim = sum(a * b for a, b in zip(target_vec, summary_vec, strict=False))
     return sim >= L3_SUMMARY_COVERS_THRESHOLD
 
 
@@ -395,8 +397,12 @@ async def _has_sufficient_novelty(
     over optimization.
     """
     max_sim = await _max_similarity_to_prior(
-        db, memory_id, user_id, namespace,
-        session_id=session_id, up_to_ts=up_to_ts,
+        db,
+        memory_id,
+        user_id,
+        namespace,
+        session_id=session_id,
+        up_to_ts=up_to_ts,
     )
     if max_sim is None or max_sim < 0:
         # No embedding yet, or no prior memories to compare against.
@@ -435,18 +441,21 @@ async def _maybe_summarize_l3(
     threshold is met.
     """
     import os
+
     if not os.environ.get("GROQ_API_KEY", "").strip():
         logger.debug("l3_summary.skipped", reason="no_groq_api_key", namespace=namespace)
         return
 
     # Count active non-concept memories in the namespace
     result = await db.execute(
-        select(Memory).where(
+        select(Memory)
+        .where(
             Memory.user_id == uuid.UUID(user_id),
             Memory.namespace == namespace,
             Memory.invalid_at == None,  # noqa: E711
             Memory.content_type != "concept",
-        ).order_by(Memory.created_at.desc())
+        )
+        .order_by(Memory.created_at.desc())
     )
     source_memories = result.scalars().all()
     count = len(source_memories)
@@ -486,7 +495,10 @@ async def _maybe_summarize_l3(
         # prior memory in the corpus? If so, regen wouldn't add information.
         if not force and trigger_memory_id is not None:
             if not await _has_sufficient_novelty(
-                db, trigger_memory_id, user_id, namespace,
+                db,
+                trigger_memory_id,
+                user_id,
+                namespace,
                 stage_label="l3_namespace",
             ):
                 _last_summary_count[key] = count
@@ -505,7 +517,12 @@ async def _maybe_summarize_l3(
                 return
 
         await _do_summarize_l3(
-            db, user_id, namespace, source_memories, count, key,
+            db,
+            user_id,
+            namespace,
+            source_memories,
+            count,
+            key,
         )
 
 
@@ -554,26 +571,32 @@ async def _do_summarize_l3(
     # is "L3" or None — never downgrade an existing L3.1 summary.
     # ON CONFLICT keeps the row lock to microseconds.
     try:
-        from backend.models.namespace_policy import NamespacePolicy
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from backend.models.namespace_policy import NamespacePolicy
+
         now = datetime.now(timezone.utc)
-        stmt = pg_insert(NamespacePolicy).values(
-            namespace=namespace,
-            consolidated_summary=summary_text,
-            consolidated_summary_tier="L3",
-            consolidated_summary_updated_at=now,
-            created_by=uuid.UUID(user_id),
-        ).on_conflict_do_update(
-            index_elements=[NamespacePolicy.namespace],
-            set_={
-                "consolidated_summary": summary_text,
-                "consolidated_summary_tier": "L3",
-                "consolidated_summary_updated_at": now,
-            },
-            where=(
-                (NamespacePolicy.consolidated_summary_tier == None)  # noqa: E711
-                | (NamespacePolicy.consolidated_summary_tier == "L3")
-            ),
+        stmt = (
+            pg_insert(NamespacePolicy)
+            .values(
+                namespace=namespace,
+                consolidated_summary=summary_text,
+                consolidated_summary_tier="L3",
+                consolidated_summary_updated_at=now,
+                created_by=uuid.UUID(user_id),
+            )
+            .on_conflict_do_update(
+                index_elements=[NamespacePolicy.namespace],
+                set_={
+                    "consolidated_summary": summary_text,
+                    "consolidated_summary_tier": "L3",
+                    "consolidated_summary_updated_at": now,
+                },
+                where=(
+                    (NamespacePolicy.consolidated_summary_tier == None)  # noqa: E711
+                    | (NamespacePolicy.consolidated_summary_tier == "L3")
+                ),
+            )
         )
         await db.execute(stmt)
     except Exception as exc:
@@ -629,14 +652,13 @@ async def _maybe_summarize_session_l3(
     has arrived since the last pipeline run for that tuple.
     """
     import os
+
     if not os.environ.get("GROQ_API_KEY", "").strip():
         logger.debug("session_l3.skipped", reason="no_groq_api_key", namespace=namespace)
         return
 
     # Fetch the triggering memory to extract session_id + created_at anchor.
-    result = await db.execute(
-        select(Memory).where(Memory.memory_id == uuid.UUID(memory_id))
-    )
+    result = await db.execute(select(Memory).where(Memory.memory_id == uuid.UUID(memory_id)))
     memory = result.scalar_one_or_none()
     if memory is None:
         return
@@ -648,27 +670,43 @@ async def _maybe_summarize_session_l3(
     key = (user_id, namespace, session_id)
 
     # ── Gather session-scoped memories ─────────────────────────────
-    session_rows = (await db.execute(
-        select(Memory).where(
-            Memory.user_id == uuid.UUID(user_id),
-            Memory.namespace == namespace,
-            Memory.session_id == session_id,
-            Memory.invalid_at == None,  # noqa: E711
-            Memory.content_type != "concept",
-        ).order_by(Memory.created_at.asc())
-    )).scalars().all()
+    session_rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(
+                    Memory.user_id == uuid.UUID(user_id),
+                    Memory.namespace == namespace,
+                    Memory.session_id == session_id,
+                    Memory.invalid_at == None,  # noqa: E711
+                    Memory.content_type != "concept",
+                )
+                .order_by(Memory.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     session_count = len(session_rows)
 
     # ── Gather cumulative (namespace-wide, up to up_to_ts) memories ─
-    cumulative_rows = (await db.execute(
-        select(Memory).where(
-            Memory.user_id == uuid.UUID(user_id),
-            Memory.namespace == namespace,
-            Memory.created_at <= up_to_ts,
-            Memory.invalid_at == None,  # noqa: E711
-            Memory.content_type != "concept",
-        ).order_by(Memory.created_at.asc())
-    )).scalars().all()
+    cumulative_rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(
+                    Memory.user_id == uuid.UUID(user_id),
+                    Memory.namespace == namespace,
+                    Memory.created_at <= up_to_ts,
+                    Memory.invalid_at == None,  # noqa: E711
+                    Memory.content_type != "concept",
+                )
+                .order_by(Memory.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     cumulative_count = len(cumulative_rows)
 
     # Debounce — only re-run if at least one new memory since last time.
@@ -678,12 +716,18 @@ async def _maybe_summarize_session_l3(
 
     # ── Novelty gates (independent per sub-summary) ────────────────
     session_novel = force or await _has_sufficient_novelty(
-        db, memory_id, user_id, namespace,
+        db,
+        memory_id,
+        user_id,
+        namespace,
         session_id=session_id,
         stage_label="l3_session",
     )
     cumulative_novel = force or await _has_sufficient_novelty(
-        db, memory_id, user_id, namespace,
+        db,
+        memory_id,
+        user_id,
+        namespace,
         up_to_ts=up_to_ts,
         stage_label="l3_cumulative",
     )
@@ -701,7 +745,9 @@ async def _maybe_summarize_session_l3(
         session_sources = session_rows[:L3_SUMMARY_MAX_SOURCES]
         if session_count < L3_GROQ_MIN_MEMORIES:
             session_summary_text = _bullet_list_summary(
-                session_sources, namespace, scope="session",
+                session_sources,
+                namespace,
+                scope="session",
             )
             logger.info(
                 "session_l3.session_bullet_fallback",
@@ -712,7 +758,9 @@ async def _maybe_summarize_session_l3(
         else:
             try:
                 session_summary_text = await _summarize_with_groq(
-                    session_sources, namespace, scope="session",
+                    session_sources,
+                    namespace,
+                    scope="session",
                 )
             except Exception as exc:
                 logger.warning(
@@ -728,7 +776,8 @@ async def _maybe_summarize_session_l3(
         cumulative_sources = cumulative_rows[:L3_SUMMARY_MAX_SOURCES]
         if cumulative_count < L3_GROQ_MIN_MEMORIES:
             cumulative_summary_text = _bullet_list_summary(
-                cumulative_sources, namespace,
+                cumulative_sources,
+                namespace,
                 scope=f"cumulative-as-of-{up_to_ts.isoformat() if up_to_ts else 'now'}",
             )
             logger.info(
@@ -740,7 +789,8 @@ async def _maybe_summarize_session_l3(
         else:
             try:
                 cumulative_summary_text = await _summarize_with_groq(
-                    cumulative_sources, namespace,
+                    cumulative_sources,
+                    namespace,
                     scope=f"cumulative-as-of-{up_to_ts.isoformat() if up_to_ts else 'now'}",
                 )
             except Exception as exc:
@@ -757,13 +807,16 @@ async def _maybe_summarize_session_l3(
     # ── Upsert the SessionSummary row ──────────────────────────────
     try:
         from backend.models.session_summary import SessionSummary
-        existing = (await db.execute(
-            select(SessionSummary).where(
-                SessionSummary.user_id == uuid.UUID(user_id),
-                SessionSummary.namespace == namespace,
-                SessionSummary.session_id == session_id,
+
+        existing = (
+            await db.execute(
+                select(SessionSummary).where(
+                    SessionSummary.user_id == uuid.UUID(user_id),
+                    SessionSummary.namespace == namespace,
+                    SessionSummary.session_id == session_id,
+                )
             )
-        )).scalar_one_or_none()
+        ).scalar_one_or_none()
 
         now = datetime.now(timezone.utc)
         if existing is None:
@@ -858,12 +911,10 @@ async def _summarize_with_groq(
         raise RuntimeError("groq package not installed. pip install groq")
 
     import os
+
     client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
 
-    memories_text = "\n".join(
-        f"[{i+1}] {(m.content or '').strip()[:500]}"
-        for i, m in enumerate(memories)
-    )
+    memories_text = "\n".join(f"[{i+1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
 
     prompt = (
         f"You are summarizing the {scope} of memory records for namespace "
@@ -1027,23 +1078,29 @@ async def _maybe_synthesize_l3_1(
     # multi-session ingest, the previous SELECT-then-modify pattern
     # serialised on the policy row.
     try:
-        from backend.models.namespace_policy import NamespacePolicy
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from backend.models.namespace_policy import NamespacePolicy
+
         summary_text = concept.get("synthesis", "") or ""
         now = datetime.now(timezone.utc)
-        stmt = pg_insert(NamespacePolicy).values(
-            namespace=namespace,
-            consolidated_summary=summary_text,
-            consolidated_summary_tier="L3.1",
-            consolidated_summary_updated_at=now,
-            created_by=uuid.UUID(user_id),
-        ).on_conflict_do_update(
-            index_elements=[NamespacePolicy.namespace],
-            set_={
-                "consolidated_summary": summary_text,
-                "consolidated_summary_tier": "L3.1",
-                "consolidated_summary_updated_at": now,
-            },
+        stmt = (
+            pg_insert(NamespacePolicy)
+            .values(
+                namespace=namespace,
+                consolidated_summary=summary_text,
+                consolidated_summary_tier="L3.1",
+                consolidated_summary_updated_at=now,
+                created_by=uuid.UUID(user_id),
+            )
+            .on_conflict_do_update(
+                index_elements=[NamespacePolicy.namespace],
+                set_={
+                    "consolidated_summary": summary_text,
+                    "consolidated_summary_tier": "L3.1",
+                    "consolidated_summary_updated_at": now,
+                },
+            )
         )
         await db.execute(stmt)
     except Exception as exc:
