@@ -77,12 +77,18 @@ def _get_session_factory():
         # AFTER the session factory is in place).
         from sqlalchemy.orm import Session as _SyncSession
 
+        from backend.core.query_safety import register_query_safety_listener
         from backend.core.tenancy import register_tenant_filter
 
         # AsyncSession proxies do_orm_execute through to the underlying
         # sync Session, so registering against Session catches both async
         # and any sync use of get_db (e.g. seed scripts).
         register_tenant_filter(_SyncSession)
+        # P4 #21 — un-LIMITed SELECT detector. Off by default; flip via
+        # KEMORY_QUERY_SAFETY=warn or =raise. CI sets =raise so a future
+        # regression on a hot query path fails the test suite instead of
+        # surfacing as a worker OOM under prod load.
+        register_query_safety_listener(_SyncSession)
     return _async_session_factory
 
 

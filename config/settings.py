@@ -128,6 +128,18 @@ class Settings(BaseSettings):
     # worker. Override per env if a real ingest endpoint needs more.
     max_request_body_bytes: int = 1_048_576
 
+    # P4 #21: defense-in-depth cap on list/search page size. The Pydantic
+    # MemorySearchRequest already enforces limit ≤ 100; this is the
+    # ceiling for any other handler that takes a raw `limit` parameter.
+    max_page_size: int = 100
+
+    # P4 #21: query-safety mode for the un-LIMITed-SELECT detector.
+    #   "off"   — no checks (production default)
+    #   "warn"  — log a structured warning, request continues
+    #   "raise" — raise RuntimeError so CI / dev catches the regression
+    # See backend/core/query_safety.py.
+    query_safety_mode: str = "off"
+
     # ─── Keycloak (RS256 for human users) ─────────────────────────
     keycloak_enabled: bool = False
     keycloak_url: str = "http://host.docker.internal:8888"
