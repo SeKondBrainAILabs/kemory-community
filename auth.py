@@ -89,7 +89,7 @@ def request_device_code(
     client_id: str,
     scope: str = "openid profile email offline_access",
     timeout: float = 10.0,
-    code_challenge: Optional[str] = None,
+    code_challenge: str | None = None,
 ) -> DeviceCodeResponse:
     """Initiate the device-authorization flow.
 
@@ -121,7 +121,7 @@ def poll_for_token(
     issuer: str,
     client_id: str,
     device_code: DeviceCodeResponse,
-    code_verifier: Optional[str] = None,
+    code_verifier: str | None = None,
 ) -> dict:
     """Block until the user approves or the device_code expires.
 
@@ -230,7 +230,7 @@ def refresh(creds: Credentials) -> Credentials:
     return creds
 
 
-def get_valid_credentials(refresh_within: int = 60) -> Optional[Credentials]:
+def get_valid_credentials(refresh_within: int = 60) -> Credentials | None:
     """Load credentials, refreshing if they're about to expire. Returns None
     if no credentials exist (caller should prompt for `kemory login`)."""
     creds = Credentials.load()

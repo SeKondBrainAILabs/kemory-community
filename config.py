@@ -62,7 +62,7 @@ class Credentials:
         return time.time() + seconds >= self.expires_at
 
     @classmethod
-    def load(cls, path: Optional[Path] = None) -> Optional["Credentials"]:
+    def load(cls, path: Path | None = None) -> Credentials | None:
         p = path or credentials_path()
         if not p.exists():
             return None
@@ -74,7 +74,7 @@ class Credentials:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def save(self, path: Optional[Path] = None) -> None:
+    def save(self, path: Path | None = None) -> None:
         p = path or credentials_path()
         p.parent.mkdir(mode=0o700, exist_ok=True)
         # Write to a temp file then rename — atomic on POSIX.

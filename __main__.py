@@ -63,7 +63,7 @@ def _api_get(creds: Credentials, path: str) -> httpx.Response:
     )
 
 
-def _api_post(creds: Credentials, path: str, json_body: Optional[dict] = None) -> httpx.Response:
+def _api_post(creds: Credentials, path: str, json_body: dict | None = None) -> httpx.Response:
     return httpx.post(
         f"{creds.kemory_url.rstrip('/')}{path}",
         headers={"Authorization": f"Bearer {creds.access_token}"},
@@ -317,7 +317,7 @@ def _host_config_paths() -> dict[str, list[Path]]:
     }
 
 
-def _resolve_host_config(host: str) -> Optional[Path]:
+def _resolve_host_config(host: str) -> Path | None:
     """Pick the first candidate path that exists, or fall back to the
     first candidate (which we'll create). Returns None for unknown hosts."""
     candidates = _host_config_paths().get(host)
@@ -358,7 +358,7 @@ def _write_mcp_entry(config_path: Path, name: str) -> None:
               help="Override host detection — write directly to this path.")
 @click.option("--name", default="kemory", show_default=True,
               help="Server name to register under mcpServers.")
-def mcp_install(hosts: tuple[str, ...], config_path: Optional[Path], name: str) -> None:
+def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> None:
     """Write an MCP server entry into one or more MCP hosts. No API key
     is stored in the config — the bridge reads ~/.kemory/credentials at
     runtime, so config files stay safe to commit / sync.
