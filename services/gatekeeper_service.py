@@ -243,20 +243,38 @@ async def _increment_agent_stats(
     BUG-004 fix: total_reads / total_writes / denied_requests were never
     incremented because evaluate() returned early without updating the
     AgentRegistry row.  This helper is called at every exit point.
+
+    Concurrency note: under bulk ingest (e.g. the LongMemEval harness
+    running 16 worker threads against the same agent), doing a
+    SELECT...read-modify-flush on this row inline would pin a
+    row-level lock for the entire request lifetime — until the
+    enclosing transaction commits at request end, which can be many
+    seconds after the embedding/L2/L3 background hooks fire. With many
+    concurrent writers, every connection ends up waiting on the same
+    row → SQLAlchemy connection pool exhaustion → all writes hang.
+
+    Fix: do an atomic UPDATE on a short-lived session of our own,
+    committed immediately. The row lock is held for microseconds, not
+    for the duration of create_memory(). Same pattern as F14's
+    _bg_embed / _bg_enrich.
     """
-    result = await db.execute(
-        select(AgentRegistry).where(AgentRegistry.agent_id == agent_id)
-    )
-    agent = result.scalar_one_or_none()
-    if agent is None:
-        return
+    from backend.core.database import _get_session_factory
+    from sqlalchemy import update
+
     if not allowed:
-        agent.denied_requests = (agent.denied_requests or 0) + 1
+        column = AgentRegistry.denied_requests
     elif "write" in scope:
-        agent.total_writes = (agent.total_writes or 0) + 1
+        column = AgentRegistry.total_writes
     else:
-        agent.total_reads = (agent.total_reads or 0) + 1
-    await db.flush()
+        column = AgentRegistry.total_reads
+
+    async with _get_session_factory()() as own_db:
+        async with own_db.begin():
+            await own_db.execute(
+                update(AgentRegistry)
+                .where(AgentRegistry.agent_id == agent_id)
+                .values({column: column + 1})
+            )
 
 
 async def evaluate(

@@ -56,7 +56,20 @@ logger = structlog.get_logger(__name__)
 L3_SUMMARY_THRESHOLD: int = 2
 
 # Minimum number of *new* memories added since last L3 summary before we re-run
-L3_SUMMARY_MIN_NEW_MEMORIES: int = 1
+# (3 = a small batch — at 3-turn granularity the summary captures essentially
+# the same content; under heavy parallel ingest this naturally batches the
+# Groq calls without losing freshness for human-pace usage).
+L3_SUMMARY_MIN_NEW_MEMORIES: int = 3
+
+# When the new memory's embedding is at least this similar to the *existing
+# summary's* embedding, the summary already represents this content and we
+# skip regen. This is the F13 cosine gate the user asked for, applied at
+# memory→summary granularity (vs F13's existing memory→prior-memories gate).
+# Calibrated against typical conversational-turn-vs-paragraph-summary
+# similarity: aligned content lands in 0.7–0.9, unrelated content drops
+# below 0.6. 0.72 catches "this turn is already in the summary" while still
+# triggering regen for genuinely new topics within the namespace.
+L3_SUMMARY_COVERS_THRESHOLD: float = 0.72
 
 # Maximum source memories fed into a single L3 summary call
 L3_SUMMARY_MAX_SOURCES: int = 50
@@ -98,6 +111,21 @@ _last_synthesis_count: dict[tuple[str, str], int] = {}
 
 # Maps (user_id_str, namespace) → count of memories at last L3 summary run
 _last_summary_count: dict[tuple[str, str], int] = {}
+
+# Per-namespace asyncio locks coalesce concurrent L3 regen calls. Without
+# these, 16 parallel writes to the same namespace all read the same
+# `_last_summary_count` snapshot, all decide "yes, regen", and all fire
+# Groq simultaneously — wasting LLM cost AND piling onto the policy row
+# upsert. With the lock, the first concurrent writer runs the summary,
+# updates `_last_summary_count`, and subsequent writers see the new count
+# and short-circuit on the debounce check.
+_l3_summary_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+# Cache the embedding of the most recent summary text so the
+# summary-coverage gate doesn't re-encode on every write. Keyed by the
+# summary text itself so a stale entry self-invalidates as soon as the
+# summary changes.
+_summary_embedding_cache: dict[str, list[float]] = {}
 
 
 # ── Public entry point ─────────────────────────────────────────────────────
@@ -287,6 +315,68 @@ async def _max_similarity_to_prior(
     return best if best > -2.0 else -1.0
 
 
+async def _summary_already_covers(
+    db: AsyncSession,
+    memory_id: str,
+    namespace: str,
+) -> bool:
+    """True iff the new memory's content is already represented in the
+    existing namespace summary — regen would not add information.
+
+    Compares the new memory's embedding against the existing summary's
+    embedding. If similarity ≥ L3_SUMMARY_COVERS_THRESHOLD, the summary
+    already covers this content and we skip the Groq call.
+
+    Returns False (run regen) when:
+      • no existing summary
+      • new memory has no embedding yet
+      • similarity below threshold
+
+    The summary embedding is cached in-process keyed by the summary text,
+    so a stale entry self-invalidates as soon as the summary changes.
+    """
+    from backend.models.namespace_policy import NamespacePolicy
+    from backend.models.memory import Memory
+
+    # New memory's embedding
+    target_vec = (await db.execute(
+        select(Memory.embedding).where(Memory.memory_id == uuid.UUID(memory_id))
+    )).scalar_one_or_none()
+    if not target_vec:
+        return False
+
+    # Existing summary text
+    summary_text = (await db.execute(
+        select(NamespacePolicy.consolidated_summary).where(
+            NamespacePolicy.namespace == namespace
+        )
+    )).scalar_one_or_none()
+    if not summary_text:
+        return False
+
+    # Encode summary (cached by exact text)
+    summary_vec = _summary_embedding_cache.get(summary_text)
+    if summary_vec is None:
+        try:
+            from memory_vault.embeddings.encoder import encode
+            summary_vec = list(encode(summary_text))
+            # Bound the cache so it doesn't grow without limit. We only need
+            # the *current* summary per namespace; keep at most 256 entries.
+            if len(_summary_embedding_cache) > 256:
+                # Drop oldest by simple FIFO eviction.
+                for k in list(_summary_embedding_cache.keys())[:64]:
+                    _summary_embedding_cache.pop(k, None)
+            _summary_embedding_cache[summary_text] = summary_vec
+        except Exception:
+            return False
+
+    if len(target_vec) != len(summary_vec):
+        return False
+
+    sim = sum(a * b for a, b in zip(target_vec, summary_vec))
+    return sim >= L3_SUMMARY_COVERS_THRESHOLD
+
+
 async def _has_sufficient_novelty(
     db: AsyncSession,
     memory_id: str,
@@ -364,26 +454,73 @@ async def _maybe_summarize_l3(
     if count < L3_SUMMARY_THRESHOLD:
         return
 
-    # Novelty gate — skip if the triggering memory is a near-duplicate of
-    # something already captured. The count-based debounce below would miss
-    # this case: if every write adds a restatement, the count advances but
-    # the summary doesn't need to change.
-    if not force and trigger_memory_id is not None:
-        if not await _has_sufficient_novelty(
-            db, trigger_memory_id, user_id, namespace,
-            stage_label="l3_namespace",
-        ):
-            # Move the debounce counter forward anyway so we don't retry
-            # this same duplicate on the very next write.
-            _last_summary_count[(user_id, namespace)] = count
-            return
-
-    # Debounce: only re-run if enough new memories have been added
+    # Per-namespace lock — coalesce concurrent regen calls into one. Under
+    # bulk parallel ingest (e.g. 16 LME ingest workers all writing to the
+    # same multi-session namespace), without this lock all 16 read the
+    # same `_last_summary_count` snapshot, all pass the debounce, and all
+    # fire Groq concurrently. With the lock the first writer runs the
+    # summary and advances `_last_summary_count`; subsequent writers
+    # acquire the lock, see the new count, and short-circuit.
     key = (user_id, namespace)
-    last_count = _last_summary_count.get(key, 0)
-    if count - last_count < L3_SUMMARY_MIN_NEW_MEMORIES and last_count > 0:
+    lock = _l3_summary_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _l3_summary_locks[key] = lock
+
+    # Skip immediately if another coroutine is already regenerating for
+    # this namespace — they'll cover the work that's pending.
+    if lock.locked() and not force:
+        logger.debug(
+            "l3_summary.skipped.lock_held",
+            namespace=namespace,
+        )
         return
 
+    async with lock:
+        # Re-check debounce inside the lock so we use the latest count.
+        last_count = _last_summary_count.get(key, 0)
+        if not force and count - last_count < L3_SUMMARY_MIN_NEW_MEMORIES and last_count > 0:
+            return
+
+        # F13 cosine gate: is the triggering memory a near-duplicate of any
+        # prior memory in the corpus? If so, regen wouldn't add information.
+        if not force and trigger_memory_id is not None:
+            if not await _has_sufficient_novelty(
+                db, trigger_memory_id, user_id, namespace,
+                stage_label="l3_namespace",
+            ):
+                _last_summary_count[key] = count
+                return
+
+            # F13 extension: is the triggering memory already represented in
+            # the existing summary? Cheaper than a full regen — single SBERT
+            # encode of the summary (cached) + one dot product.
+            if await _summary_already_covers(db, trigger_memory_id, namespace):
+                logger.info(
+                    "l3_summary.skipped.summary_covers",
+                    namespace=namespace,
+                    threshold=L3_SUMMARY_COVERS_THRESHOLD,
+                )
+                _last_summary_count[key] = count
+                return
+
+        await _do_summarize_l3(
+            db, user_id, namespace, source_memories, count, key,
+        )
+
+
+async def _do_summarize_l3(
+    db: AsyncSession,
+    user_id: str,
+    namespace: str,
+    source_memories: list,
+    count: int,
+    key: tuple[str, str],
+) -> None:
+    """Generate the L3 summary and upsert it. Only called by
+    `_maybe_summarize_l3` after debounce + novelty + coverage gates have
+    decided this run is needed. Caller holds `_l3_summary_locks[key]`.
+    """
     sources = source_memories[:L3_SUMMARY_MAX_SOURCES]
 
     # P3: tiny-namespace fallback. Groq over-elaborates on a handful of
@@ -415,28 +552,30 @@ async def _maybe_summarize_l3(
 
     # Upsert the summary on NamespacePolicy. Only write if the current tier
     # is "L3" or None — never downgrade an existing L3.1 summary.
+    # ON CONFLICT keeps the row lock to microseconds.
     try:
         from backend.models.namespace_policy import NamespacePolicy
-        policy = (
-            await db.execute(
-                select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-            )
-        ).scalar_one_or_none()
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         now = datetime.now(timezone.utc)
-        if policy is None:
-            policy = NamespacePolicy(
-                namespace=namespace,
-                consolidated_summary=summary_text,
-                consolidated_summary_tier="L3",
-                consolidated_summary_updated_at=now,
-                created_by=uuid.UUID(user_id),
-            )
-            db.add(policy)
-        elif (policy.consolidated_summary_tier or "L3") == "L3":
-            # Only overwrite L3 with L3 — don't downgrade an L3.1
-            policy.consolidated_summary = summary_text
-            policy.consolidated_summary_tier = "L3"
-            policy.consolidated_summary_updated_at = now
+        stmt = pg_insert(NamespacePolicy).values(
+            namespace=namespace,
+            consolidated_summary=summary_text,
+            consolidated_summary_tier="L3",
+            consolidated_summary_updated_at=now,
+            created_by=uuid.UUID(user_id),
+        ).on_conflict_do_update(
+            index_elements=[NamespacePolicy.namespace],
+            set_={
+                "consolidated_summary": summary_text,
+                "consolidated_summary_tier": "L3",
+                "consolidated_summary_updated_at": now,
+            },
+            where=(
+                (NamespacePolicy.consolidated_summary_tier == None)  # noqa: E711
+                | (NamespacePolicy.consolidated_summary_tier == "L3")
+            ),
+        )
+        await db.execute(stmt)
     except Exception as exc:
         logger.debug(
             "l3_summary.upsert_failed",
@@ -884,28 +1023,29 @@ async def _maybe_synthesize_l3_1(
     # Upsert the rolling namespace summary on NamespacePolicy so agents and
     # the dashboard can read a cross-session rollup without re-running
     # synthesis. Piggy-backs on the same L3.1 run — no extra LLM cost.
+    # Atomic UPSERT (see L3 site above for rationale) — under concurrent
+    # multi-session ingest, the previous SELECT-then-modify pattern
+    # serialised on the policy row.
     try:
         from backend.models.namespace_policy import NamespacePolicy
-        policy = (
-            await db.execute(
-                select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-            )
-        ).scalar_one_or_none()
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         summary_text = concept.get("synthesis", "") or ""
         now = datetime.now(timezone.utc)
-        if policy is None:
-            policy = NamespacePolicy(
-                namespace=namespace,
-                consolidated_summary=summary_text,
-                consolidated_summary_tier="L3.1",
-                consolidated_summary_updated_at=now,
-                created_by=uuid.UUID(user_id),
-            )
-            db.add(policy)
-        else:
-            policy.consolidated_summary = summary_text
-            policy.consolidated_summary_tier = "L3.1"
-            policy.consolidated_summary_updated_at = now
+        stmt = pg_insert(NamespacePolicy).values(
+            namespace=namespace,
+            consolidated_summary=summary_text,
+            consolidated_summary_tier="L3.1",
+            consolidated_summary_updated_at=now,
+            created_by=uuid.UUID(user_id),
+        ).on_conflict_do_update(
+            index_elements=[NamespacePolicy.namespace],
+            set_={
+                "consolidated_summary": summary_text,
+                "consolidated_summary_tier": "L3.1",
+                "consolidated_summary_updated_at": now,
+            },
+        )
+        await db.execute(stmt)
     except Exception as exc:
         logger.debug(
             "compression_pipeline.summary_upsert_failed",
