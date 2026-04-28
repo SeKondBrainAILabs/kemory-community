@@ -72,7 +72,7 @@ async def register_agent_endpoint(
     summary="List user's agents",
 )
 async def list_agents_endpoint(
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status"),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):

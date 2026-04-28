@@ -29,34 +29,34 @@ from backend.models.agent import AgentRegistry
 
 class PermissionRuleCreate(BaseModel):
     """Request body for creating a permission rule."""
-    agent_id: Optional[str] = Field(None, description="Agent UUID. NULL = applies to all agents.")
+    agent_id: str | None = Field(None, description="Agent UUID. NULL = applies to all agents.")
     scope: str = Field(..., min_length=1, max_length=100, description="Scope: memory:read, memory:write, etc.")
     action: str = Field(..., description="Action: allow, deny, jit")
     priority: int = Field(default=100, ge=1, le=10000, description="Priority (lower = evaluated first)")
-    namespace_filter: Optional[str] = Field(None, max_length=255, description="Glob pattern for namespace")
-    conditions: Optional[dict] = Field(None, description="Optional conditions: time_window, rate_limit, etc.")
+    namespace_filter: str | None = Field(None, max_length=255, description="Glob pattern for namespace")
+    conditions: dict | None = Field(None, description="Optional conditions: time_window, rate_limit, etc.")
 
 
 class PermissionRuleUpdate(BaseModel):
     """Request body for updating a permission rule."""
-    scope: Optional[str] = Field(None, min_length=1, max_length=100)
-    action: Optional[str] = None
-    priority: Optional[int] = Field(None, ge=1, le=10000)
-    namespace_filter: Optional[str] = Field(None, max_length=255)
-    conditions: Optional[dict] = None
-    is_active: Optional[bool] = None
+    scope: str | None = Field(None, min_length=1, max_length=100)
+    action: str | None = None
+    priority: int | None = Field(None, ge=1, le=10000)
+    namespace_filter: str | None = Field(None, max_length=255)
+    conditions: dict | None = None
+    is_active: bool | None = None
 
 
 class PermissionRuleResponse(BaseModel):
     """Response body for a permission rule."""
     rule_id: str
     user_id: str
-    agent_id: Optional[str]
+    agent_id: str | None
     scope: str
     action: str
     priority: int
-    namespace_filter: Optional[str]
-    conditions: Optional[dict]
+    namespace_filter: str | None
+    conditions: dict | None
     is_active: bool
     created_at: str
     updated_at: str
@@ -66,18 +66,18 @@ class GatekeeperDecision(BaseModel):
     """Result of a Gatekeeper evaluation."""
     allowed: bool
     outcome: str  # "allowed", "denied", "jit_pending", "jit_approved", "jit_denied", "jit_timeout"
-    matched_rule_id: Optional[str] = None
+    matched_rule_id: str | None = None
     reason: str
-    evaluation_time_ms: Optional[int] = None
-    consent_id: Optional[str] = None  # If JIT consent was triggered
+    evaluation_time_ms: int | None = None
+    consent_id: str | None = None  # If JIT consent was triggered
 
 
 class EvaluationRequest(BaseModel):
     """Request to evaluate a permission."""
     agent_id: str
     scope: str
-    resource: Optional[str] = None  # namespace or memory ID
-    namespace: Optional[str] = None
+    resource: str | None = None  # namespace or memory ID
+    namespace: str | None = None
 
 
 # ─── Validation ───────────────────────────────────────────────────
@@ -203,8 +203,8 @@ async def get_rule(
 async def list_rules(
     user_id: uuid.UUID,
     db: AsyncSession,
-    agent_id: Optional[uuid.UUID] = None,
-    scope: Optional[str] = None,
+    agent_id: uuid.UUID | None = None,
+    scope: str | None = None,
     admin_view: bool = False,
 ) -> list[PermissionRuleResponse]:
     """
@@ -376,18 +376,18 @@ class ConsentRequestResponse(BaseModel):
     user_id: str
     agent_id: str
     requested_scope: str
-    requested_resource: Optional[str]
-    context: Optional[dict]
+    requested_resource: str | None
+    context: dict | None
     status: str
     created_at: str
     expires_at: str
-    resolved_at: Optional[str]
+    resolved_at: str | None
 
 
 async def list_consent_requests(
     user_id: uuid.UUID,
     db: AsyncSession,
-    status: Optional[str] = None,
+    status: str | None = None,
     admin_view: bool = False,
 ) -> list[ConsentRequestResponse]:
     """
@@ -515,7 +515,7 @@ def _matches_scope(rule: PermissionRule, requested_scope: str) -> bool:
     return False
 
 
-def _matches_namespace(rule: PermissionRule, namespace: Optional[str]) -> bool:
+def _matches_namespace(rule: PermissionRule, namespace: str | None) -> bool:
     """Check if a rule's namespace filter matches the requested namespace."""
     if not rule.namespace_filter:
         return True  # No filter — matches all namespaces

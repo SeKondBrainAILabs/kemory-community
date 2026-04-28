@@ -52,7 +52,8 @@ import contextvars
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterable, Iterator, Type
+from typing import Type
+from collections.abc import Iterable, Iterator
 
 import structlog
 from fastapi import Depends, HTTPException, status
@@ -226,7 +227,7 @@ TENANT_SCOPED_MODEL_NAMES: tuple[str, ...] = (
 )
 
 
-def tenant_scoped_models() -> Iterable[Type[Base]]:
+def tenant_scoped_models() -> Iterable[type[Base]]:
     """Yield the model classes that have an org_id column."""
     for mapper in Base.registry.mappers:  # type: ignore[attr-defined]
         cls = mapper.class_
@@ -334,7 +335,7 @@ def register_tenant_filter(session_class) -> None:
 # ─── Helper for explicit query scoping (defense in depth) ─────────────────
 
 
-def apply_tenant_filter(stmt, model: Type[Base], scope: TenantScope):
+def apply_tenant_filter(stmt, model: type[Base], scope: TenantScope):
     """Apply WHERE org_id = :caller_org_id to a Select statement.
 
     The global listener already does this for any SELECT, but calling it

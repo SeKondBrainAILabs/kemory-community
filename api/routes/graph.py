@@ -32,13 +32,13 @@ class GraphNode(BaseModel):
     type: str          # "agent" | "namespace" | "memory"
     label: str
     # Optional extra data per node type
-    status: Optional[str] = None           # agent status
-    compression_tier: Optional[str] = None  # memory compression tier
-    namespace: Optional[str] = None         # memory's namespace
-    memory_count: Optional[int] = None      # namespace memory count
-    total_reads: Optional[int] = None       # agent reads
-    total_writes: Optional[int] = None      # agent writes
-    denied_requests: Optional[int] = None   # agent denied
+    status: str | None = None           # agent status
+    compression_tier: str | None = None  # memory compression tier
+    namespace: str | None = None         # memory's namespace
+    memory_count: int | None = None      # namespace memory count
+    total_reads: int | None = None       # agent reads
+    total_writes: int | None = None      # agent writes
+    denied_requests: int | None = None   # agent denied
 
 
 class GraphEdge(BaseModel):

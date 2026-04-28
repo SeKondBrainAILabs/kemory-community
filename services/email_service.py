@@ -36,7 +36,7 @@ class EmailService:
     async def send_welcome(
         self,
         to_email: str,
-        display_name: Optional[str],
+        display_name: str | None,
         position: int,
         referral_code: str,
     ) -> bool:
@@ -56,7 +56,7 @@ class EmailService:
     async def send_approved(
         self,
         to_email: str,
-        display_name: Optional[str],
+        display_name: str | None,
     ) -> bool:
         """Send approval notification email."""
         return await self._send(
@@ -72,7 +72,7 @@ class EmailService:
     async def send_referral_notification(
         self,
         to_email: str,
-        display_name: Optional[str],
+        display_name: str | None,
         new_position: int,
         referral_count: int,
     ) -> bool:

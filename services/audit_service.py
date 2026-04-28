@@ -36,27 +36,27 @@ class AuditEntry(BaseModel):
     """Schema for an audit log entry."""
     audit_id: str
     user_id: str
-    agent_id: Optional[str]
+    agent_id: str | None
     action: str  # e.g., "memory:write", "memory:read", "memory:delete", "permission:evaluate"
     resource_type: str  # e.g., "memory", "permission", "agent"
-    resource_id: Optional[str]
-    namespace: Optional[str]
+    resource_id: str | None
+    namespace: str | None
     outcome: str  # "success", "denied", "error"
-    details: Optional[dict]
-    ip_address: Optional[str]
+    details: dict | None
+    ip_address: str | None
     hash_chain: str  # SHA-256 hash linking to previous entry
     created_at: str
 
 
 class AuditQueryRequest(BaseModel):
     """Request for querying audit logs."""
-    user_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    action: Optional[str] = None
-    resource_type: Optional[str] = None
-    outcome: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
+    user_id: str | None = None
+    agent_id: str | None = None
+    action: str | None = None
+    resource_type: str | None = None
+    outcome: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 
@@ -121,17 +121,17 @@ def compute_hash_chain(
 
 async def log_audit_event(
     user_id: uuid.UUID,
-    agent_id: Optional[uuid.UUID],
+    agent_id: uuid.UUID | None,
     action: str,
     resource_type: str,
-    resource_id: Optional[str],
+    resource_id: str | None,
     outcome: str,
     db: AsyncSession,
-    namespace: Optional[str] = None,
-    details: Optional[dict] = None,
-    ip_address: Optional[str] = None,
-    org_id: Optional[str] = None,
-    team_id: Optional[str] = None,
+    namespace: str | None = None,
+    details: dict | None = None,
+    ip_address: str | None = None,
+    org_id: str | None = None,
+    team_id: str | None = None,
 ) -> AuditEntry:
     """
     Log an audit event to the append-only audit log.
@@ -344,7 +344,7 @@ class WriteValidationResult(BaseModel):
 
 async def validate_write(
     content: str,
-    metadata: Optional[dict],
+    metadata: dict | None,
     user_id: uuid.UUID,
     agent_id: uuid.UUID,
     db: AsyncSession,

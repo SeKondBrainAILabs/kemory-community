@@ -65,8 +65,8 @@ async def create_rule_endpoint(
     summary="List permission rules",
 )
 async def list_rules_endpoint(
-    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
-    scope: Optional[str] = Query(None, description="Filter by scope"),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    scope: str | None = Query(None, description="Filter by scope"),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -162,7 +162,7 @@ async def evaluate_endpoint(
     summary="List JIT consent requests",
 )
 async def list_consent_endpoint(
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status: pending, approved, denied, timeout"),
+    status_filter: str | None = Query(None, alias="status", description="Filter by status: pending, approved, denied, timeout"),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):

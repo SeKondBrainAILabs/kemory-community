@@ -40,9 +40,9 @@ class WaitlistService:
         self,
         user_id: uuid.UUID,
         email: str,
-        display_name: Optional[str] = None,
+        display_name: str | None = None,
         service: str = "memory_vault",
-        referred_by_code: Optional[str] = None,
+        referred_by_code: str | None = None,
         source: str = "organic",
     ) -> WaitlistEntry:
         """Join the waitlist for a service. Idempotent — returns existing entry if already joined."""
@@ -82,7 +82,7 @@ class WaitlistService:
 
     async def get_status(
         self, user_id: uuid.UUID, service: str = "memory_vault"
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Get waitlist status for a user on a service."""
         entry = await self._get_entry(user_id, service)
         if not entry:
@@ -104,7 +104,7 @@ class WaitlistService:
 
     async def get_referral_info(
         self, user_id: uuid.UUID, service: str = "memory_vault"
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Get referral code and stats for a user."""
         entry = await self._get_entry(user_id, service)
         if not entry:
@@ -173,8 +173,8 @@ class WaitlistService:
 
     async def list_entries(
         self,
-        service: Optional[str] = None,
-        status: Optional[str] = None,
+        service: str | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
@@ -244,7 +244,7 @@ class WaitlistService:
         logger.info("waitlist.bulk_approved", count=count, service=service)
         return count
 
-    async def get_stats(self, service: Optional[str] = None) -> dict:
+    async def get_stats(self, service: str | None = None) -> dict:
         """Get waitlist statistics."""
         base = select(WaitlistEntry)
         if service:
@@ -306,13 +306,13 @@ class WaitlistService:
 
     async def get_entry(
         self, user_id: uuid.UUID, service: str = "memory_vault"
-    ) -> Optional[WaitlistEntry]:
+    ) -> WaitlistEntry | None:
         """Get a waitlist entry (public accessor for route layer)."""
         return await self._get_entry(user_id, service)
 
     async def get_entry_by_code(
         self, referral_code: str, service: str = "memory_vault"
-    ) -> Optional[WaitlistEntry]:
+    ) -> WaitlistEntry | None:
         """Look up entry by referral code."""
         result = await self.db.execute(
             select(WaitlistEntry).where(
@@ -326,7 +326,7 @@ class WaitlistService:
 
     async def _get_entry(
         self, user_id: uuid.UUID, service: str
-    ) -> Optional[WaitlistEntry]:
+    ) -> WaitlistEntry | None:
         result = await self.db.execute(
             select(WaitlistEntry).where(
                 WaitlistEntry.user_id == user_id,

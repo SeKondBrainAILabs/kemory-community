@@ -116,8 +116,8 @@ def create_access_token(
     user_id: uuid.UUID,
     agent_name: str,
     scopes: list[str],
-    expires_delta: Optional[timedelta] = None,
-    org_id: Optional[str] = None,
+    expires_delta: timedelta | None = None,
+    org_id: str | None = None,
 ) -> str:
     """
     Create a signed JWT access token for an authenticated agent.
@@ -153,7 +153,7 @@ def create_access_token(
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> Optional[AuthContext]:
+def decode_access_token(token: str) -> AuthContext | None:
     """
     Decode and validate a JWT access token.
 
@@ -288,7 +288,7 @@ async def _cache_auth_context(cache_key: str, ctx: "AuthContext", expiry: float)
 async def authenticate_api_key(
     api_key: str,
     db: AsyncSession,
-) -> Optional[AuthContext]:
+) -> AuthContext | None:
     """
     Authenticate a request using an API key.
 

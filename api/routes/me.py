@@ -58,7 +58,7 @@ async def get_me(
     response: Response,
     auth: AuthContext = Depends(require_auth),
     scope: TenantScope = TenantScopeDep,
-    if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the caller's identity, org, teams, and roles."""

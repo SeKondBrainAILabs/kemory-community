@@ -36,9 +36,9 @@ from backend.services.email_service import email_service
 
 class JoinRequest(BaseModel):
     email: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
     service: str = "memory_vault"
-    referred_by_code: Optional[str] = None
+    referred_by_code: str | None = None
     source: str = "organic"
 
 
@@ -181,8 +181,8 @@ _require_admin = require_admin  # alias for backward compat
 
 @admin_router.get("")
 async def list_waitlist(
-    service: Optional[str] = Query(None),
-    entry_status: Optional[str] = Query(None, alias="status"),
+    service: str | None = Query(None),
+    entry_status: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     auth: AuthContext = Depends(_require_admin),
@@ -272,7 +272,7 @@ async def bulk_approve(
 
 @admin_router.get("/stats")
 async def get_stats(
-    service: Optional[str] = Query(None),
+    service: str | None = Query(None),
     auth: AuthContext = Depends(_require_admin),
     db: AsyncSession = Depends(get_db),
 ):

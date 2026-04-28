@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Iterable, get_args
+from typing import Any, get_args
+from collections.abc import Iterable
 
 # Allow gen_env to run without a real JWT secret etc — we're just inspecting
 # the model, not instantiating it for runtime. A non-empty placeholder

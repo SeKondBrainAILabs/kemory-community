@@ -54,9 +54,9 @@ class ExtractedEntity(BaseModel):
     name: str
     entity_type: EntityType
     confidence: float = Field(ge=0.0, le=1.0)
-    start_pos: Optional[int] = None
-    end_pos: Optional[int] = None
-    context: Optional[str] = None  # Surrounding text for disambiguation
+    start_pos: int | None = None
+    end_pos: int | None = None
+    context: str | None = None  # Surrounding text for disambiguation
 
 
 class ConceptTag(BaseModel):
@@ -91,7 +91,7 @@ class EnrichmentResult(BaseModel):
     quality_score: QualityScore
     graph_relationships: list[GraphRelationship]
     enrichment_version: str = "1.0"
-    processing_time_ms: Optional[float] = None
+    processing_time_ms: float | None = None
 
 
 # ─── Entity Extraction (Rule-Based + Pattern Matching) ────────────

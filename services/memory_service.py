@@ -62,21 +62,21 @@ class MemoryCreate(BaseModel):
     namespace: str = Field(..., min_length=1, max_length=100)
     content: str = Field(..., min_length=1, max_length=100000)
     content_type: str = Field(default="text", max_length=50)
-    metadata: Optional[dict] = Field(None)
-    ttl_seconds: Optional[int] = Field(None, ge=60, le=31536000, description="TTL in seconds (min 60s, max 1 year)")
-    session_id: Optional[str] = Field(None, max_length=200, description="Session context identifier")
-    round_id: Optional[str] = Field(None, max_length=200, description="Round/turn identifier within session")
-    valid_at: Optional[str] = Field(None, description="ISO-8601 timestamp when the fact became true")
+    metadata: dict | None = Field(None)
+    ttl_seconds: int | None = Field(None, ge=60, le=31536000, description="TTL in seconds (min 60s, max 1 year)")
+    session_id: str | None = Field(None, max_length=200, description="Session context identifier")
+    round_id: str | None = Field(None, max_length=200, description="Round/turn identifier within session")
+    valid_at: str | None = Field(None, description="ISO-8601 timestamp when the fact became true")
     visibility: str = Field(default="user-private", description="agent-private, user-private, team, org-public")
-    team_id: Optional[str] = Field(None, description="Team ID when visibility='team'")
+    team_id: str | None = Field(None, description="Team ID when visibility='team'")
 
 
 class MemoryUpdate(BaseModel):
     """Request body for updating a memory."""
-    content: Optional[str] = Field(None, min_length=1, max_length=100000)
-    content_type: Optional[str] = Field(None, max_length=50)
-    metadata: Optional[dict] = None
-    ttl_seconds: Optional[int] = Field(None, ge=60, le=31536000)
+    content: str | None = Field(None, min_length=1, max_length=100000)
+    content_type: str | None = Field(None, max_length=50)
+    metadata: dict | None = None
+    ttl_seconds: int | None = Field(None, ge=60, le=31536000)
 
 
 class DedupInfo(BaseModel):
@@ -87,7 +87,7 @@ class DedupInfo(BaseModel):
     """
     deduplicated: bool = True
     kind: str  # "exact_hash" or "semantic"
-    similarity: Optional[float] = None  # Only set for kind="semantic"
+    similarity: float | None = None  # Only set for kind="semantic"
 
 
 class MemoryResponse(BaseModel):
@@ -97,32 +97,32 @@ class MemoryResponse(BaseModel):
     namespace: str
     content: str
     content_type: str
-    metadata: Optional[dict]
-    source_agent_id: Optional[str]
+    metadata: dict | None
+    source_agent_id: str | None
     source_type: str
-    quality_score: Optional[float]
+    quality_score: float | None
     enrichment_status: str
     version: int
-    ttl_seconds: Optional[int]
-    expires_at: Optional[str]
+    ttl_seconds: int | None
+    expires_at: str | None
     # Unified model fields (MV2-S01.3)
-    session_id: Optional[str] = None
-    round_id: Optional[str] = None
-    valid_at: Optional[str] = None
-    invalid_at: Optional[str] = None
-    decay_score: Optional[float] = None
-    temporal_anchor: Optional[str] = None
+    session_id: str | None = None
+    round_id: str | None = None
+    valid_at: str | None = None
+    invalid_at: str | None = None
+    decay_score: float | None = None
+    temporal_anchor: str | None = None
     access_count: int = 0
     created_at: str
     updated_at: str
     # S9N-DEDUP: populated when dedup prevented a new memory from being created
-    dedup: Optional[DedupInfo] = None
+    dedup: DedupInfo | None = None
     # F12: Memory compression level — L1 (raw observation), L2 (AAAK lossless), L3.1 (concept synthesis)
     # Derived from metadata._compression_tier if present, otherwise defaults to L1.
     compression_tier: str = "L1"
     # F12: Source memory IDs for L3.1 synthesized concepts (provenance tracking)
     # Populated from metadata._source_memory_ids when compression_tier is L3.1.
-    source_memory_ids: Optional[list[str]] = None
+    source_memory_ids: list[str] | None = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -132,10 +132,10 @@ class MemorySearchRequest(BaseModel):
     unbounded full-table scans. For namespace-only listing, use search_mode='hybrid'
     with a namespace filter, or provide a non-empty query string.
     """
-    query: Optional[str] = Field(None, min_length=1, max_length=1000, description="Text search query (required for fts mode)")
-    namespace: Optional[str] = Field(None, max_length=100)
-    content_type: Optional[str] = Field(None, max_length=50)
-    tags: Optional[list[str]] = Field(None, description="Filter by tags in metadata")
+    query: str | None = Field(None, min_length=1, max_length=1000, description="Text search query (required for fts mode)")
+    namespace: str | None = Field(None, max_length=100)
+    content_type: str | None = Field(None, max_length=50)
+    tags: list[str] | None = Field(None, description="Filter by tags in metadata")
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
     search_mode: str = Field(
@@ -146,14 +146,14 @@ class MemorySearchRequest(BaseModel):
         ),
     )
     # S9N-TEMPORAL: Optional date range filters for temporal queries
-    date_from: Optional[str] = Field(
+    date_from: str | None = Field(
         None, description="ISO date string — only return memories created on or after this date"
     )
-    date_to: Optional[str] = Field(
+    date_to: str | None = Field(
         None, description="ISO date string — only return memories created on or before this date"
     )
     # F12: Filter by compression tier (L1, L2, L3.1)
-    compression_tier: Optional[str] = Field(
+    compression_tier: str | None = Field(
         None, description="Filter by compression tier: 'L1' (raw), 'L2' (AAAK), 'L3.1' (concept)"
     )
 
@@ -832,7 +832,7 @@ _RELATIVE_WEEK_PATTERNS = {
 }
 import re as _re
 
-def _resolve_date(value: str, now: datetime) -> Optional[datetime]:
+def _resolve_date(value: str, now: datetime) -> datetime | None:
     """Resolve a date string to a datetime. Supports:
     - ISO 8601: "2024-01-15", "2024-01-15T10:00:00"
     - Relative: "yesterday", "last week", "3 days ago", "2 weeks ago"
@@ -883,7 +883,7 @@ async def _find_by_hash(
     namespace: str,
     content_hash: str,
     db: AsyncSession,
-) -> Optional[Memory]:
+) -> Memory | None:
     """Find an active memory with the given content hash."""
     result = await db.execute(
         select(Memory).where(
@@ -903,7 +903,7 @@ async def _find_semantic_duplicate(
     threshold: float,
     max_candidates: int,
     db: AsyncSession,
-) -> Optional[tuple[Memory, float]]:
+) -> tuple[Memory, float] | None:
     """Find a semantically similar active memory above the threshold.
 
     Returns (memory, similarity) or None. Degrades gracefully if the
@@ -926,7 +926,7 @@ async def _find_semantic_duplicate(
     )
     candidates = result.scalars().all()
 
-    best_match: Optional[Memory] = None
+    best_match: Memory | None = None
     best_sim = 0.0
 
     for mem in candidates:
@@ -947,7 +947,7 @@ async def _handle_dedup_match(
     existing: Memory,
     agent_id: uuid.UUID,
     kind: str,
-    similarity: Optional[float],
+    similarity: float | None,
     db: AsyncSession,
 ) -> MemoryResponse:
     """Bump access stats, emit provenance event, and return the existing memory."""
@@ -1034,7 +1034,7 @@ def _to_response(memory: Memory) -> MemoryResponse:
 _VALID_TIERS = {"L1", "L2", "L3.1"}
 
 
-def _derive_compression_tier(meta: Optional[dict]) -> str:
+def _derive_compression_tier(meta: dict | None) -> str:
     """Derive the compression tier from memory metadata.
 
     The tier is stored as metadata._compression_tier by the compression
@@ -1047,7 +1047,7 @@ def _derive_compression_tier(meta: Optional[dict]) -> str:
     return tier if tier in _VALID_TIERS else "L1"
 
 
-def _derive_source_memory_ids(meta: Optional[dict]) -> Optional[list[str]]:
+def _derive_source_memory_ids(meta: dict | None) -> list[str] | None:
     """Derive source memory IDs for L3.1 synthesized concepts.
 
     Stored as metadata._source_memory_ids by the concept synthesis pipeline.

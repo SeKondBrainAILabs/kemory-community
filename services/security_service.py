@@ -368,7 +368,7 @@ class SecurityScanResult(BaseModel):
     pii_scan: PIIScanResult
     sanitized_content: str
     blocked: bool = False
-    block_reason: Optional[str] = None
+    block_reason: str | None = None
 
 
 def full_security_scan(content: str) -> SecurityScanResult:

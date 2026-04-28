@@ -35,12 +35,12 @@ router = APIRouter(prefix="/api/v1/audit", tags=["Audit & Governance"])
 
 @router.get("/logs", summary="Query audit logs")
 async def get_audit_logs(
-    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
-    action: Optional[str] = Query(None, description="Filter by action (e.g. memory:write)"),
-    resource_type: Optional[str] = Query(None, description="Filter by resource type"),
-    outcome: Optional[str] = Query(None, description="Filter by outcome (success/denied/error)"),
-    start_time: Optional[str] = Query(None, description="ISO-8601 start datetime (inclusive)"),
-    end_time: Optional[str] = Query(None, description="ISO-8601 end datetime (inclusive)"),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    action: str | None = Query(None, description="Filter by action (e.g. memory:write)"),
+    resource_type: str | None = Query(None, description="Filter by resource type"),
+    outcome: str | None = Query(None, description="Filter by outcome (success/denied/error)"),
+    start_time: str | None = Query(None, description="ISO-8601 start datetime (inclusive)"),
+    end_time: str | None = Query(None, description="ISO-8601 end datetime (inclusive)"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     auth: AuthContext = Depends(require_auth),
@@ -92,7 +92,7 @@ async def get_rate_limit(
 @router.post("/validate-write", summary="Validate a write operation")
 async def validate_write_endpoint(
     content: str = "",
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):

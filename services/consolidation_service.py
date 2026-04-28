@@ -60,7 +60,7 @@ async def _get_policy(db: AsyncSession, namespace: str) -> NamespacePolicy:
 
 async def apply_weight_decay(
     db: AsyncSession,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     KMV-S13.3: Apply daily soft weight decay to all pending memories.
@@ -136,7 +136,7 @@ async def apply_weight_decay(
 
 async def auto_archive_expired(
     db: AsyncSession,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     KMV-S13.3: Auto-archive memories older than the namespace retention window.
@@ -198,8 +198,8 @@ async def auto_archive_expired(
 
 async def run_daily_consolidation(
     db: AsyncSession,
-    namespace: Optional[str] = None,
-    cognition_bridge: Optional[CognitionBridge] = None,
+    namespace: str | None = None,
+    cognition_bridge: CognitionBridge | None = None,
 ) -> dict:
     """
     KMV-S13.2: Full daily consolidation pipeline for a namespace (or all namespaces).
@@ -355,7 +355,7 @@ async def _push_to_cognition_os(
     memory: Memory,
     namespace: str,
     epoch_date: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Push a single memory to Cognition OS via the bridge.
     Returns the cognition_entity_id on success, or None.
@@ -385,7 +385,7 @@ async def _push_to_cognition_os(
 
 async def get_consolidation_stats(
     db: AsyncSession,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Return consolidation statistics for a namespace or all namespaces.

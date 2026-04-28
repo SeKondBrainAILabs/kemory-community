@@ -38,7 +38,7 @@ class AgentRegistrationRequest(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=100, description="Human-readable agent name")
     agent_description: str = Field(..., min_length=1, max_length=500, description="What the agent does")
     declared_scopes: list[ScopeDeclaration] = Field(..., min_length=1, description="Scopes the agent requires")
-    callback_url: Optional[str] = Field(None, max_length=2048, description="Agent callback URL")
+    callback_url: str | None = Field(None, max_length=2048, description="Agent callback URL")
 
     @field_validator("callback_url")
     @classmethod
@@ -81,7 +81,7 @@ class AgentResponse(BaseModel):
     status: str
     declared_scopes: list[dict]
     registered_at: str
-    last_active_at: Optional[str]
+    last_active_at: str | None
     total_reads: int
     total_writes: int
     denied_requests: int
@@ -296,7 +296,7 @@ async def get_agent(
 async def list_agents(
     user_id: uuid.UUID,
     db: AsyncSession,
-    status: Optional[str] = None,
+    status: str | None = None,
     admin_view: bool = False,
 ) -> list[AgentResponse]:
     """

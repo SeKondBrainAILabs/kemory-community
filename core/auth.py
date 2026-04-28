@@ -35,7 +35,7 @@ logger = structlog.get_logger(__name__)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def _try_keycloak(token: str) -> Optional[AuthContext]:
+async def _try_keycloak(token: str) -> AuthContext | None:
     """Attempt Keycloak RS256 validation. Returns None if Keycloak is disabled or unreachable.
 
     WS-2: extracts the tenant claim (settings.tenant_org_claim, default
@@ -109,11 +109,11 @@ async def _try_keycloak(token: str) -> Optional[AuthContext]:
 
 
 async def get_auth_context(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    x_acting_user_id: Optional[str] = Header(None, alias="X-Acting-User-Id"),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    x_acting_user_id: str | None = Header(None, alias="X-Acting-User-Id"),
     db: AsyncSession = Depends(get_db),
-) -> Optional[AuthContext]:
+) -> AuthContext | None:
     """
     Extract authentication context from the request.
 
@@ -129,7 +129,7 @@ async def get_auth_context(
     a follow-up once the user-lookup contract for cross-org validation is
     settled. Header on the Keycloak / HS256 paths is silently ignored.
     """
-    auth: Optional[AuthContext] = None
+    auth: AuthContext | None = None
     if credentials and credentials.credentials:
         token = credentials.credentials
 
@@ -199,7 +199,7 @@ async def get_auth_context(
 
 
 async def require_auth(
-    auth: Optional[AuthContext] = Depends(get_auth_context),
+    auth: AuthContext | None = Depends(get_auth_context),
 ) -> AuthContext:
     """Require authentication — raises 401 if no valid auth is provided."""
     if auth is None:
