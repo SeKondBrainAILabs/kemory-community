@@ -10,20 +10,19 @@ Endpoints:
 
 Spec reference: Section 12 (Security Architecture)
 """
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from backend.core.auth import require_auth, AuthContext
+from backend.core.auth import AuthContext, require_auth
 from backend.services.security_service import (
-    encrypt_field,
-    decrypt_field,
-    generate_master_key,
-    scan_for_pii,
-    scan_for_injection,
-    full_security_scan,
     EncryptedPayload,
+    decrypt_field,
+    encrypt_field,
+    full_security_scan,
+    generate_master_key,
+    scan_for_injection,
+    scan_for_pii,
 )
 
 router = APIRouter(prefix="/api/v1/security", tags=["Security"])

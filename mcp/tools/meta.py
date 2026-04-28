@@ -5,17 +5,15 @@ Tools in this module:
   s9nmem_check_access — Gatekeeper evaluation without performing the action
   s9nmem_get_history  — provenance event log for a memory
 """
+
 from __future__ import annotations
 
 import uuid
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.gatekeeper_service import EvaluationRequest, evaluate
 from backend.services.memory_service import get_memory
 from backend.services.provenance_service import get_memory_history
-
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -77,15 +75,17 @@ async def _handle_check_access(args, user_id, agent_id, db):
     )
     status_text = "ALLOWED" if decision.allowed else "DENIED"
     return MCPToolResult(
-        content=[{
-            "type": "text",
-            "text": (
-                f"Access check result: {status_text}\n"
-                f"Scope: {args['scope']}\n"
-                f"Outcome: {decision.outcome}\n"
-                f"Reason: {decision.reason}"
-            ),
-        }],
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    f"Access check result: {status_text}\n"
+                    f"Scope: {args['scope']}\n"
+                    f"Outcome: {decision.outcome}\n"
+                    f"Reason: {decision.reason}"
+                ),
+            }
+        ],
     )
 
 
@@ -98,9 +98,7 @@ async def _handle_get_history(args, user_id, agent_id, db):
         return MCPToolResult(
             content=[{"type": "text", "text": f"No history events for memory {args['memory_id']}."}],
         )
-    lines = [
-        f"History for memory {memory.memory_id} (namespace: {memory.namespace}):\n"
-    ]
+    lines = [f"History for memory {memory.memory_id} (namespace: {memory.namespace}):\n"]
     for ev in events:
         lines.append(
             f"- [{ev['created_at']}] {ev['event_type']} "

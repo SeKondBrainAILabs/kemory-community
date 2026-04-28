@@ -29,50 +29,63 @@ Spec reference: Section 7.4 (Memory Operations), Section 10 (API Contracts)
 Stories: F04-US-001 (write), F04-US-002 (read), F04-US-003 (search),
          F04-US-004 (delete), F04-US-005 (namespace isolation)
 """
+
 import asyncio
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
-# Canonical dedup primitives — both this layer and memory_vault.MemoryService
-# import from here so writes via either path produce identical content_hashes.
-# See memory_vault/utils/text.py for why.
-from memory_vault.utils.text import content_hash as _content_hash, normalize_content as _normalize_content
+from backend.services.audit_service import log_audit_event
 from backend.services.gatekeeper_service import (
-    evaluate, EvaluationRequest, GatekeeperDecision,
-    create_rule, PermissionRuleCreate,
+    EvaluationRequest,
+    PermissionRuleCreate,
+    create_rule,
+    evaluate,
 )
 from backend.services.provenance_service import emit_event
-from backend.services.audit_service import log_audit_event
+
+# Canonical dedup primitives — both this layer and memory_vault.MemoryService
+# import from here so writes via either path produce identical content_hashes.
+# See memory_vault/utils/text.py for why. The _normalize_content alias is
+# re-exported (not used directly here) so the cross-layer-equivalence test
+# in tests/test_shared_text_utils.py can verify identity.
+from memory_vault.utils.text import content_hash as _content_hash
+from memory_vault.utils.text import normalize_content as _normalize_content  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
 
 # ─── Request/Response Schemas ─────────────────────────────────────
 
+
 class MemoryCreate(BaseModel):
     """Request body for creating a memory."""
+
     namespace: str = Field(..., min_length=1, max_length=100)
     content: str = Field(..., min_length=1, max_length=100000)
     content_type: str = Field(default="text", max_length=50)
     metadata: dict | None = Field(None)
-    ttl_seconds: int | None = Field(None, ge=60, le=31536000, description="TTL in seconds (min 60s, max 1 year)")
+    ttl_seconds: int | None = Field(
+        None, ge=60, le=31536000, description="TTL in seconds (min 60s, max 1 year)"
+    )
     session_id: str | None = Field(None, max_length=200, description="Session context identifier")
     round_id: str | None = Field(None, max_length=200, description="Round/turn identifier within session")
     valid_at: str | None = Field(None, description="ISO-8601 timestamp when the fact became true")
-    visibility: str = Field(default="user-private", description="agent-private, user-private, team, org-public")
+    visibility: str = Field(
+        default="user-private", description="agent-private, user-private, team, org-public"
+    )
     team_id: str | None = Field(None, description="Team ID when visibility='team'")
 
 
 class MemoryUpdate(BaseModel):
     """Request body for updating a memory."""
+
     content: str | None = Field(None, min_length=1, max_length=100000)
     content_type: str | None = Field(None, max_length=50)
     metadata: dict | None = None
@@ -85,6 +98,7 @@ class DedupInfo(BaseModel):
     The dedup is silent — the agent receives a normal MemoryResponse
     with the existing memory's ID. This field is for observability only.
     """
+
     deduplicated: bool = True
     kind: str  # "exact_hash" or "semantic"
     similarity: float | None = None  # Only set for kind="semantic"
@@ -92,6 +106,7 @@ class DedupInfo(BaseModel):
 
 class MemoryResponse(BaseModel):
     """Response body for a memory entry (unified model)."""
+
     memory_id: str
     user_id: str
     namespace: str
@@ -132,7 +147,10 @@ class MemorySearchRequest(BaseModel):
     unbounded full-table scans. For namespace-only listing, use search_mode='hybrid'
     with a namespace filter, or provide a non-empty query string.
     """
-    query: str | None = Field(None, min_length=1, max_length=1000, description="Text search query (required for fts mode)")
+
+    query: str | None = Field(
+        None, min_length=1, max_length=1000, description="Text search query (required for fts mode)"
+    )
     namespace: str | None = Field(None, max_length=100)
     content_type: str | None = Field(None, max_length=50)
     tags: list[str] | None = Field(None, description="Filter by tags in metadata")
@@ -175,6 +193,7 @@ class MemorySearchRequest(BaseModel):
 
 class MemoryListResponse(BaseModel):
     """Paginated list of memories."""
+
     items: list[MemoryResponse]
     total: int
     limit: int
@@ -186,11 +205,12 @@ class MemoryListResponse(BaseModel):
 VALID_CONTENT_TYPES = {"text", "structured", "conversation", "fact", "preference", "embedding"}
 
 
-    # NOTE: validate_namespace() was removed — it always returned True.
-    # Namespace access control is handled entirely by the Gatekeeper service.
+# NOTE: validate_namespace() was removed — it always returned True.
+# Namespace access control is handled entirely by the Gatekeeper service.
 
 
 # ─── Memory CRUD Operations ──────────────────────────────────────
+
 
 async def create_memory(
     user_id: uuid.UUID,
@@ -221,15 +241,12 @@ async def create_memory(
             db,
         )
         if not decision.allowed:
-            raise PermissionError(
-                f"Access denied: {decision.reason} (outcome: {decision.outcome})"
-            )
+            raise PermissionError(f"Access denied: {decision.reason} (outcome: {decision.outcome})")
 
     # Validate content type
     if request.content_type not in VALID_CONTENT_TYPES:
         raise ValueError(
-            f"Invalid content_type: '{request.content_type}'. "
-            f"Valid types: {sorted(VALID_CONTENT_TYPES)}"
+            f"Invalid content_type: '{request.content_type}'. Valid types: {sorted(VALID_CONTENT_TYPES)}"
         )
 
     # ── S9N-DEDUP: Two-layer deduplication gate ──────────────────
@@ -240,18 +257,27 @@ async def create_memory(
     # Layer 1: Exact hash match (deterministic, <1ms)
     if settings.dedup_exact_enabled:
         existing = await _find_by_hash(
-            user_id, request.namespace, content_hash, db,
+            user_id,
+            request.namespace,
+            content_hash,
+            db,
         )
         if existing:
             return await _handle_dedup_match(
-                existing, agent_id, "exact_hash", None, db,
+                existing,
+                agent_id,
+                "exact_hash",
+                None,
+                db,
             )
 
     # Layer 2: Semantic similarity (best-effort, ~10-50ms)
     if settings.dedup_semantic_enabled:
         try:
             sem_match = await _find_semantic_duplicate(
-                user_id, request.namespace, request.content,
+                user_id,
+                request.namespace,
+                request.content,
                 settings.dedup_semantic_threshold,
                 settings.dedup_semantic_max_candidates,
                 db,
@@ -259,7 +285,11 @@ async def create_memory(
             if sem_match:
                 match_memory, similarity = sem_match
                 return await _handle_dedup_match(
-                    match_memory, agent_id, "semantic", similarity, db,
+                    match_memory,
+                    agent_id,
+                    "semantic",
+                    similarity,
+                    db,
                 )
         except Exception:
             # Encoder unavailable or other error — degrade silently
@@ -268,7 +298,7 @@ async def create_memory(
     # ── End dedup gate ───────────────────────────────────────────
 
     # Compute expires_at if TTL is set
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = None
     if request.ttl_seconds:
         expires_at = now + timedelta(seconds=request.ttl_seconds)
@@ -323,14 +353,21 @@ async def create_memory(
         existing = await _find_by_hash(user_id, request.namespace, content_hash, db)
         if existing:
             return await _handle_dedup_match(
-                existing, agent_id, "exact_hash", None, db,
+                existing,
+                agent_id,
+                "exact_hash",
+                None,
+                db,
             )
         raise  # Re-raise if it wasn't the dedup index
 
     # MV2-S02.2: Emit provenance event for creation
     await emit_event(
-        db, memory.memory_id, "created",
-        actor_type="agent", actor_id=str(agent_id),
+        db,
+        memory.memory_id,
+        "created",
+        actor_type="agent",
+        actor_id=str(agent_id),
         reason="Memory created via API",
         after_state={"namespace": memory.namespace, "content_type": memory.content_type},
     )
@@ -368,16 +405,19 @@ async def create_memory(
     # KMV-E8 S8.1: Write-through hook — publish to Cognition OS (fire-and-forget)
     try:
         from backend.services.cognition_bridge import get_cognition_bridge
+
         bridge = get_cognition_bridge()
         if bridge.enabled:
-            asyncio.create_task(bridge.publish_memory_event(
-                memory_id=str(memory.id),
-                content=memory.content,
-                namespace=memory.namespace,
-                user_id=str(user_id),
-                content_type=memory.content_type,
-                source_agent=str(agent_id),
-            ))
+            asyncio.create_task(
+                bridge.publish_memory_event(
+                    memory_id=str(memory.id),
+                    content=memory.content,
+                    namespace=memory.namespace,
+                    user_id=str(user_id),
+                    content_type=memory.content_type,
+                    source_agent=str(agent_id),
+                )
+            )
     except Exception:
         logger.debug("cognition_bridge.hook_skipped", reason="import_or_init_error")
 
@@ -386,12 +426,16 @@ async def create_memory(
     async def _bg_embed(mem_id: uuid.UUID, content: str):
         try:
             from memory_vault.embeddings.encoder import encode as _embed
+
             vec = _embed(content)
             # Direct SQL update — avoids loading the ORM object again
             from sqlalchemy import text as _sql
+
             async with db.begin():
                 await db.execute(
-                    _sql("UPDATE kora_memories SET embedding = :vec, embedding_model = :model WHERE memory_id = :mid"),
+                    _sql(
+                        "UPDATE kora_memories SET embedding = :vec, embedding_model = :model WHERE memory_id = :mid"
+                    ),
                     {"vec": list(vec), "model": "bge-small-en-v1.5", "mid": str(mem_id)},
                 )
         except Exception as exc:
@@ -406,6 +450,7 @@ async def create_memory(
     # quality scoring). Runs in the background so create_memory returns fast.
     try:
         from backend.services.enrichment_service import enrich_memory as _enrich
+
         asyncio.create_task(_enrich(memory.memory_id, user_id, db))
     except Exception:
         logger.debug("enrichment.hook_skipped", reason="import_or_task_error")
@@ -417,6 +462,7 @@ async def create_memory(
     if memory.content_type != "concept":  # Don't compress synthesized concepts
         try:
             from backend.services.compression_pipeline import schedule_compression
+
             schedule_compression(user_id, memory.memory_id, request.namespace)
         except Exception:
             logger.debug("compression_pipeline.hook_skipped", reason="import_or_task_error")
@@ -435,7 +481,6 @@ async def create_memory(
         )
     except Exception:
         logger.debug("audit.log_skipped", reason="audit_error")
-
 
     return _to_response(memory)
 
@@ -470,12 +515,14 @@ async def get_memory(
             db,
         )
         if not decision.allowed:
-            logger.warning("memory.get.denied", memory_id=str(memory_id), agent_id=str(agent_id), reason=decision.reason)
+            logger.warning(
+                "memory.get.denied", memory_id=str(memory_id), agent_id=str(agent_id), reason=decision.reason
+            )
             raise PermissionError(f"Access denied: {decision.reason}")
 
     # MV2-S07.1: Increment access_count and update last_accessed_at
     memory.access_count = (memory.access_count or 0) + 1
-    memory.last_accessed_at = datetime.now(timezone.utc)
+    memory.last_accessed_at = datetime.now(UTC)
     await db.flush()
 
     logger.debug("memory.get.ok", memory_id=str(memory_id), namespace=memory.namespace)
@@ -540,11 +587,11 @@ async def update_memory(
 
     if request.ttl_seconds is not None:
         memory.ttl_seconds = request.ttl_seconds
-        memory.expires_at = datetime.now(timezone.utc) + timedelta(seconds=request.ttl_seconds)
+        memory.expires_at = datetime.now(UTC) + timedelta(seconds=request.ttl_seconds)
 
     # Increment version
     memory.version += 1
-    memory.updated_at = datetime.now(timezone.utc)
+    memory.updated_at = datetime.now(UTC)
 
     await db.flush()
     return _to_response(memory)
@@ -582,13 +629,16 @@ async def delete_memory(
         if not decision.allowed:
             raise PermissionError(f"Access denied: {decision.reason}")
 
-    memory.invalid_at = datetime.now(timezone.utc)
+    memory.invalid_at = datetime.now(UTC)
     await db.flush()
 
     # MV2-S02.2: Emit provenance event for deletion
     await emit_event(
-        db, memory.memory_id, "deleted",
-        actor_type="agent", actor_id=str(agent_id),
+        db,
+        memory.memory_id,
+        "deleted",
+        actor_type="agent",
+        actor_id=str(agent_id),
         reason="Soft-deleted via API",
     )
     # BUG-007 fix: log audit event for memory deletion
@@ -605,6 +655,8 @@ async def delete_memory(
         )
     except Exception:
         logger.debug("audit.log_skipped", reason="audit_error")
+
+
 async def search_memories(
     user_id: uuid.UUID,
     agent_id: uuid.UUID | None,
@@ -649,11 +701,16 @@ async def search_memories(
             db,
         )
         if not decision.allowed:
-            logger.warning("memory.search.denied", agent_id=str(agent_id), namespace=request.namespace, reason=decision.reason)
+            logger.warning(
+                "memory.search.denied",
+                agent_id=str(agent_id),
+                namespace=request.namespace,
+                reason=decision.reason,
+            )
             raise PermissionError(f"Access denied: {decision.reason}")
 
     # Build query — admin sees all records, regular users see only their own.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if admin_view:
         query = select(Memory).where(Memory.invalid_at == None)
     else:
@@ -663,9 +720,7 @@ async def search_memories(
         )
 
     # Exclude expired memories
-    query = query.where(
-        or_(Memory.expires_at.is_(None), Memory.expires_at > now)
-    )
+    query = query.where(or_(Memory.expires_at.is_(None), Memory.expires_at > now))
 
     # Apply filters
     if request.namespace:
@@ -690,8 +745,8 @@ async def search_memories(
         tier = request.compression_tier.upper().replace("L3.1", "L3.1")  # normalise
         if tier == "L1":
             # L1 = raw memories that have not yet been promoted
-            from sqlalchemy import or_, cast, String
-            from sqlalchemy.dialects.postgresql import JSONB
+            from sqlalchemy import or_
+
             query = query.where(
                 or_(
                     Memory.meta == None,  # noqa: E711
@@ -700,13 +755,12 @@ async def search_memories(
                 )
             )
         else:
-            query = query.where(
-                Memory.meta["_compression_tier"].as_string() == tier
-            )
+            query = query.where(Memory.meta["_compression_tier"].as_string() == tier)
 
     # ── Hybrid search path (S9N-3074-SUB2) ──────────────────────────────────
     if getattr(request, "search_mode", "fts") == "hybrid" and request.query:
         from memory_vault.search.hybrid import hybrid_search
+
         hybrid_results = await hybrid_search(
             db=db,
             user_id=user_id,
@@ -720,30 +774,32 @@ async def search_memories(
         items = []
         for r in hybrid_results:
             try:
-                items.append(MemoryResponse(
-                    memory_id=r["memory_id"],
-                    user_id=str(user_id),
-                    namespace=r["namespace"],
-                    content=r["content"],
-                    content_type=r["content_type"],
-                    metadata=r.get("metadata"),
-                    source_agent_id=r.get("source_agent_id"),
-                    source_type=r.get("source_type", "agent"),
-                    quality_score=r.get("quality_score"),
-                    enrichment_status=r.get("enrichment_status", "pending"),
-                    version=r.get("version", 1),
-                    ttl_seconds=r.get("ttl_seconds"),
-                    expires_at=r.get("expires_at"),
-                    session_id=r.get("session_id"),
-                    round_id=r.get("round_id"),
-                    valid_at=r.get("valid_at"),
-                    invalid_at=r.get("invalid_at"),
-                    decay_score=r.get("decay_score"),
-                    temporal_anchor=r.get("temporal_anchor"),
-                    access_count=r.get("access_count", 0),
-                    created_at=r.get("created_at", ""),
-                    updated_at=r.get("updated_at", ""),
-                ))
+                items.append(
+                    MemoryResponse(
+                        memory_id=r["memory_id"],
+                        user_id=str(user_id),
+                        namespace=r["namespace"],
+                        content=r["content"],
+                        content_type=r["content_type"],
+                        metadata=r.get("metadata"),
+                        source_agent_id=r.get("source_agent_id"),
+                        source_type=r.get("source_type", "agent"),
+                        quality_score=r.get("quality_score"),
+                        enrichment_status=r.get("enrichment_status", "pending"),
+                        version=r.get("version", 1),
+                        ttl_seconds=r.get("ttl_seconds"),
+                        expires_at=r.get("expires_at"),
+                        session_id=r.get("session_id"),
+                        round_id=r.get("round_id"),
+                        valid_at=r.get("valid_at"),
+                        invalid_at=r.get("invalid_at"),
+                        decay_score=r.get("decay_score"),
+                        temporal_anchor=r.get("temporal_anchor"),
+                        access_count=r.get("access_count", 0),
+                        created_at=r.get("created_at", ""),
+                        updated_at=r.get("updated_at", ""),
+                    )
+                )
             except Exception:
                 pass
         return MemoryListResponse(
@@ -755,12 +811,7 @@ async def search_memories(
 
     # ── FTS path (default, ILIKE backed by GIN trigram index — migration 005) ──
     if request.query:
-        escaped_q = (
-            request.query
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        escaped_q = request.query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         query = query.where(Memory.content.ilike(f"%{escaped_q}%", escape="\\"))
 
     # Count total
@@ -823,14 +874,20 @@ async def list_namespaces(
 # ─── Temporal Date Resolution ────────────────────────────────────
 
 _RELATIVE_PATTERNS: list[tuple[str, int]] = [
-    ("today", 0), ("yesterday", 1), ("day before yesterday", 2),
+    ("today", 0),
+    ("yesterday", 1),
+    ("day before yesterday", 2),
 ]
 _RELATIVE_WEEK_PATTERNS = {
-    "last week": 7, "this week": 0,
-    "last month": 30, "this month": 0,
-    "last year": 365, "this year": 0,
+    "last week": 7,
+    "this week": 0,
+    "last month": 30,
+    "this month": 0,
+    "last year": 365,
+    "this year": 0,
 }
 import re as _re
+
 
 def _resolve_date(value: str, now: datetime) -> datetime | None:
     """Resolve a date string to a datetime. Supports:
@@ -917,12 +974,14 @@ async def _find_semantic_duplicate(
 
     # Fetch active embedded memories in the same scope
     result = await db.execute(
-        select(Memory).where(
+        select(Memory)
+        .where(
             Memory.user_id == user_id,
             Memory.namespace == namespace,
             Memory.invalid_at == None,
             Memory.embedding != None,
-        ).limit(max_candidates)
+        )
+        .limit(max_candidates)
     )
     candidates = result.scalars().all()
 
@@ -952,12 +1011,15 @@ async def _handle_dedup_match(
 ) -> MemoryResponse:
     """Bump access stats, emit provenance event, and return the existing memory."""
     existing.access_count = (existing.access_count or 0) + 1
-    existing.last_accessed_at = datetime.now(timezone.utc)
+    existing.last_accessed_at = datetime.now(UTC)
     await db.flush()
 
     await emit_event(
-        db, existing.memory_id, "dedup_matched",
-        actor_type="agent", actor_id=str(agent_id),
+        db,
+        existing.memory_id,
+        "dedup_matched",
+        actor_type="agent",
+        actor_id=str(agent_id),
         reason=f"Dedup ({kind}): incoming content matched existing memory",
         metadata={"dedup_kind": kind, "similarity": similarity},
     )
@@ -968,6 +1030,7 @@ async def _handle_dedup_match(
 
 
 # ─── Internal Helpers ─────────────────────────────────────────────
+
 
 async def _get_active_memory(
     memory_id: uuid.UUID,
@@ -990,8 +1053,8 @@ async def _get_active_memory(
     if memory.expires_at:
         expires_at = memory.expires_at
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > expires_at:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) > expires_at:
             raise ValueError("Memory has expired")
 
     return memory
@@ -1111,14 +1174,8 @@ async def _list_namespace_active_memories(
     if not include_archived:
         # KMV-S13.4: Exclude archived memories from default short-term reads
         # Also exclude memories currently being consolidated (immutability signal)
-        where_clauses.append(
-            Memory.consolidation_status.notin_(["archived", "consolidating"])
-        )
-    result = await db.execute(
-        select(Memory)
-        .where(*where_clauses)
-        .order_by(Memory.created_at)
-    )
+        where_clauses.append(Memory.consolidation_status.notin_(["archived", "consolidating"]))
+    result = await db.execute(select(Memory).where(*where_clauses).order_by(Memory.created_at))
     return list(result.scalars().all())
 
 
@@ -1165,8 +1222,8 @@ async def get_namespace_compressed(
     namespace: str,
     db: AsyncSession,
     *,
-    mode: str = "concept",        # "raw" | "aaak" | "concept"
-    merge_mode: str = "current",   # "current" | "aggregate"
+    mode: str = "concept",  # "raw" | "aaak" | "concept"
+    merge_mode: str = "current",  # "current" | "aggregate"
     skip_gatekeeper: bool = False,
 ) -> dict:
     """Tiered memory compression entry point — L1 raw, L2 AAAK, L3.1 concept.
@@ -1196,7 +1253,7 @@ async def get_namespace_compressed(
             raise PermissionError(f"Access denied: {decision.reason}")
 
     # Local imports to keep memory_service import-light at module load
-    from memory_vault.compression.aaak import encode_aaak, compression_ratio
+    from memory_vault.compression.aaak import compression_ratio, encode_aaak
     from memory_vault.compression.cache import get_default_cache
     from memory_vault.compression.cognition_round_trip import round_trip_concepts
     from memory_vault.compression.concept import synthesize_namespace_local
@@ -1258,20 +1315,21 @@ async def get_namespace_compressed(
         # have stronger influence on concept generation.
         # Archived memories (included in 'consolidated' mode) are passed with
         # their decayed weight so they contribute proportionally less.
-        weighted_dicts = [
-            {**m, "weight": m.get("consolidation_weight", 1.0)}
-            for m in memory_dicts
-        ]
+        weighted_dicts = [{**m, "weight": m.get("consolidation_weight", 1.0)} for m in memory_dicts]
         adapter = _DBAdapter(weighted_dicts)
         client = CoreAIBackendClient()
         synthesis = await synthesize_namespace_local(
-            adapter, llm_client=client,
-            org_id=str(user_id), namespace=namespace,
+            adapter,
+            llm_client=client,
+            org_id=str(user_id),
+            namespace=namespace,
             merge_mode=merge_mode,
         )
         # L3.2 placeholder pass-through (KMV-COMPRESS-02 will hook this up)
         synthesis["concepts"] = await round_trip_concepts(
-            None, synthesis["concepts"], namespace=namespace,
+            None,
+            synthesis["concepts"],
+            namespace=namespace,
         )
         is_consolidated = mode == "consolidated"
         payload = {

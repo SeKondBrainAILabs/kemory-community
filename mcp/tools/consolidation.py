@@ -6,11 +6,10 @@ Tools in this module:
   s9nmem_get_raw             — L1 raw namespace dump
   s9nmem_get_compressed      — L1/L2/L3.1 with hash-cached results
 """
+
 from __future__ import annotations
 
 import json
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.gatekeeper_service import EvaluationRequest, evaluate
@@ -18,7 +17,6 @@ from backend.services.memory_service import (
     get_namespace_compressed,
     list_namespace_raw,
 )
-
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -106,53 +104,57 @@ async def _handle_consolidate_session(args, user_id, agent_id, db):
         raise PermissionError(decision.reason)
 
     return MCPToolResult(
-        content=[{
-            "type": "text",
-            "text": (
-                f"Consolidation requested for session '{args['session_id']}'.\n"
-                "Note: REST-side consolidation is queued via the background "
-                "Reflector worker. Use the Memory Vault dashboard to monitor "
-                "the resulting reflection memory."
-            ),
-        }],
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    f"Consolidation requested for session '{args['session_id']}'.\n"
+                    "Note: REST-side consolidation is queued via the background "
+                    "Reflector worker. Use the Memory Vault dashboard to monitor "
+                    "the resulting reflection memory."
+                ),
+            }
+        ],
     )
 
 
 async def _handle_get_raw(args, user_id, agent_id, db):
     result = await list_namespace_raw(user_id, agent_id, args["namespace"], db)
     return MCPToolResult(
-        content=[{
-            "type": "text",
-            "text": (
-                f"Raw dump of namespace '{args['namespace']}' "
-                f"({result['source_count']} memories):\n\n"
-                + json.dumps(result["memories"], indent=2, default=str)
-            ),
-        }],
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    f"Raw dump of namespace '{args['namespace']}' "
+                    f"({result['source_count']} memories):\n\n"
+                    + json.dumps(result["memories"], indent=2, default=str)
+                ),
+            }
+        ],
     )
 
 
 async def _handle_get_compressed(args, user_id, agent_id, db):
     """L1/L2/L3.1 with hash-cached results."""
     result = await get_namespace_compressed(
-        user_id, agent_id, args["namespace"], db,
+        user_id,
+        agent_id,
+        args["namespace"],
+        db,
         mode=args.get("mode", "concept"),
         merge_mode=args.get("merge_mode", "current"),
     )
     mode = result.get("mode", "concept")
     if mode == "raw":
-        text = (
-            f"Raw dump of '{args['namespace']}' "
-            f"({result['source_count']} memories):\n\n"
-            + json.dumps(result.get("memories", []), indent=2, default=str)
+        text = f"Raw dump of '{args['namespace']}' ({result['source_count']} memories):\n\n" + json.dumps(
+            result.get("memories", []), indent=2, default=str
         )
     elif mode == "aaak":
         text = (
             f"AAAK encoding of '{args['namespace']}'\n"
             f"Source count: {result['source_count']}\n"
             f"Compressed size: {result['compressed_size']} bytes\n"
-            f"Ratio: {result['ratio']}×\n\n"
-            + result["content"]
+            f"Ratio: {result['ratio']}×\n\n" + result["content"]
         )
     else:  # concept
         concepts = result.get("concepts", [])
@@ -165,10 +167,7 @@ async def _handle_get_compressed(args, user_id, agent_id, db):
         for i, c in enumerate(concepts, 1):
             flag = " [synthesis_unavailable]" if c.get("synthesis_unavailable") else ""
             directional = " [directional]" if c.get("directional") else ""
-            lines.append(
-                f"\n{i}. {c.get('name')}{directional}{flag}\n"
-                f"   {c.get('synthesis', '')}"
-            )
+            lines.append(f"\n{i}. {c.get('name')}{directional}{flag}\n   {c.get('synthesis', '')}")
         text = "\n".join(lines)
     return MCPToolResult(content=[{"type": "text", "text": text}])
 

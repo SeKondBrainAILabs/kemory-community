@@ -46,21 +46,19 @@ Design choices
   any rows accidentally produced before WS-2 is plumbed end-to-end and is
   treated as a bug, not a fallback.
 """
+
 from __future__ import annotations
 
 import contextvars
-import logging
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Type
-from collections.abc import Iterable, Iterator
 
 import structlog
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import event, or_
-from sqlalchemy.orm import Session, with_loader_criteria
-
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import with_loader_criteria
 
 from backend.config.settings import settings
 from backend.core.auth import require_auth
@@ -101,12 +99,8 @@ class TenantScope:
 # requiring every function signature to take a TenantScope. The ORM event
 # listener reads them; handlers should use the FastAPI dependency above.
 
-_current_org_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "kemory_current_org_id", default=""
-)
-_current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "kemory_current_user_id", default=""
-)
+_current_org_id: contextvars.ContextVar[str] = contextvars.ContextVar("kemory_current_org_id", default="")
+_current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("kemory_current_user_id", default="")
 _current_team_ids: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "kemory_current_team_ids", default=()
 )
@@ -189,6 +183,7 @@ async def get_tenant_scope(
     # because team membership is product data that changes faster than a
     # token TTL; a 60-second cache makes this cheap.
     from backend.services.team_resolver import get_team_ids
+
     try:
         team_ids = tuple(await get_team_ids(auth.user_id, org_id, db))
     except Exception as exc:
@@ -268,9 +263,7 @@ def _build_tenant_predicate(model_cls):
             model_cls.visibility == "org-public",
         ]
         if team_ids:
-            visibility_clauses.append(
-                (model_cls.visibility == "team") & model_cls.team_id.in_(team_ids)
-            )
+            visibility_clauses.append((model_cls.visibility == "team") & model_cls.team_id.in_(team_ids))
         return (model_cls.org_id == org_id) & or_(*visibility_clauses)
 
     # All other tenant-scoped models: simple org_id equality.

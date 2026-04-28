@@ -7,11 +7,13 @@ Supports dual-mode:
 
 Story: MV2-S06.1 — SQLite Engine Swap
 """
-import os
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from backend.config.settings import settings
 
+import os
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from backend.config.settings import settings
 
 _engine = None
 _async_session_factory = None
@@ -74,7 +76,9 @@ def _get_session_factory():
         #   database → tenancy → auth_service → ... (fine, but only safe
         # AFTER the session factory is in place).
         from sqlalchemy.orm import Session as _SyncSession
+
         from backend.core.tenancy import register_tenant_filter
+
         # AsyncSession proxies do_orm_execute through to the underlying
         # sync Session, so registering against Session catches both async
         # and any sync use of get_db (e.g. seed scripts).
@@ -96,6 +100,7 @@ engine = _LazyEngine()
 
 class Base(DeclarativeBase):
     """Declarative base for all ORM models."""
+
     pass
 
 
@@ -146,6 +151,7 @@ async def init_db():
         # PostgreSQL path — run Alembic migrations (S9N-3073)
         import subprocess
         import sys
+
         alembic_ini = os.path.join(
             os.path.dirname(  # backend/
                 os.path.dirname(  # backend/core/
@@ -156,16 +162,12 @@ async def init_db():
             "alembic.ini",
         )
         result = subprocess.run(
-            [sys.executable, "-m", "alembic", "-c", os.path.normpath(alembic_ini),
-             "upgrade", "head"],
+            [sys.executable, "-m", "alembic", "-c", os.path.normpath(alembic_ini), "upgrade", "head"],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"alembic upgrade head failed (S9N-3073):\n"
-                f"{result.stdout}\n{result.stderr}"
-            )
+            raise RuntimeError(f"alembic upgrade head failed (S9N-3073):\n{result.stdout}\n{result.stderr}")
 
 
 async def close_db():

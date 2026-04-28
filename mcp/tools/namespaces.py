@@ -5,9 +5,8 @@ Tools in this module:
   s9nmem_list_namespaces — enumerate namespaces + memory counts
   s9nmem_get_context     — topic-relevant memories with optional LLM synthesis
 """
-from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.memory_service import (
@@ -15,7 +14,6 @@ from backend.services.memory_service import (
     list_namespaces,
     search_memories,
 )
-
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -122,16 +120,19 @@ async def _handle_get_context(args, user_id, agent_id, db):
 
     if not result.items:
         return MCPToolResult(
-            content=[{
-                "type": "text",
-                "text": f"No contextual memories found for topic: '{topic}'",
-            }],
+            content=[
+                {
+                    "type": "text",
+                    "text": f"No contextual memories found for topic: '{topic}'",
+                }
+            ],
         )
 
     # S9N-3074-SUB3: attempt LLM synthesis via reranker
     synthesised: str | None = None
     try:
         from memory_vault.search.reranker import synthesise
+
         candidates = [
             {
                 "content": item.content,

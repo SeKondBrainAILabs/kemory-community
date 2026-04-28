@@ -4,11 +4,12 @@ S9N Memory Vault — Permission Rule Model
 Spec reference: Appendix A.1, Table s9nmv_permission_rules
 Stores user-defined permission rules evaluated by the Gatekeeper.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import (
-    Column, String, DateTime, Integer, Boolean, Index
-)
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
+
 from backend.core.database import Base
 from backend.core.types import GUID, JSONType
 
@@ -21,6 +22,7 @@ class PermissionRule(Base):
     The Gatekeeper evaluates rules top-down and returns the first match.
     If no rule matches, the default action is DENY (default-deny posture).
     """
+
     __tablename__ = "s9nmv_permission_rules"
 
     rule_id = Column(
@@ -101,14 +103,14 @@ class PermissionRule(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (

@@ -12,29 +12,29 @@ Endpoints for permission management and Gatekeeper evaluation:
 
 Spec reference: Section 10 (API Contracts), Section 7.1 (Gatekeeper)
 """
+
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext, is_admin
 from backend.services.gatekeeper_service import (
-    PermissionRuleCreate,
-    PermissionRuleUpdate,
-    PermissionRuleResponse,
-    GatekeeperDecision,
-    EvaluationRequest,
     ConsentRequestResponse,
+    EvaluationRequest,
+    GatekeeperDecision,
+    PermissionRuleCreate,
+    PermissionRuleResponse,
+    PermissionRuleUpdate,
     create_rule,
-    update_rule,
     delete_rule,
-    get_rule,
-    list_rules,
-    list_consent_requests,
     evaluate,
+    get_rule,
+    list_consent_requests,
+    list_rules,
     resolve_consent,
+    update_rule,
 )
 
 # ─── Permission Rules Router ─────────────────────────────────────
@@ -162,7 +162,9 @@ async def evaluate_endpoint(
     summary="List JIT consent requests",
 )
 async def list_consent_endpoint(
-    status_filter: str | None = Query(None, alias="status", description="Filter by status: pending, approved, denied, timeout"),
+    status_filter: str | None = Query(
+        None, alias="status", description="Filter by status: pending, approved, denied, timeout"
+    ),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):

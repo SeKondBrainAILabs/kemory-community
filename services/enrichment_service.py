@@ -20,11 +20,10 @@ Spec reference: Section 7.5 (Enrichment Pipeline), Appendix E (Enrichment Techni
 Stories: F06-US-001 (entity extraction), F06-US-002 (concept tagging),
          F06-US-003 (quality scoring), F06-US-004 (graph integration)
 """
+
+import hashlib
 import re
 import uuid
-import hashlib
-from datetime import datetime, timezone
-from typing import Optional
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -33,11 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
 
-
 # ─── Enrichment Schemas ───────────────────────────────────────────
+
 
 class EntityType(str, Enum):
     """Types of entities that can be extracted from memory content."""
+
     PERSON = "person"
     ORGANIZATION = "organization"
     LOCATION = "location"
@@ -50,6 +50,7 @@ class EntityType(str, Enum):
 
 class ExtractedEntity(BaseModel):
     """An entity extracted from memory content."""
+
     entity_id: str = Field(default="", description="Deterministic hash-based ID")
     name: str
     entity_type: EntityType
@@ -61,6 +62,7 @@ class ExtractedEntity(BaseModel):
 
 class ConceptTag(BaseModel):
     """A concept tag applied to a memory."""
+
     tag: str
     category: str  # e.g., "domain", "topic", "skill", "preference"
     confidence: float = Field(ge=0.0, le=1.0)
@@ -68,6 +70,7 @@ class ConceptTag(BaseModel):
 
 class QualityScore(BaseModel):
     """Quality assessment of a memory."""
+
     overall: float = Field(ge=0.0, le=1.0)
     specificity: float = Field(ge=0.0, le=1.0, description="How specific/detailed is the content")
     clarity: float = Field(ge=0.0, le=1.0, description="How clear and unambiguous is the content")
@@ -77,6 +80,7 @@ class QualityScore(BaseModel):
 
 class GraphRelationship(BaseModel):
     """A relationship to be added to the knowledge graph."""
+
     source_entity: str
     relationship_type: str  # e.g., "KNOWS", "USES", "PREFERS", "LOCATED_IN"
     target_entity: str
@@ -85,6 +89,7 @@ class GraphRelationship(BaseModel):
 
 class EnrichmentResult(BaseModel):
     """Complete enrichment result for a memory."""
+
     memory_id: str
     entities: list[ExtractedEntity]
     concept_tags: list[ConceptTag]
@@ -101,18 +106,61 @@ class EnrichmentResult(BaseModel):
 
 # Common technology terms for pattern matching
 TECHNOLOGY_PATTERNS = {
-    "python", "javascript", "typescript", "react", "vue", "angular",
-    "node.js", "fastapi", "django", "flask", "postgresql", "mysql",
-    "redis", "docker", "kubernetes", "aws", "gcp", "azure",
-    "machine learning", "deep learning", "neural network", "llm",
-    "scikit-learn", "tensorflow", "pytorch", "neo4j", "graphql",
-    "rest api", "microservices", "ci/cd", "git", "linux",
+    "python",
+    "javascript",
+    "typescript",
+    "react",
+    "vue",
+    "angular",
+    "node.js",
+    "fastapi",
+    "django",
+    "flask",
+    "postgresql",
+    "mysql",
+    "redis",
+    "docker",
+    "kubernetes",
+    "aws",
+    "gcp",
+    "azure",
+    "machine learning",
+    "deep learning",
+    "neural network",
+    "llm",
+    "scikit-learn",
+    "tensorflow",
+    "pytorch",
+    "neo4j",
+    "graphql",
+    "rest api",
+    "microservices",
+    "ci/cd",
+    "git",
+    "linux",
 }
 
 # Concept category patterns
 CONCEPT_CATEGORIES = {
-    "programming": {"python", "javascript", "typescript", "code", "coding", "programming", "developer", "software"},
-    "data_science": {"data", "analysis", "machine learning", "deep learning", "statistics", "model", "training"},
+    "programming": {
+        "python",
+        "javascript",
+        "typescript",
+        "code",
+        "coding",
+        "programming",
+        "developer",
+        "software",
+    },
+    "data_science": {
+        "data",
+        "analysis",
+        "machine learning",
+        "deep learning",
+        "statistics",
+        "model",
+        "training",
+    },
     "infrastructure": {"docker", "kubernetes", "aws", "cloud", "server", "deploy", "ci/cd"},
     "preference": {"prefer", "like", "enjoy", "favorite", "love", "hate", "dislike"},
     "skill": {"learn", "study", "practice", "expert", "beginner", "proficient"},
@@ -150,14 +198,14 @@ async def extract_entities(content: str) -> list[ExtractedEntity]:
                 confidence=0.85,
                 start_pos=idx,
                 end_pos=idx + len(tech),
-                context=content[max(0, idx - 30):idx + len(tech) + 30],
+                context=content[max(0, idx - 30) : idx + len(tech) + 30],
             )
             entity.entity_id = _generate_entity_id(entity.name, entity.entity_type)
             entities.append(entity)
 
     # Capitalized word extraction (potential proper nouns — people, orgs, places)
     # Pattern: sequences of capitalized words not at sentence start
-    cap_pattern = r'(?<=[.!?] )([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)'
+    cap_pattern = r"(?<=[.!?] )([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)"
     for match in re.finditer(cap_pattern, content):
         name = match.group(1)
         if len(name) > 2 and name.lower() not in {"the", "this", "that", "these", "those"}:
@@ -167,7 +215,7 @@ async def extract_entities(content: str) -> list[ExtractedEntity]:
                 confidence=0.6,
                 start_pos=match.start(),
                 end_pos=match.end(),
-                context=content[max(0, match.start() - 20):match.end() + 20],
+                context=content[max(0, match.start() - 20) : match.end() + 20],
             )
             entity.entity_id = _generate_entity_id(entity.name, entity.entity_type)
             entities.append(entity)
@@ -199,11 +247,13 @@ async def tag_concepts(content: str, entities: list[ExtractedEntity]) -> list[Co
         if matching_keywords:
             # Confidence based on number of matching keywords
             confidence = min(0.5 + 0.1 * len(matching_keywords), 0.95)
-            tags.append(ConceptTag(
-                tag=category,
-                category="domain",
-                confidence=confidence,
-            ))
+            tags.append(
+                ConceptTag(
+                    tag=category,
+                    category="domain",
+                    confidence=confidence,
+                )
+            )
 
     # Add tags from entity types
     entity_type_tags = set()
@@ -214,16 +264,20 @@ async def tag_concepts(content: str, entities: list[ExtractedEntity]) -> list[Co
             entity_type_tags.add("people")
 
     for tag in entity_type_tags:
-        tags.append(ConceptTag(
-            tag=tag,
-            category="entity_type",
-            confidence=0.8,
-        ))
+        tags.append(
+            ConceptTag(
+                tag=tag,
+                category="entity_type",
+                confidence=0.8,
+            )
+        )
 
     return tags
 
 
-async def score_quality(content: str, entities: list[ExtractedEntity], tags: list[ConceptTag]) -> QualityScore:
+async def score_quality(
+    content: str, entities: list[ExtractedEntity], tags: list[ConceptTag]
+) -> QualityScore:
     """
     Score the quality of a memory based on multiple dimensions.
 
@@ -245,7 +299,7 @@ async def score_quality(content: str, entities: list[ExtractedEntity], tags: lis
         specificity = 0.3
 
     # Clarity: based on sentence structure
-    sentences = re.split(r'[.!?]+', content)
+    sentences = re.split(r"[.!?]+", content)
     avg_sentence_len = sum(len(s.split()) for s in sentences if s.strip()) / max(len(sentences), 1)
     if 5 <= avg_sentence_len <= 25:
         clarity = 0.8
@@ -265,12 +319,7 @@ async def score_quality(content: str, entities: list[ExtractedEntity], tags: lis
     actionability = min(0.3 + action_count * 0.1, 0.9)
 
     # Overall: weighted average
-    overall = (
-        specificity * 0.25 +
-        clarity * 0.25 +
-        utility * 0.30 +
-        actionability * 0.20
-    )
+    overall = specificity * 0.25 + clarity * 0.25 + utility * 0.30 + actionability * 0.20
 
     return QualityScore(
         overall=round(overall, 3),
@@ -298,45 +347,52 @@ async def build_graph_relationships(
 
     # Memory → Entity relationships
     for entity in entities:
-        relationships.append(GraphRelationship(
-            source_entity=f"memory:{memory_id}",
-            relationship_type="HAS_ENTITY",
-            target_entity=f"{entity.entity_type.value}:{entity.entity_id}",
-            properties={
-                "entity_name": entity.name,
-                "confidence": entity.confidence,
-            },
-        ))
+        relationships.append(
+            GraphRelationship(
+                source_entity=f"memory:{memory_id}",
+                relationship_type="HAS_ENTITY",
+                target_entity=f"{entity.entity_type.value}:{entity.entity_id}",
+                properties={
+                    "entity_name": entity.name,
+                    "confidence": entity.confidence,
+                },
+            )
+        )
 
     # Entity → Entity co-occurrence relationships
     for i, e1 in enumerate(entities):
-        for e2 in entities[i + 1:]:
-            relationships.append(GraphRelationship(
-                source_entity=f"{e1.entity_type.value}:{e1.entity_id}",
-                relationship_type="CO_OCCURS_WITH",
-                target_entity=f"{e2.entity_type.value}:{e2.entity_id}",
-                properties={
-                    "memory_id": memory_id,
-                    "confidence": min(e1.confidence, e2.confidence),
-                },
-            ))
+        for e2 in entities[i + 1 :]:
+            relationships.append(
+                GraphRelationship(
+                    source_entity=f"{e1.entity_type.value}:{e1.entity_id}",
+                    relationship_type="CO_OCCURS_WITH",
+                    target_entity=f"{e2.entity_type.value}:{e2.entity_id}",
+                    properties={
+                        "memory_id": memory_id,
+                        "confidence": min(e1.confidence, e2.confidence),
+                    },
+                )
+            )
 
     # Memory → Concept tag relationships
     for tag in tags:
-        relationships.append(GraphRelationship(
-            source_entity=f"memory:{memory_id}",
-            relationship_type="TAGGED_WITH",
-            target_entity=f"concept:{tag.tag}",
-            properties={
-                "category": tag.category,
-                "confidence": tag.confidence,
-            },
-        ))
+        relationships.append(
+            GraphRelationship(
+                source_entity=f"memory:{memory_id}",
+                relationship_type="TAGGED_WITH",
+                target_entity=f"concept:{tag.tag}",
+                properties={
+                    "category": tag.category,
+                    "confidence": tag.confidence,
+                },
+            )
+        )
 
     return relationships
 
 
 # ─── Main Enrichment Pipeline ─────────────────────────────────────
+
 
 async def enrich_memory(
     memory_id: uuid.UUID,
@@ -357,6 +413,7 @@ async def enrich_memory(
     This is designed to be called asynchronously after memory creation/update.
     """
     import time
+
     start_time = time.monotonic()
 
     # Fetch the memory
@@ -403,6 +460,7 @@ async def enrich_memory(
     # KMV-E8 S8.2: Upsert entities to Cognition OS concept graph
     try:
         from backend.services.cognition_bridge import get_cognition_bridge
+
         bridge = get_cognition_bridge()
         if bridge.enabled and (entities or graph_rels):
             await bridge.upsert_entities(
@@ -437,11 +495,13 @@ async def enrich_pending_memories(
     by a background worker or scheduled task.
     """
     result = await db.execute(
-        select(Memory).where(
+        select(Memory)
+        .where(
             Memory.user_id == user_id,
             Memory.enrichment_status == "pending",
             Memory.invalid_at == None,
-        ).limit(batch_size)
+        )
+        .limit(batch_size)
     )
     memories = result.scalars().all()
 

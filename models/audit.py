@@ -5,13 +5,14 @@ Spec reference: Appendix A.1, Table s9nmv_audit_log
 Append-only audit trail for all agent access attempts and permission evaluations.
 Includes hash chain for tamper detection.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import (
-    Column, String, DateTime, Integer, Index, Text
-)
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, Index, String
+
 from backend.core.database import Base
-from backend.core.types import GUID, JSONType, IPAddress
+from backend.core.types import GUID, IPAddress, JSONType
 
 
 class AuditLog(Base):
@@ -22,6 +23,7 @@ class AuditLog(Base):
     Each record includes a hash_chain linking to the previous entry for
     tamper detection. Supports GDPR compliance by recording all data access.
     """
+
     __tablename__ = "s9nmv_audit_log"
 
     audit_id = Column(
@@ -120,7 +122,7 @@ class AuditLog(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         comment="When the action occurred (UTC)",
     )
 

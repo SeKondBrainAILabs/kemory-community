@@ -12,26 +12,26 @@ Endpoints for agent lifecycle management:
 
 Spec reference: Section 10 (API Contracts), F01-US-001 through F01-US-003
 """
+
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext, is_admin
 from backend.core.tenancy import TenantScope, TenantScopeDep
 from backend.services.agent_service import (
     AgentRegistrationRequest,
     AgentRegistrationResponse,
     AgentResponse,
-    register_agent,
     approve_agent,
-    suspend_agent,
-    revoke_agent,
+    generate_token_for_agent,
     get_agent,
     list_agents,
-    generate_token_for_agent,
+    register_agent,
+    revoke_agent,
+    suspend_agent,
 )
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
@@ -199,6 +199,7 @@ async def rotate_key_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     from backend.services.agent_service import rotate_agent_key
+
     try:
         return await rotate_agent_key(agent_id, auth.user_id, scope.org_id, db)
     except ValueError as e:

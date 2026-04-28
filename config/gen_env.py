@@ -22,12 +22,13 @@ Why generate vs. write by hand: 47 settings fields, only 31 in the
 hand-rolled .env.example. ~16 settings undocumented to operators. A
 real adoption blocker once we ship to anyone outside the team.
 """
+
 from __future__ import annotations
 
 import os
 import sys
-from typing import Any, get_args
 from collections.abc import Iterable
+from typing import Any, get_args
 
 # Allow gen_env to run without a real JWT secret etc — we're just inspecting
 # the model, not instantiating it for runtime. A non-empty placeholder
@@ -41,6 +42,7 @@ os.environ.setdefault("ENVIRONMENT", "development")
 # so any WARN log emitted during construction doesn't leak into the
 # generated .env.example. We only need this during import.
 import contextlib
+
 with contextlib.redirect_stdout(sys.stderr):
     from backend.config.settings import Settings
 

@@ -9,12 +9,10 @@ CLI uses it for ``kemory whoami``.
 Designed to be called once per page load. ETag support lets clients
 revalidate cheaply on focus refresh.
 """
+
 from __future__ import annotations
 
 import hashlib
-import json
-import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, Response, status
 from pydantic import BaseModel

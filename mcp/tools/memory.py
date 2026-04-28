@@ -7,11 +7,10 @@ Tools in this module:
   s9nmem_delete_memory  — soft-delete by id
   s9nmem_find_similar   — cosine-similarity neighbour lookup
 """
+
 from __future__ import annotations
 
 import uuid
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.gatekeeper_service import (
@@ -25,7 +24,6 @@ from backend.services.memory_service import (
     delete_memory,
     search_memories,
 )
-
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -148,16 +146,18 @@ async def _handle_store_memory(args, user_id, agent_id, db):
     )
     memory = await create_memory(user_id, agent_id, request, db)
     return MCPToolResult(
-        content=[{
-            "type": "text",
-            "text": (
-                f"Memory stored successfully.\n"
-                f"ID: {memory.memory_id}\n"
-                f"Namespace: {memory.namespace}\n"
-                f"Version: {memory.version}\n"
-                f"Content type: {memory.content_type}"
-            ),
-        }],
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    f"Memory stored successfully.\n"
+                    f"ID: {memory.memory_id}\n"
+                    f"Namespace: {memory.namespace}\n"
+                    f"Version: {memory.version}\n"
+                    f"Content type: {memory.content_type}"
+                ),
+            }
+        ],
     )
 
 
@@ -228,10 +228,7 @@ async def _handle_find_similar(args, user_id, agent_id, db):
     lines = [f"Found {len(result.items)} similar memories:\n"]
     for i, item in enumerate(result.items, 1):
         snippet = item.content[:200] + ("..." if len(item.content) > 200 else "")
-        lines.append(
-            f"{i}. [{item.namespace}/{item.content_type}] id={item.memory_id}\n"
-            f"   {snippet}"
-        )
+        lines.append(f"{i}. [{item.namespace}/{item.content_type}] id={item.memory_id}\n   {snippet}")
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
     )

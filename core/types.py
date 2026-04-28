@@ -6,12 +6,13 @@ SQLite (unit tests). Uses TypeDecorator to adapt PG-specific types.
 
 Usage in models:
     from backend.core.types import GUID, JSONType, IPAddress
-    
+
     class MyModel(Base):
         id = Column(GUID(), primary_key=True, default=uuid.uuid4)
         data = Column(JSONType(), nullable=True)
         ip = Column(IPAddress(), nullable=True)
 """
+
 import json
 import uuid
 
@@ -24,12 +25,14 @@ class GUID(TypeDecorator):
     Platform-independent UUID type.
     Uses PostgreSQL's UUID type when available, otherwise CHAR(36).
     """
+
     impl = CHAR(36)
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
             return dialect.type_descriptor(PG_UUID(as_uuid=True))
         else:
             return dialect.type_descriptor(CHAR(36))
@@ -56,12 +59,14 @@ class JSONType(TypeDecorator):
     Platform-independent JSON type.
     Uses PostgreSQL's JSONB when available, otherwise stores as JSON text.
     """
+
     impl = Text
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import JSONB
+
             return dialect.type_descriptor(JSONB())
         else:
             return dialect.type_descriptor(Text())
@@ -86,12 +91,14 @@ class IPAddress(TypeDecorator):
     Platform-independent IP address type.
     Uses PostgreSQL's INET when available, otherwise String(45).
     """
+
     impl = String(45)
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import INET
+
             return dialect.type_descriptor(INET())
         else:
             return dialect.type_descriptor(String(45))

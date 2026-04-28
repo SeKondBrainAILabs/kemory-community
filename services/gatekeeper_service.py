@@ -11,26 +11,28 @@ Spec reference: Section 7.1 (Gatekeeper), Appendix D (Evaluation Examples)
 Stories: F02-US-001 (scope declaration), F02-US-002 (default-deny),
          F03-US-001 (permission CRUD), F03-US-002 (rule evaluation)
 """
+
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.permission import PermissionRule
-from backend.models.consent import ConsentRequest
-from backend.models.audit import AuditLog
 from backend.models.agent import AgentRegistry
-
+from backend.models.consent import ConsentRequest
+from backend.models.permission import PermissionRule
 
 # ─── Request/Response Schemas ─────────────────────────────────────
 
+
 class PermissionRuleCreate(BaseModel):
     """Request body for creating a permission rule."""
+
     agent_id: str | None = Field(None, description="Agent UUID. NULL = applies to all agents.")
-    scope: str = Field(..., min_length=1, max_length=100, description="Scope: memory:read, memory:write, etc.")
+    scope: str = Field(
+        ..., min_length=1, max_length=100, description="Scope: memory:read, memory:write, etc."
+    )
     action: str = Field(..., description="Action: allow, deny, jit")
     priority: int = Field(default=100, ge=1, le=10000, description="Priority (lower = evaluated first)")
     namespace_filter: str | None = Field(None, max_length=255, description="Glob pattern for namespace")
@@ -39,6 +41,7 @@ class PermissionRuleCreate(BaseModel):
 
 class PermissionRuleUpdate(BaseModel):
     """Request body for updating a permission rule."""
+
     scope: str | None = Field(None, min_length=1, max_length=100)
     action: str | None = None
     priority: int | None = Field(None, ge=1, le=10000)
@@ -49,6 +52,7 @@ class PermissionRuleUpdate(BaseModel):
 
 class PermissionRuleResponse(BaseModel):
     """Response body for a permission rule."""
+
     rule_id: str
     user_id: str
     agent_id: str | None
@@ -64,6 +68,7 @@ class PermissionRuleResponse(BaseModel):
 
 class GatekeeperDecision(BaseModel):
     """Result of a Gatekeeper evaluation."""
+
     allowed: bool
     outcome: str  # "allowed", "denied", "jit_pending", "jit_approved", "jit_denied", "jit_timeout"
     matched_rule_id: str | None = None
@@ -74,6 +79,7 @@ class GatekeeperDecision(BaseModel):
 
 class EvaluationRequest(BaseModel):
     """Request to evaluate a permission."""
+
     agent_id: str
     scope: str
     resource: str | None = None  # namespace or memory ID
@@ -83,9 +89,14 @@ class EvaluationRequest(BaseModel):
 # ─── Validation ───────────────────────────────────────────────────
 
 VALID_SCOPES = {
-    "memory:read", "memory:write", "memory:delete",
-    "namespace:read", "namespace:write", "namespace:create",
-    "graph:read", "graph:write",
+    "memory:read",
+    "memory:write",
+    "memory:delete",
+    "namespace:read",
+    "namespace:write",
+    "namespace:create",
+    "graph:read",
+    "graph:write",
     "admin:*",
 }
 
@@ -108,6 +119,7 @@ def validate_action(action: str) -> bool:
 
 
 # ─── Rule CRUD ────────────────────────────────────────────────────
+
 
 async def create_rule(
     user_id: uuid.UUID,
@@ -174,7 +186,7 @@ async def update_rule(
     if request.is_active is not None:
         rule.is_active = request.is_active
 
-    rule.updated_at = datetime.now(timezone.utc)
+    rule.updated_at = datetime.now(UTC)
     await db.flush()
     return _to_response(rule)
 
@@ -244,9 +256,7 @@ async def _increment_agent_stats(
     incremented because evaluate() returned early without updating the
     AgentRegistry row.  This helper is called at every exit point.
     """
-    result = await db.execute(
-        select(AgentRegistry).where(AgentRegistry.agent_id == agent_id)
-    )
+    result = await db.execute(select(AgentRegistry).where(AgentRegistry.agent_id == agent_id))
     agent = result.scalar_one_or_none()
     if agent is None:
         return
@@ -282,6 +292,7 @@ async def evaluate(
     - If no rule matches, return DENIED
     """
     import time
+
     start = time.monotonic()
 
     agent_id = uuid.UUID(request.agent_id)
@@ -342,7 +353,7 @@ async def evaluate(
                     "priority": rule.priority,
                 },
                 status="pending",
-                expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                expires_at=datetime.now(UTC) + timedelta(seconds=60),
             )
             db.add(consent)
             await db.flush()
@@ -370,8 +381,10 @@ async def evaluate(
 
 # ─── JIT Consent Resolution ──────────────────────────────────────
 
+
 class ConsentRequestResponse(BaseModel):
     """Response body for a consent request."""
+
     consent_id: str
     user_id: str
     agent_id: str
@@ -451,12 +464,12 @@ async def resolve_consent(
     if consent.status != "pending":
         raise ValueError(f"Consent request already resolved: {consent.status}")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Check if expired — handle both naive and aware datetimes from SQLite
     expires_at = consent.expires_at
     if expires_at and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
     if expires_at and now > expires_at:
         consent.status = "timeout"
         consent.resolved_at = now
@@ -494,6 +507,7 @@ async def resolve_consent(
 
 # ─── Rule Matching Helpers ────────────────────────────────────────
 
+
 def _matches_agent(rule: PermissionRule, agent_id: uuid.UUID) -> bool:
     """Check if a rule applies to the given agent."""
     if rule.agent_id is None:
@@ -523,6 +537,7 @@ def _matches_namespace(rule: PermissionRule, namespace: str | None) -> bool:
         return True  # No namespace in request — skip filter
     # Simple glob matching
     import fnmatch
+
     return fnmatch.fnmatch(namespace, rule.namespace_filter)
 
 
@@ -537,7 +552,7 @@ def _matches_conditions(rule: PermissionRule) -> bool:
     # Time window check
     if "time_window" in rule.conditions:
         tw = rule.conditions["time_window"]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start_hour = tw.get("start_hour", 0)
         end_hour = tw.get("end_hour", 24)
         if not (start_hour <= now.hour < end_hour):
@@ -547,6 +562,7 @@ def _matches_conditions(rule: PermissionRule) -> bool:
 
 
 # ─── Internal Helpers ─────────────────────────────────────────────
+
 
 async def _get_rule_for_user(
     rule_id: uuid.UUID,

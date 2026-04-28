@@ -6,6 +6,7 @@ Used to assign/remove `beta_approved` role on waitlist approval/rejection.
 
 Requires a service account client (kemory-api) with realm-management roles.
 """
+
 import uuid
 
 import httpx
@@ -24,10 +25,7 @@ class KeycloakAdminClient:
 
     async def _get_admin_token(self) -> str:
         """Get service account token via client_credentials grant."""
-        url = (
-            f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
-            f"/protocol/openid-connect/token"
-        )
+        url = f"{settings.keycloak_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/token"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 url,

@@ -16,6 +16,7 @@ limit dependency, e.g. ``Depends(limit_body(10 * 1024 * 1024))`` for an
 import endpoint that legitimately wants 10 MB. For v1 we ship the global
 limit and revisit when the first endpoint needs more.
 """
+
 from __future__ import annotations
 
 import structlog

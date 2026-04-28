@@ -4,28 +4,31 @@ S9N Memory Vault — Main Application Entry Point
 FastAPI application with lifecycle management for all service connections.
 Follows the spec architecture: S9N Memory Vault API Gateway is the single entry point.
 """
+
 from contextlib import asynccontextmanager
+
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import structlog
 
-from backend.config.settings import settings
-from backend.core.database import init_db, close_db
-from backend.core.redis import init_redis, close_redis
-from backend.api.routes.health import router as health_router
 from backend.api.routes.agents import router as agents_router
-from backend.api.routes.permissions import permissions_router, gatekeeper_router
-from backend.api.routes.memories import router as memories_router
-from backend.mcp.server import router as mcp_router
-from backend.api.routes.enrichment import router as enrichment_router
 from backend.api.routes.audit import router as audit_router
-from backend.api.routes.security import router as security_router
-from backend.api.routes.waitlist import public_router as waitlist_router, admin_router as waitlist_admin_router
+from backend.api.routes.enrichment import router as enrichment_router
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
+from backend.api.routes.health import router as health_router
 from backend.api.routes.me import router as me_router  # WS-11: identity
+from backend.api.routes.memories import router as memories_router
+from backend.api.routes.permissions import gatekeeper_router, permissions_router
+from backend.api.routes.security import router as security_router
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
+from backend.api.routes.waitlist import admin_router as waitlist_admin_router
+from backend.api.routes.waitlist import public_router as waitlist_router
+from backend.config.settings import settings
 from backend.core.body_size_limit import body_size_limit_middleware
+from backend.core.database import close_db, init_db
+from backend.core.redis import close_redis, init_redis
 from backend.core.tenant_rate_limit import tenant_rate_limit_middleware
+from backend.mcp.server import router as mcp_router
 
 logger = structlog.get_logger(__name__)
 

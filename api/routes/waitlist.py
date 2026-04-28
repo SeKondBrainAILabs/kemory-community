@@ -14,25 +14,24 @@ Admin endpoints (require admin role):
   POST  /api/v1/admin/waitlist/bulk-approve       — Batch approve
   GET   /api/v1/admin/waitlist/stats     — Signup stats
 """
-import asyncio
+
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from pydantic import BaseModel, EmailStr
-from sqlalchemy.exc import ProgrammingError, OperationalError
+from pydantic import BaseModel
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.database import get_db
-from backend.core.auth import require_auth, require_admin
-from backend.services.auth_service import AuthContext
 from backend.config.settings import settings
+from backend.core.auth import require_admin, require_auth
+from backend.core.database import get_db
 from backend.core.rate_limit import rate_limit
-from backend.services.waitlist_service import WaitlistService
+from backend.services.auth_service import AuthContext
 from backend.services.email_service import email_service
-
+from backend.services.waitlist_service import WaitlistService
 
 # ─── Request/Response models ─────────────────────────────────────
+
 
 class JoinRequest(BaseModel):
     email: str
@@ -191,9 +190,7 @@ async def list_waitlist(
     """List waitlist entries (paginated, filterable)."""
     svc = WaitlistService(db)
     try:
-        return await svc.list_entries(
-            service=service, status=entry_status, limit=limit, offset=offset
-        )
+        return await svc.list_entries(service=service, status=entry_status, limit=limit, offset=offset)
     except (ProgrammingError, OperationalError) as exc:
         # BUG-013 fix: waitlist table may not exist yet (migration pending)
         raise HTTPException(
@@ -225,6 +222,7 @@ async def approve_user(
     # Assign beta_approved role in Keycloak (best-effort)
     if settings.keycloak_enabled:
         from backend.core.keycloak_admin import keycloak_admin
+
         await keycloak_admin.assign_role(user_id, "beta_approved")
 
     # Send approval email (best-effort)

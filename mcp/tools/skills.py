@@ -5,11 +5,10 @@ Tools in this module:
   s9nmem_list_skills  — enumerate stored procedures
   s9nmem_store_skill  — record a learned procedure
 """
+
 from __future__ import annotations
 
 import json
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.memory_service import (
@@ -18,7 +17,6 @@ from backend.services.memory_service import (
     create_memory,
     search_memories,
 )
-
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -130,16 +128,18 @@ async def _handle_store_skill(args, user_id, agent_id, db):
     )
     memory = await create_memory(user_id, agent_id, request, db)
     return MCPToolResult(
-        content=[{
-            "type": "text",
-            "text": (
-                f"Skill stored successfully.\n"
-                f"ID: {memory.memory_id}\n"
-                f"Name: {args['name']}\n"
-                f"Namespace: {namespace}\n"
-                f"Visibility: {args.get('visibility', 'user-private')}"
-            ),
-        }],
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    f"Skill stored successfully.\n"
+                    f"ID: {memory.memory_id}\n"
+                    f"Name: {args['name']}\n"
+                    f"Namespace: {namespace}\n"
+                    f"Visibility: {args.get('visibility', 'user-private')}"
+                ),
+            }
+        ],
     )
 
 

@@ -14,15 +14,15 @@ isolation. This file is the single seam every consumer imports through;
 new tools land in the relevant family module and the registry picks them
 up automatically.
 """
+
 from __future__ import annotations
 
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.mcp.tools import consolidation, memory, meta, namespaces, skills
-
+from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 
 # ─── Aggregate ────────────────────────────────────────────────────────────
 

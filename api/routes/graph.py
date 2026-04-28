@@ -9,47 +9,50 @@ Endpoint:
 
 Story: F12-US-003, F12-US-004
 """
-import uuid
-from typing import Optional
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext
-from backend.models.memory import Memory
 from backend.models.agent import AgentRegistry as Agent
+from backend.models.memory import Memory
 
 router = APIRouter(prefix="/api/v1/graph", tags=["Graph"])
 
 
 # ─── Response Schemas ────────────────────────────────────────────────────────
 
+
 class GraphNode(BaseModel):
     """A node in the access graph."""
+
     id: str
-    type: str          # "agent" | "namespace" | "memory"
+    type: str  # "agent" | "namespace" | "memory"
     label: str
     # Optional extra data per node type
-    status: str | None = None           # agent status
+    status: str | None = None  # agent status
     compression_tier: str | None = None  # memory compression tier
-    namespace: str | None = None         # memory's namespace
-    memory_count: int | None = None      # namespace memory count
-    total_reads: int | None = None       # agent reads
-    total_writes: int | None = None      # agent writes
-    denied_requests: int | None = None   # agent denied
+    namespace: str | None = None  # memory's namespace
+    memory_count: int | None = None  # namespace memory count
+    total_reads: int | None = None  # agent reads
+    total_writes: int | None = None  # agent writes
+    denied_requests: int | None = None  # agent denied
 
 
 class GraphEdge(BaseModel):
     """A directed edge in the access graph."""
-    source: str   # node id
-    target: str   # node id
+
+    source: str  # node id
+    target: str  # node id
     relation: str  # "writes_to" | "reads_from" | "synthesized_from" | "in_namespace"
 
 
 class AccessMapResponse(BaseModel):
     """Full graph payload for the Access Graph page."""
+
     nodes: list[GraphNode]
     edges: list[GraphEdge]
     total_agents: int
@@ -58,6 +61,7 @@ class AccessMapResponse(BaseModel):
 
 
 # ─── Route ───────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/access-map",
@@ -97,9 +101,7 @@ async def get_access_map(
     memories = mem_result.scalars().all()
 
     # ── 2. Fetch all agents (platform-level, not scoped to user) ──
-    agent_result = await db.execute(
-        select(Agent).where(Agent.status != "revoked").limit(100)
-    )
+    agent_result = await db.execute(select(Agent).where(Agent.status != "revoked").limit(100))
     agents = agent_result.scalars().all()
 
     # ── 3. Build namespace summary ─────────────────────────────────
@@ -115,25 +117,29 @@ async def get_access_map(
     agent_ids_in_graph: set[str] = set()
     for agent in agents:
         aid = str(agent.agent_id)
-        nodes.append(GraphNode(
-            id=f"agent:{aid}",
-            type="agent",
-            label=agent.agent_name,
-            status=agent.status,
-            total_reads=agent.total_reads,
-            total_writes=agent.total_writes,
-            denied_requests=agent.denied_requests,
-        ))
+        nodes.append(
+            GraphNode(
+                id=f"agent:{aid}",
+                type="agent",
+                label=agent.agent_name,
+                status=agent.status,
+                total_reads=agent.total_reads,
+                total_writes=agent.total_writes,
+                denied_requests=agent.denied_requests,
+            )
+        )
         agent_ids_in_graph.add(aid)
 
     # Namespace nodes
     for ns, count in ns_counts.items():
-        nodes.append(GraphNode(
-            id=f"ns:{ns}",
-            type="namespace",
-            label=ns,
-            memory_count=count,
-        ))
+        nodes.append(
+            GraphNode(
+                id=f"ns:{ns}",
+                type="namespace",
+                label=ns,
+                memory_count=count,
+            )
+        )
 
     # Memory nodes (sampled — max 200 total to keep graph readable)
     memory_sample = memories[:200]
@@ -142,38 +148,46 @@ async def get_access_map(
         tier = meta.get("_compression_tier", "L1")
         if tier not in {"L1", "L2", "L3.1"}:
             tier = "L1"
-        nodes.append(GraphNode(
-            id=f"mem:{mem.memory_id}",
-            type="memory",
-            label=mem.content[:60] + ("…" if len(mem.content) > 60 else ""),
-            compression_tier=tier,
-            namespace=mem.namespace,
-        ))
+        nodes.append(
+            GraphNode(
+                id=f"mem:{mem.memory_id}",
+                type="memory",
+                label=mem.content[:60] + ("…" if len(mem.content) > 60 else ""),
+                compression_tier=tier,
+                namespace=mem.namespace,
+            )
+        )
         # Memory → Namespace edge
-        edges.append(GraphEdge(
-            source=f"mem:{mem.memory_id}",
-            target=f"ns:{mem.namespace}",
-            relation="in_namespace",
-        ))
+        edges.append(
+            GraphEdge(
+                source=f"mem:{mem.memory_id}",
+                target=f"ns:{mem.namespace}",
+                relation="in_namespace",
+            )
+        )
         # Agent → Namespace edge (if we know the source agent)
         if mem.source_agent_id:
             aid = str(mem.source_agent_id)
             # Only add edge if agent is in our graph
             if aid in agent_ids_in_graph:
-                edges.append(GraphEdge(
-                    source=f"agent:{aid}",
-                    target=f"ns:{mem.namespace}",
-                    relation="writes_to",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source=f"agent:{aid}",
+                        target=f"ns:{mem.namespace}",
+                        relation="writes_to",
+                    )
+                )
         # L3.1 provenance edges: Memory → source memories
         source_ids = meta.get("_source_memory_ids")
         if isinstance(source_ids, list):
             for src_id in source_ids[:5]:  # cap at 5 edges per concept
-                edges.append(GraphEdge(
-                    source=f"mem:{mem.memory_id}",
-                    target=f"mem:{src_id}",
-                    relation="synthesized_from",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source=f"mem:{mem.memory_id}",
+                        target=f"mem:{src_id}",
+                        relation="synthesized_from",
+                    )
+                )
 
     # Deduplicate edges (same source/target/relation can appear multiple times)
     seen_edges: set[tuple] = set()

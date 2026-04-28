@@ -4,11 +4,12 @@ S9N Memory Vault — Agent Registry Model
 Spec reference: Appendix A.1, Table s9nmv_agent_registry
 Stores registered agents with their declared scopes, API key hashes, and usage stats.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import (
-    Column, String, DateTime, BigInteger, Text, UniqueConstraint, Index
-)
+from datetime import UTC, datetime
+
+from sqlalchemy import BigInteger, Column, DateTime, Index, String, UniqueConstraint
+
 from backend.core.database import Base
 from backend.core.types import GUID, JSONType
 
@@ -23,6 +24,7 @@ class AgentRegistry(Base):
     - A status lifecycle: pending_approval -> active -> suspended/revoked
     - Usage counters for reads, writes, and denied requests
     """
+
     __tablename__ = "s9nmv_agent_registry"
 
     # Primary key
@@ -106,7 +108,7 @@ class AgentRegistry(Base):
     registered_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         comment="When the agent was registered",
     )
     last_active_at = Column(

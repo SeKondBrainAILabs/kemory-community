@@ -4,9 +4,9 @@ S9N Memory Vault — Simple Redis Rate Limiter
 Sliding-window rate limiter using Redis INCR + EXPIRE.
 Use as a FastAPI dependency on endpoints that need protection.
 """
-import time
-from fastapi import HTTPException, Request, status
+
 import structlog
+from fastapi import HTTPException, Request, status
 
 from backend.core.redis import redis_client
 

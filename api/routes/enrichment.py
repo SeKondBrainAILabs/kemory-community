@@ -8,17 +8,17 @@ Endpoints for triggering and monitoring the enrichment pipeline:
 
 Spec reference: Section 7.5 (Enrichment Pipeline)
 """
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext
 from backend.services.enrichment_service import (
     enrich_memory,
     enrich_pending_memories,
-    EnrichmentResult,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Enrichment"])
@@ -99,6 +99,7 @@ async def get_enrichment_endpoint(
 ):
     """Get the enrichment results stored in a memory's metadata."""
     from sqlalchemy import select
+
     from backend.models.memory import Memory
 
     result = await db.execute(

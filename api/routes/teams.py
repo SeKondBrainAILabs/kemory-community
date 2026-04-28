@@ -16,6 +16,7 @@ The path-supplied ``org_id`` is checked against ``scope.org_id`` so an
 org_admin in org A can never act on org B's teams. The 404-not-403
 contract from WS-3 holds: cross-org actions return 404, not 403.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -31,11 +32,9 @@ from backend.core.database import get_db
 from backend.core.tenancy import (
     TenantScope,
     TenantScopeDep,
-    bypass_tenant_filter,
 )
 from backend.models.team import Team, TeamMember
 from backend.services.team_resolver import (
-    invalidate as invalidate_team_cache,
     invalidate_for_org as invalidate_team_cache_for_org,
 )
 
@@ -152,12 +151,14 @@ async def create_team(
     db.add(team)
     await db.flush()  # populate team_id
 
-    db.add(TeamMember(
-        team_id=team.team_id,
-        user_id=auth.user_id,
-        role="owner",
-        can_write=True,
-    ))
+    db.add(
+        TeamMember(
+            team_id=team.team_id,
+            user_id=auth.user_id,
+            role="owner",
+            can_write=True,
+        )
+    )
     await db.flush()
 
     await invalidate_team_cache_for_org(auth.user_id, org_id)
@@ -186,10 +187,12 @@ async def list_teams(
 
     # Tenant filter is already on; the explicit scope predicate documents intent.
     result = await db.execute(
-        select(Team).where(
+        select(Team)
+        .where(
             Team.org_id == scope.org_id,
             Team.is_deleted == False,  # noqa: E712
-        ).order_by(Team.name)
+        )
+        .order_by(Team.name)
     )
     return [
         TeamResponse(id=str(t.team_id), name=t.name, description=t.description, org_id=str(t.org_id))

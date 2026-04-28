@@ -10,19 +10,16 @@ Endpoints:
 
 Spec reference: Section 11 (MCP Tools)
 """
-import uuid
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext
 from backend.mcp.tools import (
     TOOL_DEFINITIONS,
     handle_tool_call,
-    MCPToolResult,
 )
 
 router = APIRouter(prefix="/mcp/v1", tags=["MCP Server"])
@@ -30,24 +27,29 @@ router = APIRouter(prefix="/mcp/v1", tags=["MCP Server"])
 
 # ─── Request/Response Schemas ─────────────────────────────────────
 
+
 class ToolListResponse(BaseModel):
     """Response for tools/list."""
+
     tools: list[dict]
 
 
 class ToolCallRequest(BaseModel):
     """Request body for tools/call."""
+
     name: str = Field(..., description="Name of the tool to call")
     arguments: dict = Field(default_factory=dict, description="Tool arguments")
 
 
 class ToolCallResponse(BaseModel):
     """Response for tools/call."""
+
     content: list[dict]
     isError: bool = False
 
 
 # ─── Endpoints ────────────────────────────────────────────────────
+
 
 @router.post(
     "/tools/list",
@@ -63,9 +65,7 @@ async def list_tools(
     This is the discovery endpoint — agents call this first to learn
     what tools are available and what arguments they accept.
     """
-    return ToolListResponse(
-        tools=[tool.model_dump() for tool in TOOL_DEFINITIONS]
-    )
+    return ToolListResponse(tools=[tool.model_dump() for tool in TOOL_DEFINITIONS])
 
 
 @router.post(

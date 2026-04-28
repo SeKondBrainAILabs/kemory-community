@@ -12,12 +12,12 @@ Usage in routes:
     async def protected_endpoint(auth: AuthContext = Depends(require_auth)):
         ...
 """
+
 import uuid
-from typing import Optional
 
 import structlog
-from fastapi import Depends, HTTPException, Header, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +25,8 @@ from backend.config.settings import settings
 from backend.core.database import get_db
 from backend.services.auth_service import (
     AuthContext,
-    decode_access_token,
     authenticate_api_key,
+    decode_access_token,
 )
 
 logger = structlog.get_logger(__name__)
@@ -174,7 +174,9 @@ async def get_auth_context(
 
         # Cross-org acting-as is the attack we are defending against.
         from sqlalchemy import select as _select  # local — cycle avoid
+
         from backend.models.agent import AgentRegistry as _AgentRegistry
+
         result = await db.execute(
             _select(_AgentRegistry.user_id)
             .where(_AgentRegistry.user_id == target_uuid)

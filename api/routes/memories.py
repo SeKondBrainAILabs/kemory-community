@@ -11,26 +11,27 @@ Endpoints for memory CRUD operations:
 
 Spec reference: Section 10 (API Contracts), Section 7.4 (Memory Operations)
 """
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext, is_admin
 from backend.services.memory_service import (
     MemoryCreate,
-    MemoryUpdate,
+    MemoryListResponse,
     MemoryResponse,
     MemorySearchRequest,
-    MemoryListResponse,
+    MemoryUpdate,
     create_memory,
-    get_memory,
-    update_memory,
     delete_memory,
-    search_memories,
+    get_memory,
     list_namespaces,
+    search_memories,
+    update_memory,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Memories"])
@@ -188,6 +189,7 @@ async def get_memory_history_endpoint(
     Returns events newest-first: type, actor, reason, state diffs, timestamps.
     """
     from backend.services.provenance_service import get_memory_history
+
     return await get_memory_history(db, memory_id, limit=limit, offset=offset)
 
 
@@ -209,6 +211,7 @@ async def list_namespaces_endpoint(
 
 
 # ─── Consolidation Endpoints (KMV-E13/E14) ──────────────────────────────────
+
 
 @router.post(
     "/namespaces/{namespace}/consolidate",
@@ -236,6 +239,7 @@ async def trigger_consolidation_endpoint(
             detail="Only admin users can trigger consolidation.",
         )
     from backend.services.consolidation_service import run_daily_consolidation
+
     try:
         summary = await run_daily_consolidation(db, namespace=namespace)
         return JSONResponse(content={"status": "ok", "summary": summary})
@@ -263,6 +267,7 @@ async def get_consolidation_stats_endpoint(
     Used by the Admin Dashboard Memory Explorer.
     """
     from backend.services.consolidation_service import get_consolidation_stats
+
     try:
         stats = await get_consolidation_stats(db, namespace=namespace)
         return JSONResponse(content={"namespace": namespace, "stats": stats})
@@ -293,6 +298,7 @@ async def get_all_consolidation_stats_endpoint(
             detail="Only admin users can view all namespace consolidation stats.",
         )
     from backend.services.consolidation_service import get_consolidation_stats
+
     try:
         stats = await get_consolidation_stats(db)
         return JSONResponse(content={"stats": stats})
@@ -320,28 +326,32 @@ async def get_namespace_policy_endpoint(
     Returns default values if no policy has been explicitly configured.
     """
     from sqlalchemy import select
-    from backend.models.namespace_policy import NamespacePolicy, EXEMPT_NAMESPACES
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+
+    from backend.models.namespace_policy import EXEMPT_NAMESPACES, NamespacePolicy
+
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
     if policy is None:
-        return JSONResponse(content={
-            "namespace": namespace,
-            "decay_rate": 0.1,
-            "retention_days": 10,
-            "auto_consolidate": namespace not in EXEMPT_NAMESPACES,
-            "is_default": True,
-        })
-    return JSONResponse(content={
-        "namespace": policy.namespace,
-        "decay_rate": policy.decay_rate,
-        "retention_days": policy.retention_days,
-        "auto_consolidate": policy.auto_consolidate,
-        "consolidation_hour_utc": policy.consolidation_hour_utc,
-        "description": policy.description,
-        "is_default": False,
-    })
+        return JSONResponse(
+            content={
+                "namespace": namespace,
+                "decay_rate": 0.1,
+                "retention_days": 10,
+                "auto_consolidate": namespace not in EXEMPT_NAMESPACES,
+                "is_default": True,
+            }
+        )
+    return JSONResponse(
+        content={
+            "namespace": policy.namespace,
+            "decay_rate": policy.decay_rate,
+            "retention_days": policy.retention_days,
+            "auto_consolidate": policy.auto_consolidate,
+            "consolidation_hour_utc": policy.consolidation_hour_utc,
+            "description": policy.description,
+            "is_default": False,
+        }
+    )
 
 
 @router.put(
@@ -367,10 +377,10 @@ async def update_namespace_policy_endpoint(
             detail="Only admin users can update namespace policies.",
         )
     from sqlalchemy import select
+
     from backend.models.namespace_policy import NamespacePolicy
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
     if policy is None:
         policy = NamespacePolicy(namespace=namespace, created_by=auth.user_id)
@@ -398,12 +408,14 @@ async def update_namespace_policy_endpoint(
         policy.description = str(body["description"])[:500]
 
     await db.commit()
-    return JSONResponse(content={
-        "namespace": policy.namespace,
-        "decay_rate": policy.decay_rate,
-        "retention_days": policy.retention_days,
-        "auto_consolidate": policy.auto_consolidate,
-        "consolidation_hour_utc": policy.consolidation_hour_utc,
-        "description": policy.description,
-        "updated": True,
-    })
+    return JSONResponse(
+        content={
+            "namespace": policy.namespace,
+            "decay_rate": policy.decay_rate,
+            "retention_days": policy.retention_days,
+            "auto_consolidate": policy.auto_consolidate,
+            "consolidation_hour_utc": policy.consolidation_hour_utc,
+            "description": policy.description,
+            "updated": True,
+        }
+    )

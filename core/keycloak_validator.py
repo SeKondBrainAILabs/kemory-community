@@ -10,9 +10,10 @@ Features:
 - Issuer + audience/azp validation
 - Automatic key rotation retry
 """
+
 import httpx
 import structlog
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 
 from backend.config.settings import settings
 
@@ -110,9 +111,7 @@ class KeycloakValidator:
             aud_ok = any(a in allowed for a in audiences)
 
         if not azp_ok and not aud_ok:
-            raise JWTError(
-                f"Invalid client. azp='{azp}', aud={aud}, expected one of {allowed}"
-            )
+            raise JWTError(f"Invalid client. azp='{azp}', aud={aud}, expected one of {allowed}")
 
         logger.info(
             "keycloak.token_validated",

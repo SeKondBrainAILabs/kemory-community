@@ -16,24 +16,24 @@ Spec reference: Section 7.6 (Governance), Section 12 (Security Architecture)
 Stories: F07-US-001 (audit logging), F07-US-002 (rate limiting),
          F07-US-003 (write validation), F07-US-004 (audit querying)
 """
-import uuid
+
 import hashlib
 import json
-from datetime import datetime, timezone, timedelta
-from typing import Optional
-from collections import defaultdict
+import uuid
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.audit import AuditLog
 
-
 # ─── Audit Schemas ────────────────────────────────────────────────
+
 
 class AuditEntry(BaseModel):
     """Schema for an audit log entry."""
+
     audit_id: str
     user_id: str
     agent_id: str | None
@@ -50,6 +50,7 @@ class AuditEntry(BaseModel):
 
 class AuditQueryRequest(BaseModel):
     """Request for querying audit logs."""
+
     user_id: str | None = None
     agent_id: str | None = None
     action: str | None = None
@@ -63,6 +64,7 @@ class AuditQueryRequest(BaseModel):
 
 class AuditQueryResponse(BaseModel):
     """Response for audit log queries."""
+
     items: list[AuditEntry]
     total: int
     limit: int
@@ -71,6 +73,7 @@ class AuditQueryResponse(BaseModel):
 
 class RateLimitStatus(BaseModel):
     """Current rate limit status for an agent."""
+
     agent_id: str
     window_seconds: int
     max_requests: int
@@ -84,21 +87,22 @@ class RateLimitStatus(BaseModel):
 
 # Default rate limits per action type (requests per window)
 RATE_LIMITS = {
-    "memory:write": {"max_requests": 100, "window_seconds": 3600},    # 100 writes/hour
-    "memory:read": {"max_requests": 1000, "window_seconds": 3600},    # 1000 reads/hour
-    "memory:delete": {"max_requests": 50, "window_seconds": 3600},     # 50 deletes/hour
-    "memory:search": {"max_requests": 500, "window_seconds": 3600},    # 500 searches/hour
+    "memory:write": {"max_requests": 100, "window_seconds": 3600},  # 100 writes/hour
+    "memory:read": {"max_requests": 1000, "window_seconds": 3600},  # 1000 reads/hour
+    "memory:delete": {"max_requests": 50, "window_seconds": 3600},  # 50 deletes/hour
+    "memory:search": {"max_requests": 500, "window_seconds": 3600},  # 500 searches/hour
     "permission:evaluate": {"max_requests": 2000, "window_seconds": 3600},  # 2000 evals/hour
-    "default": {"max_requests": 200, "window_seconds": 3600},          # 200 default/hour
+    "default": {"max_requests": 200, "window_seconds": 3600},  # 200 default/hour
 }
 
 # Write validation limits
 MAX_CONTENT_SIZE = 100_000  # 100KB max content size
-MAX_METADATA_SIZE = 10_000   # 10KB max metadata size
+MAX_METADATA_SIZE = 10_000  # 10KB max metadata size
 MIN_WRITE_INTERVAL_SECONDS = 1  # Minimum 1 second between writes from same agent
 
 
 # ─── Hash Chain ───────────────────────────────────────────────────
+
 
 def compute_hash_chain(
     previous_hash: str,
@@ -118,6 +122,7 @@ def compute_hash_chain(
 
 
 # ─── Audit Logging ────────────────────────────────────────────────
+
 
 async def log_audit_event(
     user_id: uuid.UUID,
@@ -145,13 +150,14 @@ async def log_audit_event(
     audits "for free" without a code change. Compliance / GDPR exports
     can then filter by org_id with one indexed query (idx_audit_log_org_time).
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Auto-thread tenant context. Falls back to an empty string for
     # cross-tenant background tasks (the global filter bypass path) so
     # we still record SOMETHING rather than crashing audit emission.
     if org_id is None or team_id is None:
         from backend.core.tenancy import current_org_id, current_team_ids
+
         if org_id is None:
             org_id = current_org_id() or None
         if team_id is None:
@@ -246,10 +252,12 @@ async def query_audit_logs(
     # Date-range filters (ISO-8601 strings, e.g. "2025-01-01T00:00:00Z")
     if request.start_time:
         from datetime import datetime as _dt
+
         start_dt = _dt.fromisoformat(request.start_time.replace("Z", "+00:00"))
         query = query.where(AuditLog.created_at >= start_dt)
     if request.end_time:
         from datetime import datetime as _dt
+
         end_dt = _dt.fromisoformat(request.end_time.replace("Z", "+00:00"))
         query = query.where(AuditLog.created_at <= end_dt)
 
@@ -291,6 +299,7 @@ async def query_audit_logs(
 
 # ─── Rate Limiting ────────────────────────────────────────────────
 
+
 async def check_rate_limit(
     user_id: uuid.UUID,
     agent_id: uuid.UUID,
@@ -306,11 +315,13 @@ async def check_rate_limit(
     window_seconds = limits["window_seconds"]
     max_requests = limits["max_requests"]
 
-    window_start = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    window_start = datetime.now(UTC) - timedelta(seconds=window_seconds)
 
     # Count requests in the current window
     result = await db.execute(
-        select(func.count()).select_from(AuditLog).where(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(
             AuditLog.user_id == user_id,
             AuditLog.agent_id == agent_id,
             AuditLog.action == action,
@@ -320,7 +331,7 @@ async def check_rate_limit(
     current_count = result.scalar() or 0
 
     remaining = max(0, max_requests - current_count)
-    reset_at = datetime.now(timezone.utc) + timedelta(seconds=window_seconds)
+    reset_at = datetime.now(UTC) + timedelta(seconds=window_seconds)
 
     return RateLimitStatus(
         agent_id=str(agent_id),
@@ -335,8 +346,10 @@ async def check_rate_limit(
 
 # ─── Write Validation ────────────────────────────────────────────
 
+
 class WriteValidationResult(BaseModel):
     """Result of write validation."""
+
     is_valid: bool
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -364,9 +377,7 @@ async def validate_write(
     # Check content size
     content_size = len(content.encode("utf-8"))
     if content_size > MAX_CONTENT_SIZE:
-        errors.append(
-            f"Content size ({content_size} bytes) exceeds maximum ({MAX_CONTENT_SIZE} bytes)"
-        )
+        errors.append(f"Content size ({content_size} bytes) exceeds maximum ({MAX_CONTENT_SIZE} bytes)")
     elif content_size > MAX_CONTENT_SIZE * 0.8:
         warnings.append(
             f"Content size ({content_size} bytes) is approaching the limit ({MAX_CONTENT_SIZE} bytes)"
@@ -395,12 +406,10 @@ async def validate_write(
     last_write = result.scalar_one_or_none()
     if last_write:
         if last_write.tzinfo is None:
-            last_write = last_write.replace(tzinfo=timezone.utc)
-        elapsed = datetime.now(timezone.utc) - last_write
+            last_write = last_write.replace(tzinfo=UTC)
+        elapsed = datetime.now(UTC) - last_write
         if elapsed < min_interval:
-            warnings.append(
-                f"High write frequency detected: {elapsed.total_seconds():.1f}s since last write"
-            )
+            warnings.append(f"High write frequency detected: {elapsed.total_seconds():.1f}s since last write")
 
     # Check rate limit
     rate_status = await check_rate_limit(user_id, agent_id, "memory:write", db)
@@ -419,6 +428,7 @@ async def validate_write(
 
 # ─── Audit Chain Verification ─────────────────────────────────────
 
+
 async def verify_audit_chain(
     user_id: uuid.UUID,
     db: AsyncSession,
@@ -431,10 +441,7 @@ async def verify_audit_chain(
     Returns a verification report.
     """
     result = await db.execute(
-        select(AuditLog)
-        .where(AuditLog.user_id == user_id)
-        .order_by(AuditLog.created_at.asc())
-        .limit(limit)
+        select(AuditLog).where(AuditLog.user_id == user_id).order_by(AuditLog.created_at.asc()).limit(limit)
     )
     logs = result.scalars().all()
 
@@ -448,7 +455,7 @@ async def verify_audit_chain(
         # Normalize timezone: SQLite may strip tz info, so re-add UTC if missing
         ts = log.created_at
         if ts and ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         expected_hash = compute_hash_chain(
             previous_hash=previous_hash,
             action=log.action,
@@ -456,12 +463,14 @@ async def verify_audit_chain(
             timestamp=ts.isoformat() if ts else "",
         )
         if log.hash_chain != expected_hash:
-            errors.append({
-                "index": i,
-                "audit_id": str(log.audit_id),
-                "expected_hash": expected_hash[:16] + "...",
-                "actual_hash": log.hash_chain[:16] + "...",
-            })
+            errors.append(
+                {
+                    "index": i,
+                    "audit_id": str(log.audit_id),
+                    "expected_hash": expected_hash[:16] + "...",
+                    "actual_hash": log.hash_chain[:16] + "...",
+                }
+            )
         previous_hash = log.hash_chain
 
     return {

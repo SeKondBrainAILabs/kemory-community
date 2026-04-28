@@ -4,10 +4,10 @@ S9N Memory Vault — Application Settings
 Centralized configuration using pydantic-settings v2.
 All values are loaded from environment variables with sensible defaults for development.
 """
+
 import re
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # ─── CORS validator (P1 #6) ────────────────────────────────────────────────
 # Validates each entry has scheme + host. Runs at model_post_init time so
@@ -211,10 +211,7 @@ class Settings(BaseSettings):
         try:
             _parse_cors_origins(self.cors_origins)
         except ValueError as exc:
-            raise ValueError(
-                f"CORS_ORIGINS is malformed: {exc}. Refusing to start."
-            ) from exc
-
+            raise ValueError(f"CORS_ORIGINS is malformed: {exc}. Refusing to start.") from exc
 
         legacy_placeholders = {"", "dev-secret-change-in-production", "change-me"}
         if self.jwt_secret_key in legacy_placeholders:
@@ -228,6 +225,7 @@ class Settings(BaseSettings):
             # pydantic v2 freezes fields after validation by default.
             import secrets
             import sys as _sys
+
             ephemeral = secrets.token_urlsafe(48)
             object.__setattr__(self, "jwt_secret_key", ephemeral)
             # Log to stderr explicitly. structlog's default goes to stdout,

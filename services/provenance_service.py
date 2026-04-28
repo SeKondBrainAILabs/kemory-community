@@ -6,14 +6,14 @@ Provides query API for memory history.
 
 Stories: MV2-S02.1 through S02.5
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import structlog
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory_event import MemoryEvent

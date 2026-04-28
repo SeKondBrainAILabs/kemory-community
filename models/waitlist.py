@@ -3,16 +3,17 @@ S9N Memory Vault — Waitlist Models
 
 Per-service beta waitlist with referral tracking.
 """
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
-    Column,
-    String,
     BigInteger,
-    Integer,
+    Column,
     DateTime,
     Index,
+    Integer,
+    String,
     UniqueConstraint,
 )
 
@@ -38,7 +39,7 @@ class WaitlistEntry(Base):
     joined_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
     approved_at = Column(DateTime(timezone=True), nullable=True)
     source = Column(String(50), nullable=True, default="organic")
@@ -63,12 +64,13 @@ class ReferralEvent(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "referrer_user_id", "referred_user_id",
+            "referrer_user_id",
+            "referred_user_id",
             name="uq_referral_pair",
         ),
         Index("ix_referral_referrer", "referrer_user_id"),

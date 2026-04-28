@@ -36,10 +36,8 @@ Story: F12-US-001 / F12-US-002
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select, update
@@ -68,6 +66,7 @@ _last_synthesis_count: dict[tuple[str, str], int] = {}
 
 # ── Public entry point ─────────────────────────────────────────────────────
 
+
 def schedule_compression(
     user_id: uuid.UUID,
     memory_id: uuid.UUID,
@@ -85,6 +84,7 @@ def schedule_compression(
 
 
 # ── Pipeline implementation ────────────────────────────────────────────────
+
 
 async def _run_compression(
     user_id: str,
@@ -112,9 +112,7 @@ async def _run_compression(
 
 async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
     """Encode the memory to AAAK (L2) and stamp its metadata."""
-    result = await db.execute(
-        select(Memory).where(Memory.memory_id == uuid.UUID(memory_id))
-    )
+    result = await db.execute(select(Memory).where(Memory.memory_id == uuid.UUID(memory_id)))
     memory = result.scalar_one_or_none()
     if memory is None:
         return
@@ -125,7 +123,7 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
         return
 
     try:
-        from memory_vault.compression.aaak import encode_aaak, compression_ratio
+        from memory_vault.compression.aaak import compression_ratio, encode_aaak
     except ImportError:
         logger.debug("compression_pipeline.aaak_unavailable")
         return
@@ -138,13 +136,9 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
     meta = dict(memory.meta or {})
     meta["_compression_tier"] = "L2"
     meta["_aaak_ratio"] = ratio
-    meta["_compressed_at"] = datetime.now(timezone.utc).isoformat()
+    meta["_compressed_at"] = datetime.now(UTC).isoformat()
 
-    await db.execute(
-        update(Memory)
-        .where(Memory.memory_id == uuid.UUID(memory_id))
-        .values(meta=meta)
-    )
+    await db.execute(update(Memory).where(Memory.memory_id == uuid.UUID(memory_id)).values(meta=meta))
     logger.debug(
         "compression_pipeline.l2_promoted",
         memory_id=memory_id,
@@ -204,7 +198,7 @@ async def _maybe_synthesize_l3(
             Memory.content_type == "concept",
             Memory.invalid_at == None,  # noqa: E711
         )
-        .values(invalid_at=datetime.now(timezone.utc))
+        .values(invalid_at=datetime.now(UTC))
     )
 
     # Create the new concept memory
@@ -212,7 +206,7 @@ async def _maybe_synthesize_l3(
         "_compression_tier": "L3.1",
         "_source_memory_ids": source_ids,
         "_synthesis_source": concept.get("source", "unknown"),
-        "_synthesized_at": datetime.now(timezone.utc).isoformat(),
+        "_synthesized_at": datetime.now(UTC).isoformat(),
         "_source_count": len(sources),
         "_directional": concept.get("directional", False),
         "_positions_merged": concept.get("positions_merged", len(sources)),
@@ -261,11 +255,12 @@ async def _synthesize_concept(
 
     class _StaticAdapter:
         """Minimal StorageBackend adapter for the compression module."""
+
         def __init__(self, mems: list[dict]) -> None:
             self._mems = mems
 
         async def list_episodes(self, *, org_id, limit=200, offset=0, include_invalid=False):
-            return self._mems[offset: offset + limit]
+            return self._mems[offset : offset + limit]
 
         async def find_similar(self, *, content, org_id, limit=20):
             return []  # Fallback: each memory is its own group
@@ -300,6 +295,7 @@ async def _synthesize_concept(
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _memory_to_dict(memory: Memory) -> dict:
     """Convert a Memory ORM object to the plain-dict shape used by compression."""
     return {
@@ -324,5 +320,6 @@ def _content_hash(content: str) -> str:
     """SHA-256 hex digest of normalised content."""
     import hashlib
     import unicodedata
+
     normalised = unicodedata.normalize("NFC", content).strip().lower()
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()

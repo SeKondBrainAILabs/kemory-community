@@ -13,20 +13,17 @@ Spec reference: Section 12 (Security Architecture), Appendix F (Encryption Detai
 Stories: F08-US-001 (encryption), F08-US-002 (secrets management),
          F08-US-003 (injection prevention), F08-US-004 (PII detection)
 """
+
+import base64
 import os
 import re
-import base64
-import hashlib
 import secrets
-from typing import Optional
 from enum import Enum
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-
 from pydantic import BaseModel, Field
-
 
 # ─── Encryption Configuration ────────────────────────────────────
 
@@ -42,17 +39,20 @@ SALT_SIZE = 16
 
 # ─── Encryption Schemas ──────────────────────────────────────────
 
+
 class EncryptedPayload(BaseModel):
     """Encrypted data with metadata for decryption."""
+
     ciphertext: str  # Base64-encoded ciphertext
-    nonce: str       # Base64-encoded nonce
-    salt: str        # Base64-encoded salt (for key derivation)
+    nonce: str  # Base64-encoded nonce
+    salt: str  # Base64-encoded salt (for key derivation)
     version: int = 1  # Encryption version for future rotation
     algorithm: str = "AES-256-GCM"
 
 
 class PIIType(str, Enum):
     """Types of PII that can be detected."""
+
     EMAIL = "email"
     PHONE = "phone"
     SSN = "ssn"
@@ -63,6 +63,7 @@ class PIIType(str, Enum):
 
 class PIIDetection(BaseModel):
     """A detected PII instance."""
+
     pii_type: PIIType
     value_masked: str  # Masked version of the detected value
     start_pos: int
@@ -72,6 +73,7 @@ class PIIDetection(BaseModel):
 
 class PIIScanResult(BaseModel):
     """Result of a PII scan."""
+
     has_pii: bool
     detections: list[PIIDetection]
     risk_level: str  # "none", "low", "medium", "high"
@@ -79,12 +81,14 @@ class PIIScanResult(BaseModel):
 
 class InjectionScanResult(BaseModel):
     """Result of an injection scan."""
+
     is_safe: bool
     threats: list[dict]  # List of detected threats with type and detail
     sanitized_content: str  # Content with threats neutralized
 
 
 # ─── Field-Level Encryption ──────────────────────────────────────
+
 
 def derive_key(master_key: str, salt: bytes) -> bytes:
     """
@@ -229,12 +233,14 @@ def scan_for_injection(content: str) -> InjectionScanResult:
     for pattern in PROMPT_INJECTION_PATTERNS:
         matches = re.finditer(pattern, content)
         for match in matches:
-            threats.append({
-                "type": "prompt_injection",
-                "pattern": pattern[:50],
-                "match": match.group()[:100],
-                "position": match.start(),
-            })
+            threats.append(
+                {
+                    "type": "prompt_injection",
+                    "pattern": pattern[:50],
+                    "match": match.group()[:100],
+                    "position": match.start(),
+                }
+            )
             # Neutralize by wrapping in brackets
             sanitized = sanitized.replace(match.group(), f"[FILTERED: {match.group()[:20]}...]")
 
@@ -242,23 +248,27 @@ def scan_for_injection(content: str) -> InjectionScanResult:
     for pattern in SQL_INJECTION_PATTERNS:
         matches = re.finditer(pattern, content)
         for match in matches:
-            threats.append({
-                "type": "sql_injection",
-                "pattern": pattern[:50],
-                "match": match.group()[:100],
-                "position": match.start(),
-            })
+            threats.append(
+                {
+                    "type": "sql_injection",
+                    "pattern": pattern[:50],
+                    "match": match.group()[:100],
+                    "position": match.start(),
+                }
+            )
 
     # Check XSS
     for pattern in XSS_PATTERNS:
         matches = re.finditer(pattern, content)
         for match in matches:
-            threats.append({
-                "type": "xss",
-                "pattern": pattern[:50],
-                "match": match.group()[:100],
-                "position": match.start(),
-            })
+            threats.append(
+                {
+                    "type": "xss",
+                    "pattern": pattern[:50],
+                    "match": match.group()[:100],
+                    "position": match.start(),
+                }
+            )
             sanitized = sanitized.replace(match.group(), "[FILTERED]")
 
     return InjectionScanResult(
@@ -312,13 +322,15 @@ def scan_for_pii(content: str) -> PIIScanResult:
     for pii_type, config in PII_PATTERNS.items():
         for match in re.finditer(config["pattern"], content):
             value = match.group()
-            detections.append(PIIDetection(
-                pii_type=pii_type,
-                value_masked=config["mask"](value),
-                start_pos=match.start(),
-                end_pos=match.end(),
-                confidence=config["confidence"],
-            ))
+            detections.append(
+                PIIDetection(
+                    pii_type=pii_type,
+                    value_masked=config["mask"](value),
+                    start_pos=match.start(),
+                    end_pos=match.end(),
+                    confidence=config["confidence"],
+                )
+            )
 
     # Determine risk level
     if not detections:
@@ -351,9 +363,9 @@ def redact_pii(content: str) -> str:
 
     for detection in sorted_detections:
         result = (
-            result[:detection.start_pos]
+            result[: detection.start_pos]
             + f"[{detection.pii_type.value.upper()}: {detection.value_masked}]"
-            + result[detection.end_pos:]
+            + result[detection.end_pos :]
         )
 
     return result
@@ -361,8 +373,10 @@ def redact_pii(content: str) -> str:
 
 # ─── Content Security Pipeline ────────────────────────────────────
 
+
 class SecurityScanResult(BaseModel):
     """Combined security scan result."""
+
     is_safe: bool
     injection_scan: InjectionScanResult
     pii_scan: PIIScanResult

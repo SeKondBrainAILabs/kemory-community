@@ -4,19 +4,26 @@ S9N Memory Vault — Team Model (MV3-E02)
 Team data model with roles and membership management.
 Teams provide shared memory spaces with configurable visibility.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, Boolean, Integer, Index, UniqueConstraint
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, UniqueConstraint
+
 from backend.core.database import Base
 from backend.core.types import GUID, JSONType
 
 
 class Team(Base):
     """A team that shares a memory space."""
+
     __tablename__ = "teams"
 
     team_id = Column(
-        GUID(), primary_key=True, default=uuid.uuid4, nullable=False,
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
     )
     # WS-1: org_id is a string tenant identifier (matches Cognition OS,
     # CCB Kafka envelope, and the new org_id columns added in revision
@@ -25,19 +32,23 @@ class Team(Base):
     name = Column(String(200), nullable=False)
     description = Column(String(1000), nullable=True)
     visibility = Column(
-        String(20), nullable=False, default="team",
+        String(20),
+        nullable=False,
+        default="team",
         comment="Default visibility for team memories: team or org-public",
     )
     settings = Column(JSONType(), nullable=True, default=dict)
     created_by = Column(GUID(), nullable=False)
     created_at = Column(
-        DateTime(timezone=True), nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
     )
     updated_at = Column(
-        DateTime(timezone=True), nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     is_deleted = Column(Boolean, nullable=False, default=False)
 
@@ -47,22 +58,28 @@ class Team(Base):
 
 class TeamMember(Base):
     """A user's membership in a team."""
+
     __tablename__ = "team_members"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     team_id = Column(GUID(), nullable=False, index=True)
     user_id = Column(GUID(), nullable=False, index=True)
     role = Column(
-        String(20), nullable=False, default="member",
+        String(20),
+        nullable=False,
+        default="member",
         comment="owner, admin, member, viewer",
     )
     can_write = Column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
         comment="Whether this member can write to team memory spaces",
     )
     joined_at = Column(
-        DateTime(timezone=True), nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (

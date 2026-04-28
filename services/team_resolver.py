@@ -24,11 +24,11 @@ The 60s TTL on L2 is deliberate: short enough that team add/remove feels
 live within a minute; long enough to absorb 100 MCP tool calls inside a
 single conversation without a DB round-trip per call.
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from typing import Optional
 
 import structlog
 from cachetools import TTLCache
@@ -55,9 +55,7 @@ _REDIS_PREFIX = "kemory:teams:"
 #   misses produce N DB round-trips when 1 would suffice. That is a
 #   perf concern at scale, not a correctness bug, and is tracked as a
 #   separate follow-up (single-flight via per-key asyncio.Lock dict).
-_l1: TTLCache[tuple[str, str], tuple[str, ...]] = TTLCache(
-    maxsize=L1_MAX_ENTRIES, ttl=L1_TTL_SECONDS
-)
+_l1: TTLCache[tuple[str, str], tuple[str, ...]] = TTLCache(maxsize=L1_MAX_ENTRIES, ttl=L1_TTL_SECONDS)
 
 
 def _l2_key(user_id: str, org_id: str) -> str:
@@ -90,6 +88,7 @@ async def invalidate_for_org(user_id: uuid.UUID | str, org_id: str) -> None:
     _l1.pop((user_id_str, org_id), None)
     try:
         from backend.core.redis import redis_client
+
         if redis_client is not None:
             await redis_client.delete(_l2_key(user_id_str, org_id))
     except Exception as exc:  # pragma: no cover — defensive
@@ -113,6 +112,7 @@ async def get_team_ids(
     # L2 — Redis. Best-effort; failures fall through to DB.
     try:
         from backend.core.redis import redis_client
+
         if redis_client is not None:
             raw = await redis_client.get(_l2_key(user_id_str, org_id))
             if raw is not None:
@@ -146,6 +146,7 @@ async def get_team_ids(
     # Best-effort populate L2 — failures don't fail the request.
     try:
         from backend.core.redis import redis_client
+
         if redis_client is not None:
             await redis_client.set(
                 _l2_key(user_id_str, org_id),

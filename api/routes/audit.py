@@ -14,20 +14,18 @@ Fix: KMV-QA-001 — Audit log empty for admin users.
 
 Fix: KMV-QA-011 — Date range filter added (start_time / end_time params).
 """
-import uuid
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
-from backend.core.auth import require_auth, AuthContext, is_admin
 from backend.services.audit_service import (
-    query_audit_logs,
-    verify_audit_chain,
-    check_rate_limit,
-    validate_write,
     AuditQueryRequest,
+    check_rate_limit,
+    query_audit_logs,
+    validate_write,
+    verify_audit_chain,
 )
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Audit & Governance"])

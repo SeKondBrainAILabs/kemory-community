@@ -23,9 +23,8 @@ Failure mode
 Redis-down → fail open (don't block traffic). The existing rate_limit.py
 already does this; we keep the same behaviour.
 """
-from __future__ import annotations
 
-import time
+from __future__ import annotations
 
 import structlog
 from fastapi import HTTPException, Request, status

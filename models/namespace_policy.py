@@ -8,12 +8,14 @@ Architecture note:
   Memory Vault is SHORT-TERM working memory. Cognition OS is LONG-TERM semantic memory.
   This model governs how memories transition from short-term to long-term storage.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
+
 from backend.core.database import Base
 from backend.core.types import GUID
-
 
 # Namespaces that are exempt from auto-archiving by default.
 # These contain stable, long-lived knowledge that should not be decayed.
@@ -32,21 +34,30 @@ class NamespacePolicy(Base):
     Default values represent a sensible baseline for conversational namespaces.
     Stable namespaces (skills, system) should set auto_consolidate=False.
     """
+
     __tablename__ = "s9nmv_namespace_policies"
 
     # ── Identity ──────────────────────────────────────────────────
     policy_id = Column(
-        GUID(), primary_key=True, default=uuid.uuid4, nullable=False,
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
         comment="Unique policy identifier",
     )
     namespace = Column(
-        String(100), nullable=False, unique=True, index=True,
+        String(100),
+        nullable=False,
+        unique=True,
+        index=True,
         comment="Namespace this policy applies to (matches Memory.namespace)",
     )
 
     # ── Decay Configuration ────────────────────────────────────────
     decay_rate = Column(
-        Float, nullable=False, default=0.1,
+        Float,
+        nullable=False,
+        default=0.1,
         comment=(
             "Daily decay rate applied to consolidation_weight (0.0-1.0). "
             "Default 0.1 = 10% reduction per day. "
@@ -54,7 +65,9 @@ class NamespacePolicy(Base):
         ),
     )
     retention_days = Column(
-        Integer, nullable=False, default=10,
+        Integer,
+        nullable=False,
+        default=10,
         comment=(
             "Number of days to retain memories before auto-archiving. "
             "Memories older than this are archived regardless of Cognition OS availability."
@@ -63,36 +76,44 @@ class NamespacePolicy(Base):
 
     # ── Consolidation Configuration ────────────────────────────────
     auto_consolidate = Column(
-        Boolean, nullable=False, default=True,
+        Boolean,
+        nullable=False,
+        default=True,
         comment=(
             "If True, memories are automatically pushed to Cognition OS during the daily job. "
             "Set to False for stable namespaces (skills, system) that should not be decayed."
         ),
     )
     consolidation_hour_utc = Column(
-        Integer, nullable=False, default=2,
+        Integer,
+        nullable=False,
+        default=2,
         comment="UTC hour at which the daily consolidation job runs for this namespace (0-23).",
     )
 
     # ── Metadata ──────────────────────────────────────────────────
     description = Column(
-        String(500), nullable=True,
+        String(500),
+        nullable=True,
         comment="Human-readable description of why this policy exists.",
     )
     created_by = Column(
-        GUID(), nullable=True,
+        GUID(),
+        nullable=True,
         comment="User ID who created or last modified this policy.",
     )
 
     # ── Timestamps ────────────────────────────────────────────────
     created_at = Column(
-        DateTime(timezone=True), nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
     )
     updated_at = Column(
-        DateTime(timezone=True), nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     def __repr__(self):

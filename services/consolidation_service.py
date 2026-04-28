@@ -19,15 +19,15 @@ Spec reviewer mitigations applied:
   - Memories in 'consolidating' status are immutable (enforced in memory_service)
   - Circuit breaker: Cognition OS failures leave memories in 'pending' for retry
 """
-import logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 
-from sqlalchemy import select, update, and_, func
+import logging
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
-from backend.models.namespace_policy import NamespacePolicy, EXEMPT_NAMESPACES
+from backend.models.namespace_policy import EXEMPT_NAMESPACES, NamespacePolicy
 from backend.services.cognition_bridge import CognitionBridge
 
 logger = logging.getLogger(__name__)
@@ -43,9 +43,7 @@ async def _get_policy(db: AsyncSession, namespace: str) -> NamespacePolicy:
     Fetch the namespace policy, or return a default policy if none exists.
     Exempt namespaces (skills, system) get auto_consolidate=False by default.
     """
-    result = await db.execute(
-        select(NamespacePolicy).where(NamespacePolicy.namespace == namespace)
-    )
+    result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
     policy = result.scalar_one_or_none()
     if policy is None:
         # Return a synthetic default policy without persisting it
@@ -80,9 +78,7 @@ async def apply_weight_decay(
         namespaces = [namespace]
     else:
         result = await db.execute(
-            select(Memory.namespace)
-            .where(Memory.consolidation_status == "pending")
-            .distinct()
+            select(Memory.namespace).where(Memory.consolidation_status == "pending").distinct()
         )
         namespaces = [row[0] for row in result.fetchall()]
 
@@ -117,7 +113,7 @@ async def apply_weight_decay(
                     .where(Memory.memory_id == memory_id)
                     .values(
                         consolidation_weight=new_weight,
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 updated += 1
@@ -128,7 +124,9 @@ async def apply_weight_decay(
         summary[ns] = {"weight_decay_applied": updated, "decay_rate": decay_rate}
         logger.info(
             "weight_decay_applied namespace=%s count=%d decay_rate=%.3f",
-            ns, updated, decay_rate,
+            ns,
+            updated,
+            decay_rate,
         )
 
     return summary
@@ -153,9 +151,7 @@ async def auto_archive_expired(
         namespaces = [namespace]
     else:
         result = await db.execute(
-            select(Memory.namespace)
-            .where(Memory.consolidation_status == "pending")
-            .distinct()
+            select(Memory.namespace).where(Memory.consolidation_status == "pending").distinct()
         )
         namespaces = [row[0] for row in result.fetchall()]
 
@@ -165,7 +161,7 @@ async def auto_archive_expired(
             continue
 
         policy = await _get_policy(db, ns)
-        cutoff = datetime.now(timezone.utc) - timedelta(days=policy.retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=policy.retention_days)
 
         result = await db.execute(
             update(Memory)
@@ -179,7 +175,7 @@ async def auto_archive_expired(
             )
             .values(
                 consolidation_status="archived",
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
             )
             .returning(Memory.memory_id)
         )
@@ -190,7 +186,9 @@ async def auto_archive_expired(
         summary[ns] = {"auto_archived": count, "retention_days": policy.retention_days}
         logger.info(
             "auto_archive_expired namespace=%s count=%d cutoff=%s",
-            ns, count, cutoff.isoformat(),
+            ns,
+            count,
+            cutoff.isoformat(),
         )
 
     return summary
@@ -214,7 +212,7 @@ async def run_daily_consolidation(
 
     Returns a detailed summary dict.
     """
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     summary = {
         "epoch_date": today,
         "namespace": namespace or "all",
@@ -243,9 +241,7 @@ async def run_daily_consolidation(
         namespaces_to_consolidate = [namespace]
     else:
         result = await db.execute(
-            select(Memory.namespace)
-            .where(Memory.consolidation_status == "pending")
-            .distinct()
+            select(Memory.namespace).where(Memory.consolidation_status == "pending").distinct()
         )
         namespaces_to_consolidate = [row[0] for row in result.fetchall()]
 
@@ -259,7 +255,7 @@ async def run_daily_consolidation(
         ns_summary = {"pushed": 0, "failed": 0, "entity_ids": []}
 
         # Fetch pending memories for this namespace (older than 24h)
-        cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+        cutoff_24h = datetime.now(UTC) - timedelta(hours=24)
         result = await db.execute(
             select(Memory)
             .where(
@@ -283,7 +279,7 @@ async def run_daily_consolidation(
                 .values(
                     consolidation_status="consolidating",
                     epoch_date=today,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                 )
             )
             await db.commit()
@@ -292,14 +288,13 @@ async def run_daily_consolidation(
             entity_id = None
             try:
                 if cognition_bridge is not None:
-                    entity_id = await _push_to_cognition_os(
-                        cognition_bridge, memory, ns, today
-                    )
+                    entity_id = await _push_to_cognition_os(cognition_bridge, memory, ns, today)
                 else:
                     # No bridge available — log and skip (graceful degradation)
                     logger.warning(
                         "consolidation_skipped_no_bridge memory_id=%s namespace=%s",
-                        memory.memory_id, ns,
+                        memory.memory_id,
+                        ns,
                     )
                     # Revert to pending for retry
                     await db.execute(
@@ -318,7 +313,7 @@ async def run_daily_consolidation(
                     .values(
                         consolidation_status="archived",
                         cognition_entity_id=entity_id,
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 await db.commit()
@@ -330,7 +325,9 @@ async def run_daily_consolidation(
                 # Circuit breaker: revert to pending for retry
                 logger.error(
                     "consolidation_push_failed memory_id=%s namespace=%s error=%s",
-                    memory.memory_id, ns, exc,
+                    memory.memory_id,
+                    ns,
+                    exc,
                 )
                 await db.execute(
                     update(Memory)
@@ -344,7 +341,9 @@ async def run_daily_consolidation(
         summary["consolidated"][ns] = ns_summary
         logger.info(
             "consolidation_complete namespace=%s pushed=%d failed=%d",
-            ns, ns_summary["pushed"], ns_summary["failed"],
+            ns,
+            ns_summary["pushed"],
+            ns_summary["failed"],
         )
 
     return summary

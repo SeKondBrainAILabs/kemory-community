@@ -18,10 +18,8 @@ Gracefully degrades — logs and skips when Cognition OS unreachable.
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -43,7 +41,7 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
 
 # ── Relationship type mapping: KMV → Cognition OS RelationshipType ───────
 _REL_TYPE_MAP: dict[str, str] = {
-    "HAS_ENTITY": "EXTRACTED_FROM",     # reversed direction in CogOS
+    "HAS_ENTITY": "EXTRACTED_FROM",  # reversed direction in CogOS
     "CO_OCCURS_WITH": "CO_OCCURS_WITH",
     "TAGGED_WITH": "RELATED_TO",
 }
@@ -136,6 +134,7 @@ class CognitionBridge:
         """
         # Lazy import: tenancy → auth → settings cycles otherwise.
         from backend.core.tenancy import current_org_id
+
         return current_org_id() or self._fallback_org_id
 
     async def close(self) -> None:
@@ -212,21 +211,25 @@ class CognitionBridge:
         description = content[:500] if len(content) > 500 else content
         name = f"memory:{memory_id[:8]}"
 
-        result = await self._request("POST", "/v1/graphs/nodes", json={
-            "name": name,
-            "node_type": node_type,
-            "description": description,
-            "graph_type": "concept",
-            "metadata": {
-                "memory_id": memory_id,
-                "namespace": namespace,
-                "user_id": user_id,
-                "content_type": content_type,
-                "source_agent": source_agent,
-                "project": project or namespace,
-                "source": "kemory",
+        result = await self._request(
+            "POST",
+            "/v1/graphs/nodes",
+            json={
+                "name": name,
+                "node_type": node_type,
+                "description": description,
+                "graph_type": "concept",
+                "metadata": {
+                    "memory_id": memory_id,
+                    "namespace": namespace,
+                    "user_id": user_id,
+                    "content_type": content_type,
+                    "source_agent": source_agent,
+                    "project": project or namespace,
+                    "source": "kemory",
+                },
             },
-        })
+        )
 
         if result and "id" in result:
             node_id = result["id"]
@@ -266,18 +269,22 @@ class CognitionBridge:
             entity_name = entity.get("name", "unknown")
             entity_id = entity.get("entity_id", str(uuid.uuid4()))
 
-            result = await self._request("POST", "/v1/graphs/nodes", json={
-                "name": entity_name,
-                "node_type": node_type,
-                "description": entity.get("context", ""),
-                "graph_type": "concept",
-                "metadata": {
-                    "confidence": entity.get("confidence", 1.0),
-                    "source_memory_id": memory_id,
-                    "kmv_entity_id": entity_id,
-                    "source": "kemory",
+            result = await self._request(
+                "POST",
+                "/v1/graphs/nodes",
+                json={
+                    "name": entity_name,
+                    "node_type": node_type,
+                    "description": entity.get("context", ""),
+                    "graph_type": "concept",
+                    "metadata": {
+                        "confidence": entity.get("confidence", 1.0),
+                        "source_memory_id": memory_id,
+                        "kmv_entity_id": entity_id,
+                        "source": "kemory",
+                    },
                 },
-            })
+            )
 
             if result and "id" in result:
                 node_id_map[entity_id] = result["id"]
@@ -299,11 +306,15 @@ class CognitionBridge:
             )
 
             if source_id and target_id:
-                result = await self._request("POST", "/v1/graphs/relationships", json={
-                    "source_id": source_id,
-                    "target_id": target_id,
-                    "rel_type": rel_type,
-                })
+                result = await self._request(
+                    "POST",
+                    "/v1/graphs/relationships",
+                    json={
+                        "source_id": source_id,
+                        "target_id": target_id,
+                        "rel_type": rel_type,
+                    },
+                )
                 if result:
                     created_rels += 1
 
@@ -314,18 +325,24 @@ class CognitionBridge:
                 eid = entity.get("entity_id", "")
                 cog_id = node_id_map.get(eid)
                 if cog_id:
-                    batch_entities.append({
-                        "entity_id": cog_id,
-                        "name": entity.get("name", ""),
-                        "description": entity.get("context", ""),
-                        "node_type": _ENTITY_TYPE_MAP.get(
-                            entity.get("entity_type", "CONCEPT"), "Concept"
-                        ),
-                    })
+                    batch_entities.append(
+                        {
+                            "entity_id": cog_id,
+                            "name": entity.get("name", ""),
+                            "description": entity.get("context", ""),
+                            "node_type": _ENTITY_TYPE_MAP.get(
+                                entity.get("entity_type", "CONCEPT"), "Concept"
+                            ),
+                        }
+                    )
             if batch_entities:
-                await self._request("POST", "/v1/concepts/vectors/batch", json={
-                    "entities": batch_entities,
-                })
+                await self._request(
+                    "POST",
+                    "/v1/concepts/vectors/batch",
+                    json={
+                        "entities": batch_entities,
+                    },
+                )
 
         summary = {"created_nodes": created_nodes, "created_rels": created_rels}
         logger.info("cognition_bridge.entities_upserted", memory_id=memory_id, **summary)
@@ -349,11 +366,15 @@ class CognitionBridge:
         if not self.enabled:
             return []
 
-        result = await self._request("POST", "/v1/search", json={
-            "query": query,
-            "top_k": top_k,
-            "filters": {"min_score": min_score},
-        })
+        result = await self._request(
+            "POST",
+            "/v1/search",
+            json={
+                "query": query,
+                "top_k": top_k,
+                "filters": {"min_score": min_score},
+            },
+        )
 
         if not result or "results" not in result:
             return []
@@ -391,6 +412,7 @@ def get_cognition_bridge() -> CognitionBridge:
     global _bridge
     if _bridge is None:
         from backend.config.settings import settings
+
         _bridge = CognitionBridge(
             base_url=getattr(settings, "cognition_os_url", ""),
             auth_token=getattr(settings, "cognition_os_auth_token", ""),

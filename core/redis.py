@@ -10,11 +10,13 @@ consumers gracefully skip when redis_client is None.
 
 Story: MV2-S06.3 — Make Redis Optional
 """
+
 import asyncio
 import os
 
-import structlog
 import redis.asyncio as aioredis
+import structlog
+
 from backend.config.settings import settings
 
 logger = structlog.get_logger(__name__)

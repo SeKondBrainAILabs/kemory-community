@@ -4,11 +4,12 @@ S9N Memory Vault — JIT Consent Request Model
 Spec reference: Appendix A.1, Table s9nmv_consent_requests
 Stores Just-in-Time consent prompts sent to users when agents request elevated access.
 """
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import (
-    Column, String, DateTime, Index
-)
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, Index, String
+
 from backend.core.database import Base
 from backend.core.types import GUID, JSONType
 
@@ -21,6 +22,7 @@ class ConsentRequest(Base):
     The user must approve or deny the request within the timeout period (default: 60s).
     If the timeout expires, the default action is DENY.
     """
+
     __tablename__ = "s9nmv_consent_requests"
 
     consent_id = Column(
@@ -76,7 +78,7 @@ class ConsentRequest(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     expires_at = Column(

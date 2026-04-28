@@ -13,22 +13,21 @@ Performance:
 - API key auth uses a SHA-256 prefix for O(1) DB lookup (no bcrypt scan)
 - In-memory TTL cache avoids repeated bcrypt verification (~170ms/call)
 """
-import uuid
-import secrets
-import hashlib
-import time
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 
-from jose import jwt, JWTError
+import hashlib
+import secrets
+import time
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import bcrypt
+from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
 from backend.models.agent import AgentRegistry
-
 
 # ─── Password / API Key Hashing ──────────────────────────────────
 # P4 #24: dropped passlib (depends on stdlib `crypt` removed in Python 3.13).
@@ -60,6 +59,7 @@ _AUTH_CACHE_TTL = 300  # seconds
 # the asyncio event loop (FastAPI request handlers). The critical sections
 # are tiny (a handful of dict ops) so contention is negligible.
 import asyncio as _asyncio
+
 _auth_cache_lock = _asyncio.Lock()
 
 
@@ -71,6 +71,7 @@ class AuthContext(BaseModel):
     They default to empty values so existing single-tenant code paths keep
     working while TENANT_ENFORCEMENT='off'.
     """
+
     user_id: uuid.UUID
     agent_id: uuid.UUID | None = None
     agent_name: str = ""
@@ -100,16 +101,18 @@ class AuthContext(BaseModel):
 
 class TokenPayload(BaseModel):
     """JWT token payload structure."""
-    sub: str          # agent_id
+
+    sub: str  # agent_id
     user_id: str
     agent_name: str
     scopes: list[str]
     exp: datetime
     iat: datetime
-    jti: str          # unique token ID for revocation
+    jti: str  # unique token ID for revocation
 
 
 # ─── JWT Operations ──────────────────────────────────────────────
+
 
 def create_access_token(
     agent_id: uuid.UUID,
@@ -136,7 +139,7 @@ def create_access_token(
     Returns:
         Encoded JWT string
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.jwt_expiry_minutes)
 
@@ -187,6 +190,7 @@ def decode_access_token(token: str) -> AuthContext | None:
 
 
 # ─── API Key Operations ──────────────────────────────────────────
+
 
 def _prehash_key(key: str) -> str:
     """
@@ -340,7 +344,7 @@ async def authenticate_api_key(
     if agent and verify_api_key(api_key, agent.api_key_hash):
         ctx = _build_auth_context(agent)
         await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
-        agent.last_active_at = datetime.now(timezone.utc)
+        agent.last_active_at = datetime.now(UTC)
         await db.flush()
         return ctx
 
@@ -357,7 +361,7 @@ async def authenticate_api_key(
             if verify_api_key(api_key, agent.api_key_hash):
                 # Backfill the prefix for next time
                 agent.api_key_prefix = prefix
-                agent.last_active_at = datetime.now(timezone.utc)
+                agent.last_active_at = datetime.now(UTC)
                 await db.flush()
 
                 ctx = _build_auth_context(agent)
@@ -384,7 +388,7 @@ def _build_auth_context(agent: AgentRegistry) -> AuthContext:
 
     # Pre-WS-5 keys have NULL org_id — fall back to the migration sentinel
     # so they keep working until ops reassigns them in P4 rollout phase.
-    org_id = (agent.org_id or settings.tenant_legacy_sentinel)
+    org_id = agent.org_id or settings.tenant_legacy_sentinel
 
     return AuthContext(
         user_id=agent.user_id,

@@ -5,11 +5,10 @@ Pluggable email delivery: SMTP, SendGrid, or Resend.
 Renders Jinja2 HTML templates with SeKondBrain branding.
 All sends are best-effort (fire-and-forget with logging).
 """
-import asyncio
+
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
 
 import aiosmtplib
 import structlog

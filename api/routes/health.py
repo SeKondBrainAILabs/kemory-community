@@ -8,9 +8,11 @@ Three-tier health check system:
 
 Spec reference: Section 10, Appendix B.1
 """
-from fastapi import APIRouter, Depends
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
+
 import structlog
+from fastapi import APIRouter
 
 from backend.config.settings import settings
 
@@ -23,6 +25,7 @@ _falkordb_client = None
 def _get_falkordb_url() -> str:
     """Return the FalkorDB Redis URL from env or settings."""
     import os
+
     return os.environ.get("FALKORDB_URL", "") or getattr(settings, "neo4j_uri", "redis://localhost:6379")
 
 
@@ -40,7 +43,7 @@ async def liveness():
         "status": "alive",
         "service": settings.app_name,
         "version": settings.app_version,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -57,10 +60,9 @@ async def readiness():
     # Check PostgreSQL
     try:
         from backend.core.database import engine
+
         async with engine.connect() as conn:
-            await conn.execute(
-                __import__("sqlalchemy").text("SELECT 1")
-            )
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
         checks["postgres"] = {"status": "healthy", "latency_ms": 0}
     except Exception as e:
         checks["postgres"] = {"status": "unhealthy", "error": str(e)}
@@ -69,6 +71,7 @@ async def readiness():
     # Check Redis
     try:
         from backend.core.redis import redis_client
+
         if redis_client:
             await redis_client.ping()
             checks["redis"] = {"status": "healthy", "latency_ms": 0}
@@ -81,12 +84,13 @@ async def readiness():
 
     status_code = 200 if all_healthy else 503
     from fastapi.responses import JSONResponse
+
     return JSONResponse(
         status_code=status_code,
         content={
             "status": "ready" if all_healthy else "not_ready",
             "checks": checks,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )
 
@@ -102,13 +106,13 @@ async def deep_health():
 
     # Check PostgreSQL
     try:
-        from backend.core.database import engine
         import time
+
+        from backend.core.database import engine
+
         start = time.monotonic()
         async with engine.connect() as conn:
-            await conn.execute(
-                __import__("sqlalchemy").text("SELECT 1")
-            )
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
         latency = round((time.monotonic() - start) * 1000, 2)
         checks["postgres"] = {"status": "healthy", "latency_ms": latency}
     except Exception as e:
@@ -117,8 +121,10 @@ async def deep_health():
 
     # Check Redis
     try:
-        from backend.core.redis import redis_client
         import time
+
+        from backend.core.redis import redis_client
+
         start = time.monotonic()
         if redis_client:
             await redis_client.ping()
@@ -134,7 +140,9 @@ async def deep_health():
     # Check FalkorDB (Redis-based graph DB)
     try:
         import time
+
         import redis.asyncio as aioredis
+
         start = time.monotonic()
         falkordb_url = _get_falkordb_url()
         r = aioredis.from_url(falkordb_url, socket_connect_timeout=5)
@@ -149,7 +157,9 @@ async def deep_health():
     # Check Weaviate
     try:
         import time
+
         import httpx
+
         start = time.monotonic()
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -167,7 +177,9 @@ async def deep_health():
     if settings.keycloak_enabled:
         try:
             import time
+
             import httpx
+
             start = time.monotonic()
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
@@ -183,6 +195,7 @@ async def deep_health():
 
     status_code = 200 if all_healthy else 503
     from fastapi.responses import JSONResponse
+
     return JSONResponse(
         status_code=status_code,
         content={
@@ -191,6 +204,6 @@ async def deep_health():
             "version": settings.app_version,
             "environment": settings.environment,
             "checks": checks,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )

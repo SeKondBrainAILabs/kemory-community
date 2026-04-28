@@ -11,33 +11,36 @@ Business rules:
 - API key is generated at registration and shown ONCE
 - Callback URLs must not point to internal/private IPs
 """
-import uuid
+
 import ipaddress
-from datetime import datetime, timezone
-from typing import Optional
+import uuid
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.agent import AgentRegistry
-from backend.services.auth_service import generate_api_key, create_access_token
-
+from backend.services.auth_service import create_access_token, generate_api_key
 
 # ─── Request/Response Schemas ─────────────────────────────────────
 
+
 class ScopeDeclaration(BaseModel):
     """A single scope declaration from an agent."""
+
     scope: str = Field(..., min_length=1, max_length=100, description="Scope string e.g. 'memory:read'")
     reason: str = Field(..., min_length=1, max_length=500, description="Why the agent needs this scope")
 
 
 class AgentRegistrationRequest(BaseModel):
     """Request body for registering a new agent."""
+
     agent_name: str = Field(..., min_length=1, max_length=100, description="Human-readable agent name")
     agent_description: str = Field(..., min_length=1, max_length=500, description="What the agent does")
-    declared_scopes: list[ScopeDeclaration] = Field(..., min_length=1, description="Scopes the agent requires")
+    declared_scopes: list[ScopeDeclaration] = Field(
+        ..., min_length=1, description="Scopes the agent requires"
+    )
     callback_url: str | None = Field(None, max_length=2048, description="Agent callback URL")
 
     @field_validator("callback_url")
@@ -65,6 +68,7 @@ class AgentRegistrationRequest(BaseModel):
 
 class AgentRegistrationResponse(BaseModel):
     """Response body after successful agent registration."""
+
     agent_id: str
     agent_name: str
     status: str
@@ -75,6 +79,7 @@ class AgentRegistrationResponse(BaseModel):
 
 class AgentResponse(BaseModel):
     """Public agent info (no API key)."""
+
     agent_id: str
     agent_name: str
     agent_description: str
@@ -88,6 +93,7 @@ class AgentResponse(BaseModel):
 
 
 # ─── Service Functions ────────────────────────────────────────────
+
 
 async def register_agent(
     user_id: uuid.UUID,
@@ -136,9 +142,11 @@ async def register_agent(
     # via settings.max_agents_per_user); raises ValueError → 409 at
     # the route layer, mapped from the existing duplicate-name path.
     from backend.config.settings import settings as _settings
-    from sqlalchemy import func
+
     count_result = await db.execute(
-        select(func.count()).select_from(AgentRegistry).where(
+        select(func.count())
+        .select_from(AgentRegistry)
+        .where(
             AgentRegistry.user_id == user_id,
             AgentRegistry.status != "revoked",
         )
@@ -282,9 +290,7 @@ async def get_agent(
     check is bypassed so Memory Vault admins can inspect any agent.
     """
     if admin_view:
-        result = await db.execute(
-            select(AgentRegistry).where(AgentRegistry.agent_id == agent_id)
-        )
+        result = await db.execute(select(AgentRegistry).where(AgentRegistry.agent_id == agent_id))
         agent = result.scalar_one_or_none()
         if not agent:
             raise ValueError("Agent not found")
@@ -358,6 +364,7 @@ async def generate_token_for_agent(
 
 
 # ─── Internal Helpers ─────────────────────────────────────────────
+
 
 async def _get_agent_for_user(
     agent_id: uuid.UUID,
