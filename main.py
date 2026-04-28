@@ -24,6 +24,7 @@ from backend.api.routes.waitlist import public_router as waitlist_router, admin_
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
 from backend.api.routes.me import router as me_router  # WS-11: identity
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
+from backend.core.body_size_limit import body_size_limit_middleware
 from backend.core.tenant_rate_limit import tenant_rate_limit_middleware
 
 logger = structlog.get_logger(__name__)
@@ -89,6 +90,13 @@ app.add_middleware(
 # expensive auth/db work. The middleware reads the ContextVars set by
 # get_tenant_scope; unauthenticated routes pass through unchanged.
 app.middleware("http")(tenant_rate_limit_middleware)
+
+# Body size limit (P4 #22). Mounted AFTER the rate-limit middleware so it
+# registers as the OUTERMOST layer and runs first on the inbound path —
+# rejecting oversized payloads before the rate-limiter does any Redis work
+# or auth runs any bcrypt verification. ASGI middleware ordering: the last
+# .middleware() registered is the first to run.
+app.middleware("http")(body_size_limit_middleware)
 
 # ─── Routes ──────────────────────────────────────────────────────
 app.include_router(health_router)

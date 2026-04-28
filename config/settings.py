@@ -4,7 +4,38 @@ S9N Memory Vault — Application Settings
 Centralized configuration using pydantic-settings v2.
 All values are loaded from environment variables with sensible defaults for development.
 """
+import re
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# ─── CORS validator (P1 #6) ────────────────────────────────────────────────
+# Validates each entry has scheme + host. Runs at model_post_init time so
+# misconfigured CORS_ORIGINS fails kemory startup instead of producing
+# silent CORS errors at the customer's browser. The cors_origins field
+# stays a CSV string (matching env shape) and is parsed via the
+# cors_origins_list property; validation guarantees the property never
+# returns a malformed entry.
+_CORS_ORIGIN_RE = re.compile(r"^https?://[^\s,]+$")
+
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    """Split CSV, strip, dedupe, validate each entry. Empty input → []."""
+    if not raw:
+        return []
+    items = [s.strip() for s in raw.split(",") if s.strip()]
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in items:
+        if not _CORS_ORIGIN_RE.match(entry):
+            raise ValueError(
+                f"CORS origin {entry!r} is not a valid http(s) URL — "
+                "did you forget the scheme? expected e.g. 'https://app.example.com'"
+            )
+        if entry not in seen:
+            seen.add(entry)
+            out.append(entry)
+    return out
 
 
 class Settings(BaseSettings):
@@ -25,8 +56,11 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # ─── CORS ─────────────────────────────────────────────────────
+    # P1 #6: stays a CSV string (matches env-var shape) but is validated
+    # at model_post_init — invalid entries (missing scheme, etc.) fail
+    # kemory startup instead of producing silent CORS errors at the
+    # customer's browser. Parsed view via .cors_origins_list.
     cors_origins: str = "http://localhost:3000,http://localhost:3002,http://localhost:3003"
-    """Comma-separated list of allowed CORS origins."""
 
     # ─── PostgreSQL ───────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://kora:kora_secret@localhost:5432/kora_vault"
@@ -82,6 +116,12 @@ class Settings(BaseSettings):
     # Hard cap on agents per user. Prevents a single user from spamming
     # the agent_registry table after they obtain a Keycloak token.
     max_agents_per_user: int = 50
+
+    # P4 #22: hard cap on request body size. Default 1 MiB is generous
+    # for typical memories (a long conversation summary is ~5 KB) and
+    # tight enough to prevent a malicious 10 GB body from OOMing the
+    # worker. Override per env if a real ingest endpoint needs more.
+    max_request_body_bytes: int = 1_048_576
 
     # ─── Keycloak (RS256 for human users) ─────────────────────────
     keycloak_enabled: bool = False
@@ -140,18 +180,34 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        """Parse comma-separated CORS origins into a list."""
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        """Validated, deduplicated list of CORS origins.
+        Validated at startup by model_post_init — this just returns the
+        already-known-good split.
+        """
+        return _parse_cors_origins(self.cors_origins)
 
     def model_post_init(self, __context) -> None:
         """Apply security policies that depend on multiple fields.
 
-        Codebase review P1 #5 — JWT secret fail-closed:
-        * non-dev with empty/placeholder secret → refuse to start.
-        * dev with empty secret → generate an ephemeral random key
-          (different on every process boot) and log a clear WARNING.
-          Never reuse the placeholder string the previous default shipped.
+        P1 #5 — JWT secret fail-closed:
+          * non-dev with empty/placeholder secret → refuse to start.
+          * dev with empty secret → generate ephemeral random key, log WARN.
+
+        P1 #6 — CORS origins format validation:
+          Misformatted CORS_ORIGINS (missing scheme, etc.) makes kemory
+          refuse to start. Better than silent CORS errors in the customer's
+          browser console.
         """
+        # P1 #6: CORS validation. Re-parse to surface format errors at
+        # startup; the validator raises ValueError on malformed entries.
+        try:
+            _parse_cors_origins(self.cors_origins)
+        except ValueError as exc:
+            raise ValueError(
+                f"CORS_ORIGINS is malformed: {exc}. Refusing to start."
+            ) from exc
+
+
         legacy_placeholders = {"", "dev-secret-change-in-production", "change-me"}
         if self.jwt_secret_key in legacy_placeholders:
             if self.environment in {"staging", "production", "prod"}:
