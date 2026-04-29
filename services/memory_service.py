@@ -401,6 +401,36 @@ async def create_memory(
 
         org_id = _settings.tenant_legacy_sentinel
 
+    # S9N-EMBED: generate embedding INLINE during create_memory.
+    #
+    # Previous design used asyncio.create_task() to embed in the background
+    # so the request returned fast. In practice this was unreliable: many
+    # bg tasks got cancelled when FastAPI completed the parent request loop,
+    # leaving rows with embedding=NULL silently — no log, no retry. Result:
+    # ~50% of stored memories were invisible to dense search and recall
+    # ranking was random.
+    #
+    # The encoder is a local sentence-transformers (bge-small-en-v1.5) call
+    # at ~30ms per short content; sub-second for typical fact/preference
+    # writes. The latency hit on the request is preferable to a memory
+    # that's silently unsearchable. If the encoder fails (e.g. model not
+    # loaded yet on a cold pod), we log and store with embedding=NULL so
+    # the row at least exists; the recovery path in enrich_memory will
+    # backfill it on the next manual enrichment trigger.
+    embedding_vec: list[float] | None = None
+    embedding_model: str | None = None
+    try:
+        from memory_vault.embeddings.encoder import encode as _embed
+
+        embedding_vec = list(_embed(request.content))
+        embedding_model = "bge-small-en-v1.5"
+    except Exception as exc:
+        logger.warning(
+            "embedding.inline_failed",
+            namespace=request.namespace,
+            error=str(exc),
+        )
+
     memory = Memory(
         user_id=user_id,
         org_id=org_id,
@@ -425,12 +455,9 @@ async def create_memory(
         # MV3-E01: Visibility
         visibility=request.visibility,
         team_id=uuid.UUID(request.team_id) if request.team_id else None,
+        embedding=embedding_vec,
+        embedding_model=embedding_model,
     )
-
-    # S9N-EMBED: Embedding is generated asynchronously after the memory is
-    # committed, so create_memory returns fast. The backfill runs in a
-    # background task and updates the row in-place. For bulk ingestion,
-    # use scripts/backfill_embeddings.py instead for maximum throughput.
 
     db.add(memory)
 
@@ -522,54 +549,32 @@ async def create_memory(
     # uses successfully today.
     from backend.core.database import _get_session_factory as _db_factory
 
-    # S9N-EMBED: Fire-and-forget embedding generation (bge-small-en-v1.5, 384-dim).
-    async def _bg_embed(mem_id: uuid.UUID, content: str) -> None:
-        try:
-            from sqlalchemy import text as _sql
-
-            from memory_vault.embeddings.encoder import encode as _embed
-
-            vec = _embed(content)
-            async with _db_factory()() as own_db:
-                async with own_db.begin():
-                    await own_db.execute(
-                        _sql(
-                            "UPDATE kemory_memories "
-                            "SET embedding = :vec, embedding_model = :model "
-                            "WHERE memory_id = :mid"
-                        ),
-                        {
-                            "vec": list(vec),
-                            "model": "bge-small-en-v1.5",
-                            "mid": str(mem_id),
-                        },
-                    )
-        except Exception as exc:
-            logger.warning(
-                "embedding.bg_failed",
-                memory_id=str(mem_id),
-                error=str(exc),
-            )
-
-    try:
-        asyncio.create_task(
-            _bg_embed(memory.memory_id, request.content),
-            name=f"embed:{memory.memory_id}",
-        )
-    except Exception:
-        logger.debug("embedding.task_skipped")
+    # S9N-EMBED: embedding is now generated inline above (see "embedding_vec"
+    # block). The previous _bg_embed via asyncio.create_task was unreliable —
+    # bg tasks got cancelled when the parent request loop completed, leaving
+    # ~50% of memories with embedding=NULL and no log trail.
 
     # S9N-ENRICH: Fire-and-forget enrichment (entity extraction, concept tagging,
     # quality scoring). Runs in the background so create_memory returns fast.
     # enrich_memory only flushes — we own the commit here; without it the
     # quality_score / enrichment_status / enrichment metadata get rolled back
     # when the session context exits.
+    #
+    # WS-2 fix: bg tasks DO NOT inherit the request's tenancy ContextVar
+    # (asyncio.create_task spawns a fresh context). Without bypass_tenant_filter()
+    # the SELECT in enrich_memory hits the global filter with org_id="" → the
+    # always-false predicate (org_id == "__no_active_scope__") → ValueError
+    # "Memory not found". We just wrote this memory and have its UUID + user_id;
+    # the bypass is correct because we're operating on a known-by-id row that
+    # the caller is authoritative for.
     async def _bg_enrich(mem_id: uuid.UUID, uid: uuid.UUID) -> None:
         try:
+            from backend.core.tenancy import bypass_tenant_filter
             from backend.services.enrichment_service import enrich_memory as _enrich
 
             async with _db_factory()() as own_db:
-                await _enrich(mem_id, uid, own_db)
+                with bypass_tenant_filter():
+                    await _enrich(mem_id, uid, own_db)
                 await own_db.commit()
         except Exception as exc:
             logger.warning(

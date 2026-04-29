@@ -428,6 +428,42 @@ async def enrich_memory(
     if not memory:
         raise ValueError(f"Memory not found: {memory_id}")
 
+    # Stage 0: Embedding backfill — recovery path for memories that landed
+    # with embedding=NULL (e.g. cold pod where the inline encoder hadn't yet
+    # loaded the model, or pre-fix rows where the bg embed task was killed).
+    # Without this, dense vector search permanently misses those rows. We
+    # encode on-demand here so re-running enrich on a stale memory makes it
+    # searchable again.
+    if memory.embedding is None:
+        try:
+            from sqlalchemy import text as _sql
+
+            from memory_vault.embeddings.encoder import encode as _embed
+
+            vec = list(_embed(memory.content))
+            await db.execute(
+                _sql(
+                    "UPDATE kemory_memories "
+                    "SET embedding = :vec, embedding_model = :model "
+                    "WHERE memory_id = :mid"
+                ),
+                {
+                    "vec": vec,
+                    "model": "bge-small-en-v1.5",
+                    "mid": str(memory_id),
+                },
+            )
+            logger.info(
+                "embedding.backfilled_via_enrich",
+                memory_id=str(memory_id),
+            )
+        except Exception as exc:
+            logger.warning(
+                "embedding.backfill_failed",
+                memory_id=str(memory_id),
+                error=str(exc),
+            )
+
     # Stage 1: Entity extraction
     entities = await extract_entities(memory.content)
 
