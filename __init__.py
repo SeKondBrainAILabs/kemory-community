@@ -10,4 +10,4 @@ No API key in any config file. The MCP bridge reads ~/.kemory/credentials,
 refreshes the access token in the background, and forwards it as a Bearer.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
