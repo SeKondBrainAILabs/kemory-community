@@ -1133,8 +1133,7 @@ async def list_namespaces(
         # Pre-filter to rules that apply to this agent + scope. Namespace
         # filter is per-namespace.
         agent_scope_rules = [
-            r for r in rules
-            if _matches_agent(r, agent_id) and _matches_scope(r, "memory:read")
+            r for r in rules if _matches_agent(r, agent_id) and _matches_scope(r, "memory:read")
         ]
 
         def _allowed(ns: str) -> bool:

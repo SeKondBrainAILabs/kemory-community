@@ -15,7 +15,7 @@ Stories: F02-US-001 (scope declaration), F02-US-002 (default-deny),
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,10 +80,20 @@ class GatekeeperDecision(BaseModel):
 class EvaluationRequest(BaseModel):
     """Request to evaluate a permission."""
 
-    agent_id: str
+    agent_id: str | None = None
     scope: str
     resource: str | None = None  # namespace or memory ID
     namespace: str | None = None
+
+    @field_validator("agent_id", mode="before")
+    @classmethod
+    def _coerce_none_string(cls, v):
+        # Defensive: callers historically did `str(agent_id)` which turns
+        # None into the literal string "None". Coerce that back to None so
+        # downstream uuid.UUID(...) never sees "None".
+        if v in (None, "None", "none", ""):
+            return None
+        return v
 
 
 # ─── Validation ───────────────────────────────────────────────────
@@ -154,7 +164,11 @@ async def create_rule(
     rule = PermissionRule(
         user_id=user_id,
         org_id=org_id,
-        agent_id=uuid.UUID(request.agent_id) if request.agent_id else None,
+        agent_id=(
+            uuid.UUID(request.agent_id)
+            if request.agent_id and request.agent_id not in ("None", "none")
+            else None
+        ),
         scope=request.scope,
         action=request.action,
         priority=request.priority,
@@ -325,6 +339,27 @@ async def evaluate(
     import time
 
     start = time.monotonic()
+
+    # Bearer (Keycloak human) flow has no agent_id — the request comes from a
+    # browser/CLI user, not a registered agent. Memory ownership is enforced at
+    # the storage layer by user_id (and org_id by the tenancy guard). The
+    # agent-level gatekeeper rule system is for agent-to-agent permission
+    # checks, not for the user accessing their own data, so we short-circuit
+    # to allow here. Without this, str(None) → "None" → uuid.UUID("None")
+    # crashes the request before any rule evaluation runs.
+    #
+    # Long-term: JIT-create a kemory_agent_registry row for each Keycloak user
+    # (their `sub` UUID makes a natural agent_id) and run them through the
+    # same rules as API-key agents. Tracked as a follow-up.
+    if not request.agent_id or request.agent_id in ("None", "none", ""):
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        return GatekeeperDecision(
+            allowed=True,
+            outcome="allowed",
+            matched_rule_id=None,
+            reason="bearer_flow_user_owned_data",
+            evaluation_time_ms=elapsed_ms,
+        )
 
     agent_id = uuid.UUID(request.agent_id)
 
