@@ -257,13 +257,20 @@ def keys_grp() -> None:
     default=False,
     help="Grant write access. Default is read-only (least privilege).",
 )
+@click.option(
+    "--reason",
+    default="agent-default",
+    help="Reason attached to each declared scope (audit trail).",
+)
 @click.pass_context
-def keys_create(ctx: click.Context, name: str, description: str, allow_write: bool) -> None:
+def keys_create(ctx: click.Context, name: str, description: str, allow_write: bool, reason: str) -> None:
     """Create an org-scoped API key. Read-only by default — pass --write to allow mutations."""
     creds = _require_creds(ctx)
-    declared_scopes: list[dict[str, str]] = [{"scope": "memory:read"}]
+    # Backend requires `reason` on each declared scope (audit field). Without
+    # it the API rejects the body with 422 (P0 fix in cli-v0.2.1).
+    declared_scopes: list[dict[str, str]] = [{"scope": "memory:read", "reason": reason}]
     if allow_write:
-        declared_scopes.append({"scope": "memory:write"})
+        declared_scopes.append({"scope": "memory:write", "reason": reason})
     body = {
         "agent_name": name,
         "agent_description": description,
