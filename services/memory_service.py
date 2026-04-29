@@ -1103,26 +1103,48 @@ async def list_namespaces(
     policy_rows = (await db.execute(select(NamespacePolicy))).scalars().all()
     policy_by_ns = {p.namespace: p for p in policy_rows}
 
-    # Permission-aware filtering: if we have an agent_id (not admin), ask the
-    # gatekeeper for memory:read on each namespace.
+    # Permission-aware filtering: if we have an agent_id (not admin), filter
+    # namespaces against the user's memory:read rules. The previous version
+    # called evaluate() once per namespace — for users with hundreds of
+    # namespaces (513 observed for the primary tenant), this was O(N) async
+    # DB roundtrips and caused /api/v1/namespaces to time out at 15s in the
+    # dashboard. Pull rules once, evaluate in Python.
     filtered: list[tuple[str, int]] = []
     if agent_id is not None and not admin_view:
-        for ns, count in namespaces:
-            try:
-                decision = await evaluate(
-                    user_id,
-                    EvaluationRequest(
-                        agent_id=str(agent_id),
-                        scope="memory:read",
-                        namespace=ns,
-                    ),
-                    db,
-                )
-                if decision.allowed:
-                    filtered.append((ns, count))
-            except Exception:
-                # Fail closed on evaluation errors to preserve isolation
-                continue
+        from backend.models.permission import PermissionRule
+        from backend.services.gatekeeper_service import (
+            _matches_agent,
+            _matches_namespace,
+            _matches_scope,
+        )
+
+        # All active rules for this user, priority-ordered (lowest = first
+        # to evaluate per the gatekeeper contract).
+        rules_result = await db.execute(
+            select(PermissionRule)
+            .where(
+                PermissionRule.user_id == user_id,
+                PermissionRule.is_active == True,  # noqa: E712
+            )
+            .order_by(PermissionRule.priority.asc())
+        )
+        rules = rules_result.scalars().all()
+
+        # Pre-filter to rules that apply to this agent + scope. Namespace
+        # filter is per-namespace.
+        agent_scope_rules = [
+            r for r in rules
+            if _matches_agent(r, agent_id) and _matches_scope(r, "memory:read")
+        ]
+
+        def _allowed(ns: str) -> bool:
+            for rule in agent_scope_rules:  # priority order, first-match wins
+                if not _matches_namespace(rule, ns):
+                    continue
+                return rule.action == "allow"
+            return False  # default-deny
+
+        filtered = [(ns, count) for ns, count in namespaces if _allowed(ns)]
     else:
         filtered = namespaces
 
