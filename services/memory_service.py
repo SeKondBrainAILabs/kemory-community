@@ -398,6 +398,7 @@ async def create_memory(
     # scripts).
     if not org_id:
         from backend.config.settings import settings as _settings
+
         org_id = _settings.tenant_legacy_sentinel
 
     memory = Memory(

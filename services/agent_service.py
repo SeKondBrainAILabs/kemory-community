@@ -165,6 +165,7 @@ async def register_agent(
     # org-aware yet so we don't 500 on registration.
     if not org_id:
         from backend.config.settings import settings as _settings
+
         org_id = _settings.tenant_legacy_sentinel
 
     agent = AgentRegistry(

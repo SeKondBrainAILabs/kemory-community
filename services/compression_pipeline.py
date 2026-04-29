@@ -917,9 +917,7 @@ async def _summarize_with_groq(
 
     base_url = os.environ.get("CORE_AI_BACKEND_URL") or os.environ.get("AI_BACKEND_URL")
     if not base_url:
-        raise RuntimeError(
-            "CORE_AI_BACKEND_URL not set — L3 narrative summary cannot run"
-        )
+        raise RuntimeError("CORE_AI_BACKEND_URL not set — L3 narrative summary cannot run")
 
     memories_text = "\n".join(f"[{i+1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
 
@@ -1079,6 +1077,7 @@ async def _maybe_synthesize_l3_1(
         src_org_id = (sources[0].get("org_id") or "") if isinstance(sources[0], dict) else ""
     if not src_org_id:
         from backend.config.settings import settings as _settings
+
         src_org_id = _settings.tenant_legacy_sentinel
 
     concept_memory = Memory(
@@ -1189,9 +1188,7 @@ async def _synthesize_concept(
 
         def __init__(self, mems: list[dict]) -> None:
             self._mems = mems
-            self._by_content: dict[str, dict] = {
-                str(m.get("content", "")): m for m in mems
-            }
+            self._by_content: dict[str, dict] = {str(m.get("content", "")): m for m in mems}
             self._enc_cache: dict[str, list[float] | None] = {}
 
         def _embedding_for(self, mem: dict) -> list[float] | None:
@@ -1231,7 +1228,7 @@ async def _synthesize_concept(
                 if not vec or len(vec) != len(target_vec):
                     continue
                 # Embeddings are L2-normalised → cosine = dot product.
-                sim = sum(a * b for a, b in zip(target_vec, vec))
+                sim = sum(a * b for a, b in zip(target_vec, vec, strict=False))
                 if sim >= self._SIM_THRESHOLD:
                     # _group_by_similarity in concept.py filters by
                     # hit.get("similarity_score") — without this field

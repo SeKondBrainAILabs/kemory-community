@@ -231,8 +231,11 @@ async def require_auth(
     try:
         from backend.config.settings import settings as _settings
         from backend.core.tenancy import (
-            _current_org_id, _current_user_id, _current_team_ids,
+            _current_org_id,
+            _current_team_ids,
+            _current_user_id,
         )
+
         org_id = auth.org_id or _settings.tenant_legacy_sentinel
         _current_org_id.set(org_id)
         _current_user_id.set(str(auth.user_id))
