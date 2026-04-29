@@ -144,7 +144,14 @@ async def _handle_store_memory(args, user_id, agent_id, db):
         metadata=args.get("metadata"),
         ttl_seconds=args.get("ttl_seconds"),
     )
-    memory = await create_memory(user_id, agent_id, request, db)
+    # WS-2: pull the request-scoped org_id (set by require_auth) so the row
+    # is tagged with the caller's tenant rather than falling through to the
+    # legacy sentinel. Without this, MCP-stored memories were ending up
+    # with org_id="legacy" — a tenant leak.
+    from backend.core.tenancy import current_org_id
+
+    org_id = current_org_id() or None
+    memory = await create_memory(user_id, agent_id, request, db, org_id=org_id)
     return MCPToolResult(
         content=[
             {
