@@ -354,15 +354,22 @@ async def authenticate_api_key(
                     if not agent_keys:
                         _auth_cache_by_agent.pop(str(ctx.agent_id), None)
 
-    # 2. Try prefix-based O(1) lookup
+    # 2. Try prefix-based O(1) lookup. The PR #17 SQLAlchemy tenant filter
+    # would otherwise zero-out this SELECT — auth runs BEFORE the tenant
+    # scope is established (chicken-and-egg: we look up the agent in
+    # order to learn its org_id), so bypass the filter for the auth
+    # query specifically.
+    from backend.core.tenancy import bypass_tenant_filter
+
     prefix = _compute_key_prefix(api_key)
-    result = await db.execute(
-        select(AgentRegistry).where(
-            AgentRegistry.api_key_prefix == prefix,
-            AgentRegistry.status == "active",
+    with bypass_tenant_filter():
+        result = await db.execute(
+            select(AgentRegistry).where(
+                AgentRegistry.api_key_prefix == prefix,
+                AgentRegistry.status == "active",
+            )
         )
-    )
-    agent = result.scalar_one_or_none()
+        agent = result.scalar_one_or_none()
 
     if agent and verify_api_key(api_key, agent.api_key_hash):
         ctx = _build_auth_context(agent)
@@ -377,15 +384,17 @@ async def authenticate_api_key(
         await _bg_touch_last_active(agent.agent_id)
         return ctx
 
-    # 3. Fallback: scan all active agents (for legacy keys without prefix)
+    # 3. Fallback: scan all active agents (for legacy keys without prefix).
+    # Same tenant-filter bypass reasoning as the prefix path above.
     if agent is None:
-        result = await db.execute(
-            select(AgentRegistry).where(
-                AgentRegistry.status == "active",
-                AgentRegistry.api_key_prefix.is_(None),
+        with bypass_tenant_filter():
+            result = await db.execute(
+                select(AgentRegistry).where(
+                    AgentRegistry.status == "active",
+                    AgentRegistry.api_key_prefix.is_(None),
+                )
             )
-        )
-        agents = result.scalars().all()
+            agents = result.scalars().all()
         for agent in agents:
             if verify_api_key(api_key, agent.api_key_hash):
                 # Backfill the prefix for next time. This is a one-shot

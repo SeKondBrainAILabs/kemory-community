@@ -125,6 +125,7 @@ async def create_rule(
     user_id: uuid.UUID,
     request: PermissionRuleCreate,
     db: AsyncSession,
+    org_id: str | None = None,
 ) -> PermissionRuleResponse:
     """
     Create a new permission rule.
@@ -134,14 +135,25 @@ async def create_rule(
     - Action must be one of: allow, deny, jit
     - Priority must be between 1 and 10000
     - Agent ID is optional (NULL = applies to all agents)
+
+    PR #17 added a NOT-NULL ``org_id`` column on ``kemory_permission_rules``.
+    Callers must pass the request's auth context org_id; if absent, fall
+    back to the migration sentinel (settings.tenant_legacy_sentinel) so
+    legacy single-tenant deployments and tests don't break.
     """
     if not validate_scope(request.scope):
         raise ValueError(f"Invalid scope: '{request.scope}'. Valid scopes: {sorted(VALID_SCOPES)}")
     if not validate_action(request.action):
         raise ValueError(f"Invalid action: '{request.action}'. Valid actions: {sorted(VALID_ACTIONS)}")
 
+    if not org_id:
+        from backend.config.settings import settings
+
+        org_id = settings.tenant_legacy_sentinel
+
     rule = PermissionRule(
         user_id=user_id,
+        org_id=org_id,
         agent_id=uuid.UUID(request.agent_id) if request.agent_id else None,
         scope=request.scope,
         action=request.action,

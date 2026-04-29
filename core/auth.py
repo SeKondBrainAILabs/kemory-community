@@ -203,13 +203,43 @@ async def get_auth_context(
 async def require_auth(
     auth: AuthContext | None = Depends(get_auth_context),
 ) -> AuthContext:
-    """Require authentication — raises 401 if no valid auth is provided."""
+    """Require authentication — raises 401 if no valid auth is provided.
+
+    PR #17 added a SQLAlchemy listener that auto-injects
+    ``WHERE org_id = current_org_id`` on every tenant-scoped SELECT. The
+    ContextVar is set by ``get_tenant_scope`` — but many routes only depend
+    on ``require_auth``, not the heavier tenant-scope dependency. Without
+    a set ContextVar the listener emits an always-false predicate
+    (``org_id = '__no_active_scope__'``), silently zeroing out every
+    SELECT and breaking memory writes / search / permission-rule reads.
+
+    To make ``require_auth`` self-sufficient — and so the upstream
+    multi-tenant work doesn't regress every existing route handler —
+    we seed the ContextVars from the auth context here. ``get_tenant_scope``
+    overlays a richer view (server-resolved team_ids) on top.
+    """
     if auth is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Provide a Bearer token or X-API-Key header.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Seed the tenant ContextVars from auth so the per-session SQL
+    # filter has something non-empty to match against. Falls back to
+    # the legacy sentinel for tokens minted before the multi-tenant
+    # rollout. Lazy-import to avoid an auth → tenancy → settings cycle.
+    try:
+        from backend.config.settings import settings as _settings
+        from backend.core.tenancy import (
+            _current_org_id, _current_user_id, _current_team_ids,
+        )
+        org_id = auth.org_id or _settings.tenant_legacy_sentinel
+        _current_org_id.set(org_id)
+        _current_user_id.set(str(auth.user_id))
+        _current_team_ids.set(())
+    except Exception:
+        # Tenancy module unavailable — proceed without the ContextVar.
+        pass
     return auth
 
 

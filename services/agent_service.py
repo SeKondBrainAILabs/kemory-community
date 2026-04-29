@@ -160,10 +160,16 @@ async def register_agent(
     # Generate API key
     plaintext_key, hashed_key, key_prefix = generate_api_key()
 
-    # Create agent record
+    # Create agent record. org_id is NOT NULL post-PR #17 migration 014 —
+    # fall back to the legacy sentinel for callers that haven't been
+    # org-aware yet so we don't 500 on registration.
+    if not org_id:
+        from backend.config.settings import settings as _settings
+        org_id = _settings.tenant_legacy_sentinel
+
     agent = AgentRegistry(
         user_id=user_id,
-        org_id=org_id or None,
+        org_id=org_id,
         agent_name=request.agent_name,
         agent_description=request.agent_description,
         declared_scopes=[s.model_dump() for s in request.declared_scopes],

@@ -56,6 +56,15 @@ _CONTENT_TYPE_NODE_MAP: dict[str, str] = {
     "embedding": "Concept",
 }
 
+# ── GraphType ────────────────────────────────────────────────────────────
+# Cognition OS used to accept named graph types per node category
+# (concept / episodic / etc.) but the contract narrowed in v0.1.x to a
+# single GraphType: "custom". Sending anything else now returns
+# HTTP 400 ("'concept' is not a valid GraphType"). The graph itself is
+# partitioned via the optional `graph_name` field — set to the source
+# namespace so future graph traversals can scope by it.
+_COGNITION_GRAPH_TYPE: str = "custom"
+
 
 class CognitionBridge:
     """
@@ -170,7 +179,31 @@ class CognitionBridge:
             resp.raise_for_status()
             self._consecutive_failures = 0
             return resp.json() if resp.content else {}
-        except (httpx.HTTPError, Exception) as exc:
+        except httpx.HTTPStatusError as exc:
+            # Capture the response body so debugging "what did we send wrong"
+            # doesn't require packet captures. Truncated to keep logs sane.
+            body_snippet = ""
+            try:
+                body_snippet = exc.response.text[:500]
+            except Exception:
+                pass
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_failures:
+                self._circuit_open_until = time.monotonic() + self._cooldown_seconds
+                logger.warning(
+                    "cognition_bridge.circuit_tripped",
+                    failures=self._consecutive_failures,
+                    cooldown_s=self._cooldown_seconds,
+                )
+            logger.warning(
+                "cognition_bridge.request_failed",
+                path=path,
+                status=exc.response.status_code,
+                body=body_snippet,
+                sent_keys=list(json.keys()) if isinstance(json, dict) else None,
+            )
+            return None
+        except Exception as exc:
             self._consecutive_failures += 1
             if self._consecutive_failures >= self._max_failures:
                 self._circuit_open_until = time.monotonic() + self._cooldown_seconds
@@ -218,7 +251,8 @@ class CognitionBridge:
                 "name": name,
                 "node_type": node_type,
                 "description": description,
-                "graph_type": "concept",
+                "graph_type": _COGNITION_GRAPH_TYPE,
+                "graph_name": namespace,
                 "metadata": {
                     "memory_id": memory_id,
                     "namespace": namespace,
@@ -276,7 +310,7 @@ class CognitionBridge:
                     "name": entity_name,
                     "node_type": node_type,
                     "description": entity.get("context", ""),
-                    "graph_type": "concept",
+                    "graph_type": _COGNITION_GRAPH_TYPE,
                     "metadata": {
                         "confidence": entity.get("confidence", 1.0),
                         "source_memory_id": memory_id,

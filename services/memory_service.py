@@ -255,6 +255,7 @@ async def create_memory(
     request: MemoryCreate,
     db: AsyncSession,
     skip_gatekeeper: bool = False,
+    org_id: str | None = None,
 ) -> MemoryResponse:
     """
     Create a new memory entry.
@@ -391,8 +392,17 @@ async def create_memory(
         except ValueError:
             pass
 
+    # PR #17: org_id is NOT NULL on kemory_memories. Use the auth
+    # context's org_id, falling back to the migration legacy sentinel
+    # for callers that haven't been org-aware yet (MCP tools, internal
+    # scripts).
+    if not org_id:
+        from backend.config.settings import settings as _settings
+        org_id = _settings.tenant_legacy_sentinel
+
     memory = Memory(
         user_id=user_id,
+        org_id=org_id,
         namespace=request.namespace,
         content=request.content,
         content_type=request.content_type,
@@ -466,6 +476,7 @@ async def create_memory(
                 namespace_filter=request.namespace,
             ),
             db=db,
+            org_id=org_id,
         )
         logger.debug(
             "memory.create.auto_grant_delete",

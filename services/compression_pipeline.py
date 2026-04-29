@@ -575,7 +575,7 @@ async def _do_summarize_l3(
 
         from backend.models.namespace_policy import NamespacePolicy
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stmt = (
             pg_insert(NamespacePolicy)
             .values(
@@ -818,7 +818,7 @@ async def _maybe_summarize_session_l3(
             )
         ).scalar_one_or_none()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if existing is None:
             existing = SessionSummary(
                 user_id=uuid.UUID(user_id),
@@ -905,14 +905,21 @@ async def _summarize_with_groq(
     or "cumulative (as of <ts>)". Shown to the LLM in the prompt so the
     produced prose frames itself correctly.
     """
-    try:
-        from groq import AsyncGroq  # type: ignore[import]
-    except ImportError:
-        raise RuntimeError("groq package not installed. pip install groq")
-
+    # PR #18 dropped the `groq` direct-SDK dep from pyproject.toml in
+    # favour of routing all LLM traffic through core-ai-backend. This
+    # function still exists (and the name is grandfathered through
+    # callers) but the body now POSTs to core-ai-backend's
+    # /v1/chat/completions, the same OpenAI-compat endpoint the
+    # reranker and the L3.1 chat-fallback use.
     import os
 
-    client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
+    import httpx
+
+    base_url = os.environ.get("CORE_AI_BACKEND_URL") or os.environ.get("AI_BACKEND_URL")
+    if not base_url:
+        raise RuntimeError(
+            "CORE_AI_BACKEND_URL not set — L3 narrative summary cannot run"
+        )
 
     memories_text = "\n".join(f"[{i+1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
 
@@ -930,13 +937,26 @@ async def _summarize_with_groq(
         "Summary:"
     )
 
-    response = await client.chat.completions.create(
-        model=L3_SUMMARY_GROQ_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=512,
-    )
-    return (response.choices[0].message.content or "").strip()
+    payload = {
+        "model": L3_SUMMARY_GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "max_tokens": 512,
+    }
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    token = os.environ.get("CORE_AI_BACKEND_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{base_url.rstrip('/')}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return (data["choices"][0]["message"]["content"] or "").strip()
 
 
 async def _maybe_synthesize_l3_1(
@@ -1050,8 +1070,20 @@ async def _maybe_synthesize_l3_1(
         "_directional": concept.get("directional", False),
         "_positions_merged": concept.get("positions_merged", len(sources)),
     }
+    # PR #17: org_id NOT NULL on kemory_memories. Inherit from one of the
+    # source memories — the namespace is user-scoped so they all share an
+    # org_id. Fall back to the legacy sentinel if for some reason the
+    # source has no org_id (shouldn't happen post-014 backfill).
+    src_org_id = ""
+    if sources:
+        src_org_id = (sources[0].get("org_id") or "") if isinstance(sources[0], dict) else ""
+    if not src_org_id:
+        from backend.config.settings import settings as _settings
+        src_org_id = _settings.tenant_legacy_sentinel
+
     concept_memory = Memory(
         user_id=uuid.UUID(user_id),
+        org_id=src_org_id,
         namespace=namespace,
         content=concept.get("synthesis", ""),
         content_type="concept",
@@ -1083,7 +1115,7 @@ async def _maybe_synthesize_l3_1(
         from backend.models.namespace_policy import NamespacePolicy
 
         summary_text = concept.get("synthesis", "") or ""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stmt = (
             pg_insert(NamespacePolicy)
             .values(
@@ -1132,16 +1164,85 @@ async def _synthesize_concept(
     from memory_vault.compression.llm_client import CoreAIBackendClient
 
     class _StaticAdapter:
-        """Minimal StorageBackend adapter for the compression module."""
+        """Minimal StorageBackend adapter for the compression module.
+
+        Implements find_similar as an in-memory cosine pass over the
+        embeddings already attached to memory_dicts. The previous version
+        returned [] unconditionally, which made every memory a singleton
+        cluster — and singletons short-circuit to source='raw_passthrough'
+        in concept.py without ever calling the LLM. That's why every L3.1
+        synthesis logged 'CoreAIBackendClient unreachable or no cluster
+        formed' regardless of whether the backend was reachable: there
+        was never a cluster.
+
+        Embeddings are normally generated in a fire-and-forget task after
+        create_memory returns; L3.1 can fire before the embedding is
+        persisted. To handle that race we compute embeddings on-demand
+        for any memory that doesn't already have one, using the same
+        encoder. The cost is bounded — at most one SBERT encode per
+        memory per L3.1 run, and the whole run is gated by debounce +
+        lock + summary-coverage upstream.
+        """
+
+        # Match concept.py's _GROUP_SIM_THRESHOLD.
+        _SIM_THRESHOLD: float = 0.85
 
         def __init__(self, mems: list[dict]) -> None:
             self._mems = mems
+            self._by_content: dict[str, dict] = {
+                str(m.get("content", "")): m for m in mems
+            }
+            self._enc_cache: dict[str, list[float] | None] = {}
+
+        def _embedding_for(self, mem: dict) -> list[float] | None:
+            vec = mem.get("embedding")
+            if vec:
+                return list(vec)
+            content = str(mem.get("content", ""))
+            if not content:
+                return None
+            if content in self._enc_cache:
+                return self._enc_cache[content]
+            try:
+                from memory_vault.embeddings.encoder import encode
+
+                vec = list(encode(content))
+            except Exception:
+                vec = None
+            self._enc_cache[content] = vec
+            return vec
 
         async def list_episodes(self, *, org_id, limit=200, offset=0, include_invalid=False):
             return self._mems[offset : offset + limit]
 
         async def find_similar(self, *, content, org_id, limit=20):
-            return []  # Fallback: each memory is its own group
+            target = self._by_content.get(content)
+            if not target:
+                return []
+            target_vec = self._embedding_for(target)
+            if not target_vec:
+                return []
+            target_id = str(target.get("id", ""))
+            scored: list[tuple[float, dict]] = []
+            for m in self._mems:
+                if str(m.get("id", "")) == target_id:
+                    continue
+                vec = self._embedding_for(m)
+                if not vec or len(vec) != len(target_vec):
+                    continue
+                # Embeddings are L2-normalised → cosine = dot product.
+                sim = sum(a * b for a, b in zip(target_vec, vec))
+                if sim >= self._SIM_THRESHOLD:
+                    # _group_by_similarity in concept.py filters by
+                    # hit.get("similarity_score") — without this field
+                    # every hit scores 0.0 and fails the threshold,
+                    # producing singleton groups regardless of how
+                    # similar the embeddings actually are.
+                    hit = dict(m)
+                    hit["similarity_score"] = sim
+                    scored.append((sim, hit))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            return [m for _, m in scored[:limit]]
 
         async def get_related(self, *, episode_id, relation_type, limit=10):
             return []
@@ -1191,6 +1292,10 @@ def _memory_to_dict(memory: Memory) -> dict:
         "tier": memory.tier,
         "visibility": memory.visibility,
         "org_id": str(memory.user_id),
+        # Carry the embedding so the L3.1 adapter's find_similar can
+        # actually cluster (without it every memory becomes a singleton
+        # group and L3.1 silently degrades to raw_passthrough).
+        "embedding": memory.embedding,
     }
 
 

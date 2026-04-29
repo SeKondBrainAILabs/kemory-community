@@ -54,7 +54,7 @@ async def create_rule_endpoint(
 ):
     """Create a new permission rule for the authenticated user."""
     try:
-        return await create_rule(auth.user_id, request, db)
+        return await create_rule(auth.user_id, request, db, org_id=auth.org_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

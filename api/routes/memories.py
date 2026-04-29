@@ -60,7 +60,9 @@ async def create_memory_endpoint(
     deduplication matched an existing memory (S9N-DEDUP).
     """
     try:
-        memory = await create_memory(auth.user_id, auth.agent_id, request, db)
+        memory = await create_memory(
+            auth.user_id, auth.agent_id, request, db, org_id=auth.org_id,
+        )
         # Always 201 — dedup info is in the response body (memory.dedup field)
         # so clients don't need to branch on status code.
         return JSONResponse(
