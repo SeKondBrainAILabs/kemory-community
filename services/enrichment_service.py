@@ -549,12 +549,23 @@ async def enrich_pending_memories(
     This is the batch enrichment entry point, designed to be called
     by a background worker or scheduled task.
     """
+    # Pick rows that need work:
+    #   • enrichment_status='pending' (never enriched)
+    #   • OR enrichment_status='completed' AND embedding IS NULL — these
+    #     are pre-fix rows where the bg embed task was killed silently;
+    #     re-running enrich_memory will trigger the embedding backfill
+    #     stage 0 added for the recovery path.
+    from sqlalchemy import or_ as _or
+
     result = await db.execute(
         select(Memory)
         .where(
             Memory.user_id == user_id,
-            Memory.enrichment_status == "pending",
             Memory.invalid_at == None,
+            _or(
+                Memory.enrichment_status == "pending",
+                (Memory.enrichment_status == "completed") & (Memory.embedding == None),
+            ),
         )
         .limit(batch_size)
     )
