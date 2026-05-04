@@ -152,6 +152,11 @@ class MemoryResponse(BaseModel):
     compression_tier: str = "L1"
     # S9N-DEDUP: populated when dedup prevented a new memory from being created
     dedup: DedupInfo | None = None
+    # S9N-DEDUP: True when the semantic dedup gate could not run (encoder
+    # unavailable or query error). The memory was still written, but it may
+    # duplicate an existing one — callers can use this flag to decide whether
+    # to retry later. Layer-1 (exact-hash) dedup is unaffected and always runs.
+    dedup_skipped: bool = False
     # F12: Source memory IDs for L3.1 synthesized concepts (provenance tracking)
     # Populated from metadata._source_memory_ids when compression_tier is L3.1.
     source_memory_ids: list[str] | None = None
@@ -353,6 +358,7 @@ async def create_memory(
             )
 
     # Layer 2: Semantic similarity (best-effort, ~10-50ms)
+    dedup_skipped = False
     if settings.dedup_semantic_enabled:
         try:
             sem_match = await _find_semantic_duplicate(
@@ -372,9 +378,19 @@ async def create_memory(
                     similarity,
                     db,
                 )
-        except Exception:
-            # Encoder unavailable or other error — degrade silently
-            logger.debug("dedup.semantic_skipped", reason="encoder_or_query_error")
+        except Exception as exc:
+            # Encoder unavailable or query error — degrade gracefully but
+            # surface the failure so callers and operators can see it. Without
+            # this signal, an encoder outage produces silent duplicates that
+            # only get noticed when a user spots clutter weeks later.
+            dedup_skipped = True
+            logger.warning(
+                "dedup.semantic_skipped",
+                namespace=request.namespace,
+                content_len=len(request.content),
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
 
     # ── End dedup gate ───────────────────────────────────────────
 
@@ -616,6 +632,7 @@ async def create_memory(
         logger.debug("compression.hook_skipped", reason="import_or_task_error")
 
     response = _to_response(memory)
+    response.dedup_skipped = dedup_skipped
     if redirected_from is not None:
         response.redirected_from = redirected_from
         logger.info(
