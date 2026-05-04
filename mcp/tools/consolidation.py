@@ -167,7 +167,14 @@ async def _handle_get_compressed(args, user_id, agent_id, db):
         for i, c in enumerate(concepts, 1):
             flag = " [synthesis_unavailable]" if c.get("synthesis_unavailable") else ""
             directional = " [directional]" if c.get("directional") else ""
-            lines.append(f"\n{i}. {c.get('name')}{directional}{flag}\n   {c.get('synthesis', '')}")
+            # Surface the per-concept source so operators can see when
+            # concepts are degraded (raw_passthrough = grouping returned
+            # singletons; raw_fallback = LLM was reachable but returned
+            # nothing useful). core_ai_backend is the healthy path —
+            # don't bother annotating that.
+            src = c.get("source", "")
+            src_flag = f" [source={src}]" if src and src != "core_ai_backend" else ""
+            lines.append(f"\n{i}. {c.get('name')}{directional}{flag}{src_flag}\n   {c.get('synthesis', '')}")
         text = "\n".join(lines)
     return MCPToolResult(content=[{"type": "text", "text": text}])
 

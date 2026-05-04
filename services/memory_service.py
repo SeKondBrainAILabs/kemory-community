@@ -1506,7 +1506,13 @@ def _to_response(memory: Memory) -> MemoryResponse:
 
 def _memory_to_dict(memory: Memory) -> dict:
     """Convert a Memory ORM object into the plain-dict shape used by
-    memory_vault.compression (matches the core-library episode dict)."""
+    memory_vault.compression (matches the core-library episode dict).
+
+    Includes the dense embedding so downstream concept-grouping can do
+    real cosine similarity. Without this, the L3.1 ``_DBAdapter.find_similar``
+    has no signal to cluster on and every memory becomes a singleton group,
+    skipping LLM synthesis entirely.
+    """
     return {
         "id": str(memory.memory_id),
         "namespace": memory.namespace,
@@ -1522,6 +1528,7 @@ def _memory_to_dict(memory: Memory) -> dict:
         "tier": memory.tier,
         "visibility": memory.visibility,
         "org_id": str(memory.user_id),
+        "embedding": list(memory.embedding) if memory.embedding else None,
     }
 
 
@@ -1661,7 +1668,15 @@ async def get_namespace_compressed(
             "source": "local",
         }
     else:  # concept
-        # Build a tiny adapter so the compression module can talk to SQLAlchemy
+        # Build a tiny adapter so the compression module can talk to SQLAlchemy.
+        # `find_similar` does real cosine grouping over the loaded embeddings;
+        # see `memory_vault.compression.grouping` for the threshold rationale.
+        # Until 2026-05-04 this method returned [] unconditionally, which made
+        # every memory a singleton → source="raw_passthrough" → LLM synthesis
+        # was never invoked regardless of whether core-ai-backend was reachable.
+        from memory_vault.compression.grouping import cosine_find_similar
+        from memory_vault.embeddings.encoder import encode as _encode
+
         class _DBAdapter:
             def __init__(self, mems: list[dict]) -> None:
                 self._by_id = {m["id"]: m for m in mems}
@@ -1671,9 +1686,7 @@ async def get_namespace_compressed(
                 return self._mems[offset : offset + limit]
 
             async def find_similar(self, *, content, org_id, limit=20):
-                # Cheap content-equality fallback when no real backend is wired.
-                # Concept dedup falls through and we treat each memory as its own group.
-                return []
+                return cosine_find_similar(content, self._mems, encoder=_encode, limit=limit)
 
             async def get_related(self, *, episode_id, relation_type, limit=10):
                 return []
@@ -1705,6 +1718,9 @@ async def get_namespace_compressed(
     if mode == "cognition":
         # L4: concept synthesis augmented with Cognition OS graph entities
         # First synthesize concepts (same as L3.1)
+        # L4 cognition path uses the same grouping helper as L3.1; the
+        # adapter is kept as a separate class because KMV-COMPRESS-02 may
+        # diverge the cognition behaviour, but the grouping logic is identical.
         class _DBAdapterCog:
             def __init__(self, mems: list[dict]) -> None:
                 self._mems = mems
@@ -1713,7 +1729,7 @@ async def get_namespace_compressed(
                 return self._mems[offset : offset + limit]
 
             async def find_similar(self, *, content, org_id, limit=20):
-                return []
+                return cosine_find_similar(content, self._mems, encoder=_encode, limit=limit)
 
             async def get_related(self, *, episode_id, relation_type, limit=10):
                 return []
