@@ -249,7 +249,16 @@ def keys_grp() -> None:
 
 @keys_grp.command("create")
 @click.option("--name", required=True, help="Agent name (unique per user).")
-@click.option("--description", default="Issued via `kemory keys create`")
+@click.option(
+    "--for",
+    "agent_label",
+    default=None,
+    help="Target agent platform (e.g. manus, cursor-cloud, chatgpt). "
+    "Tags the key in audit logs and `keys list` so credentials are "
+    "attributable per-agent. Recommended for any cloud-hosted agent. "
+    "See ADR-005.",
+)
+@click.option("--description", default=None)
 @click.option(
     "--write",
     "allow_write",
@@ -263,9 +272,28 @@ def keys_grp() -> None:
     help="Reason attached to each declared scope (audit trail).",
 )
 @click.pass_context
-def keys_create(ctx: click.Context, name: str, description: str, allow_write: bool, reason: str) -> None:
-    """Create an org-scoped API key. Read-only by default — pass --write to allow mutations."""
+def keys_create(
+    ctx: click.Context,
+    name: str,
+    agent_label: str | None,
+    description: str | None,
+    allow_write: bool,
+    reason: str,
+) -> None:
+    """Create an org-scoped API key. Read-only by default — pass --write to allow mutations.
+
+    --for tags the key with a target-agent label for audit attribution
+    (ADR-005 Phase A). When the long-term `kemory connect <agent>` flow ships
+    in Phase B, this label is what `connect list` keys off.
+    """
     creds = _require_creds(ctx)
+    # Compose the description: prepend [agent=<label>] if --for was passed,
+    # so `keys list` can extract the label without a schema migration. v2 of
+    # this lifecycle (Phase B) gives the label its own column.
+    if description is None:
+        description = "Issued via `kemory keys create`"
+    if agent_label:
+        description = f"[agent={agent_label}] {description}"
     # Backend requires `reason` on each declared scope (audit field). Without
     # it the API rejects the body with 422 (P0 fix in cli-v0.2.1).
     declared_scopes: list[dict[str, str]] = [{"scope": "memory:read", "reason": reason}]
@@ -281,8 +309,10 @@ def keys_create(ctx: click.Context, name: str, description: str, allow_write: bo
         raise click.ClickException(f"create failed: {resp.status_code} {resp.text}")
     out = resp.json()
     click.echo(click.style("✓ Key created. Store it now — it is not shown again.", fg="green"))
-    click.echo(f"  agent_id : {out['agent_id']}")
-    click.echo(f"  api_key  : {out['api_key']}")
+    click.echo(f"  agent_id    : {out['agent_id']}")
+    click.echo(f"  api_key     : {out['api_key']}")
+    if agent_label:
+        click.echo(f"  agent_label : {agent_label}")
 
 
 @keys_grp.command("rotate")
@@ -299,9 +329,31 @@ def keys_rotate(ctx: click.Context, agent_id: str) -> None:
     click.echo(f"  api_key  : {out['api_key']}")
 
 
+_AGENT_LABEL_RE = __import__("re").compile(r"\[agent=([a-z0-9-]+)\]")
+
+
+def _extract_agent_label(description: str | None) -> str:
+    """Pull the agent_label out of a description tagged by `kemory keys create --for`.
+
+    v1 of ADR-005 Phase A stores the label as a `[agent=<label>]` prefix in
+    the description (no DB migration needed). Phase B replaces this with a
+    dedicated column.
+    """
+    if not description:
+        return "-"
+    match = _AGENT_LABEL_RE.search(description)
+    return match.group(1) if match else "-"
+
+
 @keys_grp.command("list")
 @click.pass_context
 def keys_list(ctx: click.Context) -> None:
+    """List all API keys for this user, with their target-agent label.
+
+    The `for` column shows what agent each key was minted for (set via
+    `kemory keys create --for <agent>`). Helpful for auditing which key
+    belongs to which integration. ADR-005 Phase A.
+    """
     creds = _require_creds(ctx)
     resp = _api_get(creds, "/api/v1/agents")
     if resp.status_code != 200:
@@ -310,8 +362,14 @@ def keys_list(ctx: click.Context) -> None:
     if not rows:
         click.echo("(no agents)")
         return
+    click.echo(f"{'agent_id':<38}  {'name':<30}  {'for':<14}  status")
+    click.echo(f"{'-' * 38}  {'-' * 30}  {'-' * 14}  ------")
     for r in rows:
-        click.echo(f"{r.get('agent_id')}  {r.get('agent_name'):<30}  status={r.get('status')}")
+        label = _extract_agent_label(r.get("agent_description"))
+        click.echo(
+            f"{r.get('agent_id')}  {(r.get('agent_name') or '-'):<30}  "
+            f"{label:<14}  {r.get('status', '-')}"
+        )
 
 
 # ─── mcp ──────────────────────────────────────────────────────────────────
