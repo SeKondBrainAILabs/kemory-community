@@ -168,6 +168,23 @@ async def register_agent(
 
         org_id = _settings.tenant_legacy_sentinel
 
+    # ADR-005 Phase A: support self-service registration in environments
+    # where every user is internal (staging). When AUTO_APPROVE_AGENTS=true,
+    # the new agent lands in `active` and the developer can use the key
+    # immediately — no admin-approval round-trip. Cross-tenant isolation
+    # is still enforced by the tenancy filter, so the blast radius is
+    # always the registering user's own data.
+    from backend.config.settings import settings as _settings
+
+    initial_status = "active" if _settings.auto_approve_agents else "pending_approval"
+    activation_message = (
+        "Agent registered + auto-approved (AUTO_APPROVE_AGENTS=true). "
+        "API key shown once — store it securely. Use it immediately."
+        if _settings.auto_approve_agents
+        else "Agent registered. API key shown once — store it securely. "
+        "Agent requires approval before use."
+    )
+
     agent = AgentRegistry(
         user_id=user_id,
         org_id=org_id,
@@ -177,7 +194,7 @@ async def register_agent(
         api_key_hash=hashed_key,
         api_key_prefix=key_prefix,
         callback_url=request.callback_url,
-        status="pending_approval",
+        status=initial_status,
     )
     db.add(agent)
     await db.flush()
@@ -188,7 +205,7 @@ async def register_agent(
         status=agent.status,
         api_key=plaintext_key,
         declared_scopes=agent.declared_scopes,
-        message="Agent registered. API key shown once — store it securely. Agent requires approval before use.",
+        message=activation_message,
     )
 
 

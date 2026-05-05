@@ -110,6 +110,27 @@ class Settings(BaseSettings):
     tenant_org_claim: str = "org_id"
     tenant_legacy_sentinel: str = "legacy"
 
+    # WS-5 / ADR-005 Phase A: agent self-service for cloud connectors.
+    #
+    # When true, agents registered via POST /api/v1/agents land in status
+    # "active" instead of "pending_approval". Trade-off:
+    #
+    #   true  — any user with a valid kemory JWT can mint usable API keys
+    #           bound to their own (user_id, org_id). The blast radius is
+    #           that user's data; cross-tenant isolation is enforced
+    #           independently by the tenancy filter (backend/core/tenancy.py).
+    #           Recommended for staging where every user is internal.
+    #
+    #   false — admin must POST /agents/{id}/approve before the key works.
+    #           Recommended for prod until a per-Keycloak-role allowlist
+    #           replaces the global flag (ADR-005 follow-up).
+    #
+    # Default is false (status quo). Override per-env via env var
+    # KEMORY_AUTO_APPROVE_AGENTS=true. The dashboard / CLI surface this
+    # setting in `kemory doctor` so a developer hitting "stuck pending"
+    # knows what to ask for.
+    auto_approve_agents: bool = False
+
     # Per-tenant rate limits applied by tenant_rate_limit_middleware.
     # Generous defaults — a popular product gets noisy fast and we don't
     # want to throttle real customers. Override per-deployment via env.
