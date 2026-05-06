@@ -49,7 +49,10 @@ class PlatformSettings(BaseSettings):
     ``MEMORY_VAULT_PLATFORM_FALKORDB_URL``
         FalkorDB Redis URL. Defaults to ``redis://localhost:6379``.
     ``MEMORY_VAULT_PLATFORM_FALKORDB_GRAPH``
-        FalkorDB graph name. Defaults to ``s9nmv_memory``.
+        FalkorDB graph name. Defaults to ``kemory_memory``. Legacy values
+        ``s9nmv_memory`` and ``agent_memory_vault_graph`` are also valid;
+        run ``scripts/migrations/rename_falkordb_graph.py`` to migrate
+        existing data over before flipping the env var.
     ``MEMORY_VAULT_PLATFORM_WEAVIATE_URL``
         Weaviate HTTP URL. Defaults to ``http://localhost:8080``.
     """
@@ -67,7 +70,7 @@ class PlatformSettings(BaseSettings):
     falkordb_url: str = "redis://localhost:6379"
     """FalkorDB Redis connection URL."""
 
-    falkordb_graph: str = "s9nmv_memory"
+    falkordb_graph: str = "kemory_memory"
     """FalkorDB graph name."""
 
     weaviate_url: str = "http://localhost:8080"

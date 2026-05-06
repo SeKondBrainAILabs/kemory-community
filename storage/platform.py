@@ -43,7 +43,10 @@ class PlatformStorageBackend(StorageBackend):
     falkordb_url:
         FalkorDB Redis URL, e.g. ``redis://localhost:6379``.
     falkordb_graph:
-        FalkorDB graph name.  Defaults to ``"s9nmv_memory"``.
+        FalkorDB graph name.  Defaults to ``"kemory_memory"``.
+        Legacy values ``"s9nmv_memory"`` and ``"agent_memory_vault_graph"``
+        also work; use ``scripts/migrations/rename_falkordb_graph.py`` to
+        migrate existing data into the new name.
     weaviate_url:
         Weaviate HTTP URL, e.g. ``http://localhost:8080``.
     encoder_fn:
@@ -59,7 +62,7 @@ class PlatformStorageBackend(StorageBackend):
         self,
         postgres_uri: str,
         falkordb_url: str = "redis://localhost:6379",
-        falkordb_graph: str = "s9nmv_memory",
+        falkordb_graph: str = "kemory_memory",
         weaviate_url: str = "http://localhost:8080",
         encoder_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
