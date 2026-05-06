@@ -16,7 +16,7 @@
 const LOCAL_REPO_PATH =
   '/Volumes/DataDrive/Repos/sekond/agent_memory_vault/agent_memory_vault'
 const DEPLOYED_REPO_PATH = '/opt/kemory'
-const SCRIPT_RELATIVE = 'scripts/s9nmv_mcp_server.py'
+const SCRIPT_RELATIVE = 'scripts/kemory_mcp_server.py'
 
 function isLanHost(host: string): boolean {
   return (

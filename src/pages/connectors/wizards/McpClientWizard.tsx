@@ -178,7 +178,7 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
               className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-content-primary focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
             />
             <p className="mt-1 text-xs text-content-tertiary">
-              Absolute path to <code>scripts/s9nmv_mcp_server.py</code> in the Kemory repo.
+              Absolute path to <code>scripts/kemory_mcp_server.py</code> in the Kemory repo.
             </p>
           </div>
           <div>

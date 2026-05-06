@@ -91,7 +91,7 @@ export function ClaudeCodeWizard({ onClose }: Props) {
           </li>
           <li className="flex items-start gap-2">
             <Terminal size={16} className="mt-0.5 shrink-0 text-brand-primary" />
-            MCP server script: <code className="text-xs bg-surface-secondary px-1.5 py-0.5 rounded">scripts/s9nmv_mcp_server.py</code>
+            MCP server script: <code className="text-xs bg-surface-secondary px-1.5 py-0.5 rounded">scripts/kemory_mcp_server.py</code>
           </li>
         </ul>
         {existingAgent && (
