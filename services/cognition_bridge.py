@@ -77,18 +77,16 @@ class CognitionBridge:
         self,
         base_url: str = "",
         auth_token: str = "",
-        org_id: str = "",
         timeout: float = 10.0,
     ) -> None:
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._auth_token = auth_token
-        # P3 #19: ``org_id`` here is now a fallback for unauthenticated /
-        # background-task callers (e.g. periodic consolidation worker).
-        # The primary source is the active TenantScope ContextVar at
-        # request time, read in ``_request``. Keeping this constructor
-        # arg for one minor version of compat with callers passing it
-        # explicitly; remove in v0.3.
-        self._fallback_org_id = org_id
+        # P3 #19 (closed S9N-3488 / 2026-05-06): the legacy ``org_id``
+        # constructor arg + ``settings.cognition_os_org_id`` fallback were
+        # removed. ``X-Org-Id`` is now sourced exclusively from the active
+        # TenantScope ContextVar (see ``_resolve_org_id``). Background
+        # tasks running outside a request scope must explicitly bind a
+        # TenantScope before calling the bridge.
         self._timeout = timeout
 
         # Circuit breaker state
@@ -135,16 +133,17 @@ class CognitionBridge:
     def _resolve_org_id(self) -> str:
         """Return the org_id to send on this request.
 
-        Priority:
-          1. Active TenantScope ContextVar (the request's actual org).
-          2. Constructor fallback (for background tasks running outside
-             a request scope, e.g. periodic consolidation).
-        Returns "" if neither is set — callers see no X-Org-Id header.
+        Sole source: the active TenantScope ContextVar. Returns "" when
+        no scope is active — callers will see no X-Org-Id header and
+        Cognition OS will reject the call (correct: no scope = no tenancy).
+
+        Background tasks running outside a request scope must wrap the
+        call in ``with TenantScope(org_id=...)``.
         """
         # Lazy import: tenancy → auth → settings cycles otherwise.
         from backend.core.tenancy import current_org_id
 
-        return current_org_id() or self._fallback_org_id
+        return current_org_id() or ""
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
@@ -450,6 +449,5 @@ def get_cognition_bridge() -> CognitionBridge:
         _bridge = CognitionBridge(
             base_url=getattr(settings, "cognition_os_url", ""),
             auth_token=getattr(settings, "cognition_os_auth_token", ""),
-            org_id=getattr(settings, "cognition_os_org_id", ""),
         )
     return _bridge

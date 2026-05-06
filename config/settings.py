@@ -203,11 +203,11 @@ class Settings(BaseSettings):
     """Cognition OS base URL (e.g. http://localhost:3002). Empty = disabled."""
     cognition_os_auth_token: str = ""
     """SERVICE_AUTH_SECRET for Cognition OS API."""
-    cognition_os_org_id: str = ""
-    """DEPRECATED (P3 #19) — fallback X-Org-Id only for background tasks
-    that run outside a request scope (e.g. periodic consolidation worker).
-    The primary source is the active TenantScope's org_id, derived from
-    the caller's auth at request time. Will be removed in v0.3."""
+    # P3 #19 (closed S9N-3488 / 2026-05-06): cognition_os_org_id removed.
+    # X-Org-Id is now sourced exclusively from the active TenantScope
+    # ContextVar at request time — set by backend.core.auth on every
+    # authenticated request. Background tasks must wrap calls in
+    # `with TenantScope(org_id=...)` to bind a scope explicitly.
 
     # ─── Deduplication ────────────────────────────────────────────
     dedup_exact_enabled: bool = True
