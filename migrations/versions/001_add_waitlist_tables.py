@@ -21,7 +21,7 @@ def upgrade() -> None:
         sa.Column("user_id", UUID(as_uuid=True), nullable=False),
         sa.Column("email", sa.String(255), nullable=False),
         sa.Column("display_name", sa.String(200), nullable=True),
-        sa.Column("service", sa.String(50), nullable=False, server_default="memory_vault"),
+        sa.Column("service", sa.String(50), nullable=False, server_default="kemory"),
         sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
         sa.Column("position", sa.BigInteger, nullable=False),
         sa.Column("referral_code", sa.String(20), nullable=False, unique=True),

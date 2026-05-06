@@ -131,7 +131,7 @@ async def _handle_get_context(args, user_id, agent_id, db):
     # S9N-3074-SUB3: attempt LLM synthesis via reranker
     synthesised: str | None = None
     try:
-        from memory_vault.search.reranker import synthesise
+        from kemory.search.reranker import synthesise
 
         candidates = [
             {

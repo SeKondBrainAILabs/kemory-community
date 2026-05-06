@@ -6,13 +6,13 @@ handlers (``backend/api/routes/memories.py``) and the MCP tool dispatcher
 (``backend/mcp/tools.py``). It speaks Pydantic request/response models,
 calls the Gatekeeper for permission checks, and emits audit events.
 
-It is intentionally distinct from ``memory_vault/service/memory_service.py``
+It is intentionally distinct from ``kemory/service/memory_service.py``
 which is the library-shaped layer (StorageBackend interface, dual-mode for
 SQLite local and Postgres platform). The two services serve different
 consumers and have different APIs by design.
 
 The dedup-critical content-hash primitive lives in
-``memory_vault/utils/text.py`` so both layers compute identical hashes
+``kemory/utils/text.py`` so both layers compute identical hashes
 for the same content. Phase 2 of the consolidation work — delegating
 backend storage calls through the library's StorageBackend interface —
 is tracked as a follow-up to P0 #1 in the codebase review epic.
@@ -50,13 +50,13 @@ from backend.services.gatekeeper_service import (
 )
 from backend.services.provenance_service import emit_event
 
-# Canonical dedup primitives — both this layer and memory_vault.MemoryService
+# Canonical dedup primitives — both this layer and kemory.MemoryService
 # import from here so writes via either path produce identical content_hashes.
-# See memory_vault/utils/text.py for why. The _normalize_content alias is
+# See kemory/utils/text.py for why. The _normalize_content alias is
 # re-exported (not used directly here) so the cross-layer-equivalence test
 # in tests/test_shared_text_utils.py can verify identity.
-from memory_vault.utils.text import content_hash as _content_hash
-from memory_vault.utils.text import normalize_content as _normalize_content  # noqa: F401
+from kemory.utils.text import content_hash as _content_hash
+from kemory.utils.text import normalize_content as _normalize_content  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
@@ -436,7 +436,7 @@ async def create_memory(
     embedding_vec: list[float] | None = None
     embedding_model: str | None = None
     try:
-        from memory_vault.embeddings.encoder import encode as _embed
+        from kemory.embeddings.encoder import encode as _embed
 
         embedding_vec = list(_embed(request.content))
         embedding_model = "bge-small-en-v1.5"
@@ -903,7 +903,7 @@ async def search_memories(
 
     # ── Hybrid search path (S9N-3074-SUB2) ──────────────────────────────────
     if getattr(request, "search_mode", "fts") == "hybrid" and request.query:
-        from memory_vault.search.hybrid import hybrid_search
+        from kemory.search.hybrid import hybrid_search
 
         hybrid_results = await hybrid_search(
             db=db,
@@ -1325,7 +1325,7 @@ def _resolve_date(value: str, now: datetime) -> datetime | None:
 
 
 # NOTE: _normalize_content and _content_hash now imported from
-# memory_vault.utils.text (see top-of-file imports). Kept as private aliases
+# kemory.utils.text (see top-of-file imports). Kept as private aliases
 # above to avoid touching every callsite in this 1276-LOC module — those
 # get migrated as part of P3 #16 when the file is split.
 
@@ -1361,7 +1361,7 @@ async def _find_semantic_duplicate(
     Returns (memory, similarity) or None. Degrades gracefully if the
     embedding encoder is unavailable or no embedded memories exist.
     """
-    from memory_vault.embeddings.encoder import encode
+    from kemory.embeddings.encoder import encode
 
     query_vec = encode(content)
     if query_vec is None:
@@ -1506,7 +1506,7 @@ def _to_response(memory: Memory) -> MemoryResponse:
 
 def _memory_to_dict(memory: Memory) -> dict:
     """Convert a Memory ORM object into the plain-dict shape used by
-    memory_vault.compression (matches the core-library episode dict).
+    kemory.compression (matches the core-library episode dict).
 
     Includes the dense embedding so downstream concept-grouping can do
     real cosine similarity. Without this, the L3.1 ``_DBAdapter.find_similar``
@@ -1630,11 +1630,11 @@ async def get_namespace_compressed(
             raise PermissionError(f"Access denied: {decision.reason}")
 
     # Local imports to keep memory_service import-light at module load
-    from memory_vault.compression.aaak import compression_ratio, encode_aaak
-    from memory_vault.compression.cache import get_default_cache
-    from memory_vault.compression.cognition_round_trip import round_trip_concepts
-    from memory_vault.compression.concept import synthesize_namespace_local
-    from memory_vault.compression.llm_client import CoreAIBackendClient
+    from kemory.compression.aaak import compression_ratio, encode_aaak
+    from kemory.compression.cache import get_default_cache
+    from kemory.compression.cognition_round_trip import round_trip_concepts
+    from kemory.compression.concept import synthesize_namespace_local
+    from kemory.compression.llm_client import CoreAIBackendClient
 
     memories = await _list_namespace_active_memories(user_id, namespace, db)
     memory_ids = [str(m.memory_id) for m in memories]
@@ -1670,12 +1670,12 @@ async def get_namespace_compressed(
     else:  # concept
         # Build a tiny adapter so the compression module can talk to SQLAlchemy.
         # `find_similar` does real cosine grouping over the loaded embeddings;
-        # see `memory_vault.compression.grouping` for the threshold rationale.
+        # see `kemory.compression.grouping` for the threshold rationale.
         # Until 2026-05-04 this method returned [] unconditionally, which made
         # every memory a singleton → source="raw_passthrough" → LLM synthesis
         # was never invoked regardless of whether core-ai-backend was reachable.
-        from memory_vault.compression.grouping import cosine_find_similar
-        from memory_vault.embeddings.encoder import encode as _encode
+        from kemory.compression.grouping import cosine_find_similar
+        from kemory.embeddings.encoder import encode as _encode
 
         class _DBAdapter:
             def __init__(self, mems: list[dict]) -> None:

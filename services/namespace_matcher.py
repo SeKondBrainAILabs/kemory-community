@@ -12,7 +12,7 @@ Resolution strategy (in order):
    except ``:`` and ``_``). If the normalized form exactly matches an
    existing namespace, return ``REUSE`` for that one.
 2. **Semantic similarity** via the shared bge-small-en-v1.5 encoder
-   (``memory_vault.embeddings.encoder``): embed ``name + description``
+   (``kemory.embeddings.encoder``): embed ``name + description``
    for the incoming namespace and every existing one, cosine-compare.
 3. **Fuzzy fallback** (SequenceMatcher ratio) — runs cheaply alongside
    the embedder and gets taken whenever the embedder is unavailable or
@@ -173,7 +173,7 @@ def _cosine(vec_a, vec_b) -> float:
 
 def _embed(text: str):
     """Reuse the same encoder the rest of the pipeline uses."""
-    from memory_vault.embeddings.encoder import encode
+    from kemory.embeddings.encoder import encode
 
     return encode(text)
 

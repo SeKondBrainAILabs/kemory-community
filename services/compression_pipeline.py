@@ -206,7 +206,7 @@ async def _promote_to_l2(db: AsyncSession, memory_id: str) -> None:
         return
 
     try:
-        from memory_vault.compression.aaak import compression_ratio, encode_aaak
+        from kemory.compression.aaak import compression_ratio, encode_aaak
     except ImportError:
         logger.debug("compression_pipeline.aaak_unavailable")
         return
@@ -359,7 +359,7 @@ async def _summary_already_covers(
     summary_vec = _summary_embedding_cache.get(summary_text)
     if summary_vec is None:
         try:
-            from memory_vault.embeddings.encoder import encode
+            from kemory.embeddings.encoder import encode
 
             summary_vec = list(encode(summary_text))
             # Bound the cache so it doesn't grow without limit. We only need
@@ -1159,8 +1159,8 @@ async def _synthesize_concept(
     namespace: str,
 ) -> dict:
     """Run L3.1 concept synthesis via the existing compression module."""
-    from memory_vault.compression.concept import synthesize_namespace_local
-    from memory_vault.compression.llm_client import CoreAIBackendClient
+    from kemory.compression.concept import synthesize_namespace_local
+    from kemory.compression.llm_client import CoreAIBackendClient
 
     class _StaticAdapter:
         """Minimal StorageBackend adapter for the compression module.
@@ -1201,7 +1201,7 @@ async def _synthesize_concept(
             if content in self._enc_cache:
                 return self._enc_cache[content]
             try:
-                from memory_vault.embeddings.encoder import encode
+                from kemory.embeddings.encoder import encode
 
                 vec = list(encode(content))
             except Exception:

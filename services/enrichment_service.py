@@ -438,7 +438,7 @@ async def enrich_memory(
         try:
             from sqlalchemy import text as _sql
 
-            from memory_vault.embeddings.encoder import encode as _embed
+            from kemory.embeddings.encoder import encode as _embed
 
             vec = list(_embed(memory.content))
             await db.execute(
