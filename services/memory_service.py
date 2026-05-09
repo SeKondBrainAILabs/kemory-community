@@ -248,6 +248,87 @@ class MemoryListResponse(BaseModel):
     offset: int
 
 
+# ─── KMV-AGG-01: aggregate endpoint ────────────────────────────────
+
+
+class MemoryAggregateRequest(BaseModel):
+    """Request body for ``POST /api/v1/memories/aggregate``.
+
+    The aggregate endpoint answers questions of the form "how many",
+    "total", "list every", "how long" by running the kemory
+    extract → Python-aggregate → format pipeline. See
+    ``kemory/search/aggregator.py``.
+
+    The request shape is intentionally a strict subset of the search
+    request: namespace + query + content_type + tags. We don't expose
+    the search-mode / compression-tier knobs because the aggregator
+    only ever runs hybrid + L1 (raw) candidates.
+    """
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Aggregation question (e.g. 'how many bike-related expenses this year').",
+    )
+    namespace: str | None = Field(None, max_length=100)
+    content_type: str | None = Field(None, max_length=50)
+    tags: list[str] | None = Field(None, description="Restrict candidates to memories with these tags.")
+    limit: int = Field(
+        default=30,
+        ge=1,
+        le=100,
+        description=(
+            "How many candidate memories to feed the extractor. Default 30 "
+            "matches the LongMemEval multi-session topK."
+        ),
+    )
+
+
+class AggregateItem(BaseModel):
+    """One extracted item, with provenance."""
+
+    memory_id: str = Field(..., description="Source memory_id.")
+    extracted: str = Field(..., description="Short phrase describing the item.")
+    value: float | None = Field(
+        None,
+        description="Numeric value for sum / duration questions; null otherwise.",
+    )
+
+
+class MemoryAggregateResponse(BaseModel):
+    """Result of an aggregation query.
+
+    The response always carries the structured ``items`` list and the
+    ``source_memory_ids`` for provenance. ``value`` is the
+    Python-computed aggregate: int for count, number for sum/duration,
+    list[str] for list-type. ``answer`` is the natural-language form
+    suitable for direct presentation to the user.
+    """
+
+    type: str = Field(
+        ...,
+        description="Aggregate kind: 'count' | 'sum' | 'list' | 'duration' | 'fallback'.",
+    )
+    answer: str = Field(..., description="Natural-language final answer.")
+    value: int | float | list[str] | None = Field(
+        None,
+        description=(
+            "Python-computed aggregate: int for count, number for sum/duration, "
+            "list[str] for list-type. Null when type='fallback'."
+        ),
+    )
+    items: list[AggregateItem] = Field(
+        default_factory=list,
+        description="Per-item extraction with source provenance.",
+    )
+    source_memory_ids: list[str] = Field(default_factory=list, description="Distinct source memory_ids used.")
+    candidates_considered: int = Field(
+        ...,
+        description="How many memories the aggregator had to choose from before extraction.",
+    )
+
+
 # ─── Namespace Validation ─────────────────────────────────────────
 
 VALID_CONTENT_TYPES = {"text", "structured", "conversation", "fact", "preference", "embedding"}
@@ -1799,3 +1880,158 @@ async def get_namespace_compressed(
 
     cache.put(str(user_id), namespace, mode, merge_mode, memory_ids, payload)
     return payload
+
+
+# ─── KMV-AGG-01: aggregate service function ──────────────────────
+
+
+async def aggregate_memories(
+    user_id: uuid.UUID,
+    agent_id: uuid.UUID | None,
+    request: MemoryAggregateRequest,
+    db: AsyncSession,
+) -> MemoryAggregateResponse:
+    """Run an aggregation query against the user's memories.
+
+    Pipeline (see ``kemory/search/aggregator.py``):
+
+      1. Hybrid search → candidate memories.
+      2. LLM extract → structured items as JSON (via core-ai-backend).
+      3. Python aggregate → count / sum / dedupe.
+      4. LLM format → natural-language final answer.
+
+    On any backend failure the response degrades to ``type='fallback'``
+    with the search candidates surfaced so the agent still gets
+    something useful (instead of a 5xx).
+
+    Permission check mirrors ``search_memories``: namespace-scoped
+    queries hit the gatekeeper first; if the agent isn't allowed to
+    read the namespace, ``PermissionError`` is raised (which the route
+    converts to 403).
+    """
+    # Lazy imports to keep startup graph small and avoid a circular
+    # import via aggregator → kemory.search → backend.* (none today,
+    # but the harness has bitten us before).
+    from kemory.search.aggregator import aggregate as _aggregate
+    from kemory.search.hybrid import hybrid_search
+
+    logger.debug(
+        "memory.aggregate.request",
+        user_id=str(user_id),
+        agent_id=str(agent_id),
+        namespace=request.namespace,
+        query=request.query[:80],
+        limit=request.limit,
+    )
+
+    # Gatekeeper — only when the request scopes to a single namespace
+    # and the caller is an agent (not a Memory Vault admin user).
+    if request.namespace and agent_id:
+        decision = await evaluate(
+            user_id,
+            EvaluationRequest(
+                agent_id=str(agent_id),
+                scope="memory:read",
+                namespace=request.namespace,
+            ),
+            db,
+        )
+        if not decision.allowed:
+            logger.warning(
+                "memory.aggregate.denied",
+                agent_id=str(agent_id),
+                namespace=request.namespace,
+                reason=decision.reason,
+            )
+            raise PermissionError(f"Access denied: {decision.reason}")
+
+    # Stage 1 — recall candidates. Reuse the hybrid pipeline so the
+    # aggregate endpoint sees exactly the same candidates a /search
+    # call would.
+    candidates = await hybrid_search(
+        db,
+        user_id=user_id,
+        query=request.query,
+        namespace=request.namespace,
+        content_type=request.content_type,
+        limit=request.limit,
+    )
+
+    # Optional tag filter — applied post-search since hybrid_search
+    # doesn't expose tag filtering today (parity with search_memories).
+    if request.tags:
+        wanted = set(request.tags)
+
+        def _has_tag(c: dict) -> bool:
+            meta = c.get("metadata") or {}
+            tags = (meta.get("tags") or []) if isinstance(meta, dict) else []
+            return bool(wanted.intersection(tags or []))
+
+        candidates = [c for c in candidates if _has_tag(c)]
+
+    candidates_considered = len(candidates)
+
+    if candidates_considered == 0:
+        # No memories at all — return a clean empty answer rather
+        # than letting the LLM hallucinate.
+        return MemoryAggregateResponse(
+            type="fallback",
+            answer="I don't have any memories matching that question.",
+            value=None,
+            items=[],
+            source_memory_ids=[],
+            candidates_considered=0,
+        )
+
+    # Stages 2-4 — extraction, Python aggregate, format.
+    result = await _aggregate(request.query, candidates)
+
+    if result is None:
+        # Backend unreachable / extractor failed / type='other'.
+        # Return a fallback answer with the top candidate snippet so
+        # the caller isn't left empty-handed. Type='fallback' tells
+        # the agent to expect free-text instead of a structured value.
+        top = candidates[0]
+        snippet = (top.get("content") or "")[:300]
+        logger.info(
+            "memory.aggregate.fallback",
+            user_id=str(user_id),
+            namespace=request.namespace,
+            candidates=candidates_considered,
+        )
+        return MemoryAggregateResponse(
+            type="fallback",
+            answer=("Aggregator unavailable — returning the top matching memory: " + snippet),
+            value=None,
+            items=[],
+            source_memory_ids=[str(top.get("memory_id"))] if top.get("memory_id") else [],
+            candidates_considered=candidates_considered,
+        )
+
+    items = [
+        AggregateItem(
+            memory_id=str(it.get("memory_id", "")),
+            extracted=str(it.get("extracted", "")),
+            value=(float(it["value"]) if isinstance(it.get("value"), (int, float)) else None),
+        )
+        for it in (result.get("items") or [])
+        if it.get("memory_id")
+    ]
+
+    logger.info(
+        "memory.aggregate.success",
+        user_id=str(user_id),
+        namespace=request.namespace,
+        agg_type=result.get("type"),
+        n_items=len(items),
+        candidates=candidates_considered,
+    )
+
+    return MemoryAggregateResponse(
+        type=str(result.get("type", "fallback")),
+        answer=str(result.get("answer", "")),
+        value=result.get("value"),
+        items=items,
+        source_memory_ids=[str(m) for m in (result.get("source_memory_ids") or [])],
+        candidates_considered=candidates_considered,
+    )

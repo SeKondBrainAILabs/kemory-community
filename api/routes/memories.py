@@ -23,11 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
 from backend.services.memory_service import (
+    MemoryAggregateRequest,
+    MemoryAggregateResponse,
     MemoryCreate,
     MemoryListResponse,
     MemoryResponse,
     MemorySearchRequest,
     MemoryUpdate,
+    aggregate_memories,
     create_memory,
     delete_memory,
     get_memory,
@@ -183,6 +186,48 @@ async def search_memories_endpoint(
     """
     try:
         return await search_memories(auth.user_id, auth.agent_id, request, db, admin_view=is_admin(auth))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post(
+    "/memories/aggregate",
+    response_model=MemoryAggregateResponse,
+    summary="Aggregation queries over memories (count / sum / list / duration)",
+)
+async def aggregate_memories_endpoint(
+    request: MemoryAggregateRequest,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Answer aggregation questions about a user's memories.
+
+    The endpoint runs the kemory aggregation skill:
+
+      1. Hybrid-search candidate memories (same path as /search).
+      2. LLM extract → structured items as JSON (via core-ai-backend).
+      3. Python aggregate → count / sum / dedupe / total.
+      4. LLM format → natural-language final answer.
+
+    The Python step (3) is what the LLM gets wrong on its own and the
+    reason this skill exists. See the LongMemEval multi-session
+    category — bare LLMs hallucinate counts and miss list items at
+    rates of 25–35 % that drop to <10 % when the count is computed
+    algorithmically over an LLM-extracted structured list.
+
+    Failure modes:
+      * core-ai-backend unreachable → ``type='fallback'`` with the
+        top candidate snippet surfaced; no 5xx.
+      * 0 candidates → ``type='fallback'`` with a clean
+        "I don't have any memories matching" answer.
+      * Caller unauthorised for the namespace → 403.
+
+    Story: KMV-AGG-01.
+    """
+    try:
+        return await aggregate_memories(auth.user_id, auth.agent_id, request, db)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
