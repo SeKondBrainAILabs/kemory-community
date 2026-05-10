@@ -531,12 +531,45 @@ def doctor_cmd(ctx: click.Context) -> None:
     except httpx.HTTPError as exc:
         emit("kemory reachable", False, f"{type(exc).__name__}: {exc}")
 
-    # 3. Auth round-trip (if we have credentials).
-    if creds and creds.access_token:
+    # 3. Token refresh — exercise the same code path operational commands use.
+    # Without this, an expired access_token (normal — they live ~15 min) made
+    # `doctor` look broken even though `whoami`/`memorize`/etc. would refresh
+    # transparently. force=True exercises the refresh path regardless of the
+    # current expiry window.
+    if creds is None:
+        emit("token refresh", None, "no credentials")
+        fresh_creds = None
+    elif creds.issuer == "local" or creds.client_id == "local":
+        emit("token refresh", None, "local-mode credential — refresh not applicable")
+        fresh_creds = creds
+    else:
+        try:
+            refreshed = get_valid_credentials(force=True)
+            if refreshed is None:
+                emit(
+                    "token refresh",
+                    False,
+                    "refresh failed — offline session expired or revoked. Run `kemory login`.",
+                )
+                fresh_creds = None
+            else:
+                fresh_creds = refreshed
+                emit(
+                    "token refresh",
+                    True,
+                    f"new access_token expires_at={int(refreshed.expires_at)}",
+                )
+        except (DeviceFlowError, httpx.HTTPError) as exc:
+            emit("token refresh", False, f"{type(exc).__name__}: {exc}")
+            fresh_creds = None
+
+    # 4. Auth round-trip (use the refreshed token so we don't false-fail
+    # on a stale local access_token).
+    if fresh_creds and fresh_creds.access_token:
         try:
             resp = httpx.get(
                 f"{kemory_url.rstrip('/')}/api/v1/me",
-                headers={"Authorization": f"Bearer {creds.access_token}"},
+                headers={"Authorization": f"Bearer {fresh_creds.access_token}"},
                 timeout=5.0,
             )
             if resp.status_code == 200:
@@ -545,13 +578,18 @@ def doctor_cmd(ctx: click.Context) -> None:
                     "auth round-trip", True, f"org={me.get('org_id', '?')}, teams={len(me.get('teams', []))}"
                 )
             elif resp.status_code == 401:
-                emit("auth round-trip", False, "401 — token expired? run `kemory login` again")
+                emit(
+                    "auth round-trip",
+                    False,
+                    "401 — backend rejected a fresh token. Confirm kemory has the correct "
+                    "KEYCLOAK_PUBLIC_URL and that your token's `aud` includes `kemory-api`.",
+                )
             else:
                 emit("auth round-trip", False, f"GET /api/v1/me → {resp.status_code}")
         except httpx.HTTPError as exc:
             emit("auth round-trip", False, str(exc))
     else:
-        emit("auth round-trip", None, "no credentials")
+        emit("auth round-trip", None, "no usable credentials")
 
     # 4. MCP host config consistency — does any known host have a kemory entry?
     found = []

@@ -219,13 +219,26 @@ def refresh(creds: Credentials) -> Credentials:
     return creds
 
 
-def get_valid_credentials(refresh_within: int = 60) -> Credentials | None:
+def get_valid_credentials(refresh_within: int = 60, *, force: bool = False) -> Credentials | None:
     """Load credentials, refreshing if they're about to expire. Returns None
-    if no credentials exist (caller should prompt for `kemory login`)."""
+    if no credentials exist (caller should prompt for `kemory login`).
+
+    Local-mode credentials (issuer=='local', stored by `kemory login --local`)
+    are returned unchanged — the refresh endpoint doesn't exist for them.
+
+    Pass ``force=True`` to perform a refresh regardless of the current
+    expiry window. Used by `kemory doctor` to exercise the refresh path
+    on every run without false-passing on a token that happens to still
+    be valid for >60s.
+    """
     creds = Credentials.load()
     if creds is None:
         return None
-    if creds.expires_within(refresh_within):
+    # `kemory login --local` stores a synthetic credential with no real
+    # OAuth issuer; refresh would fail with a DNS error. Treat as valid.
+    if creds.issuer == "local" or creds.client_id == "local":
+        return creds
+    if force or creds.expires_within(refresh_within):
         try:
             creds = refresh(creds)
         except DeviceFlowError:
