@@ -26,11 +26,20 @@ import re
 import uuid
 from enum import Enum
 
+import structlog
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
+
+# Module-level logger. Without this, every reference to ``logger`` further
+# down the file raised ``NameError: name 'logger' is not defined`` — the
+# background enrichment task in memory_service._bg_enrich swallowed the
+# exception, so every prod memory was silently stuck at
+# enrichment_status="pending" and never got an embedding. See the prod
+# log entry ``enrichment.bg_failed error="name 'logger' is not defined"``.
+logger = structlog.get_logger(__name__)
 
 # ─── Enrichment Schemas ───────────────────────────────────────────
 
