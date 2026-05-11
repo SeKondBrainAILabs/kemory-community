@@ -167,6 +167,12 @@ class MemoryResponse(BaseModel):
     # on namespace isolation. Only set when the matcher actually changed
     # the target; absent (None) on REUSE-by-exact-match or CREATE_NEW.
     redirected_from: str | None = None
+    # Populated by the hybrid search path with the multi-signal rank score
+    # (cosine + FTS via RRF, multi-signal re-ranked in kemory.search.ranking).
+    # Always None on a per-id GET (no query → no score). None on the legacy
+    # FTS path too (ILIKE matches don't produce a meaningful similarity).
+    # Clients use this to threshold or rank-explain hits.
+    similarity_score: float | None = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -943,6 +949,11 @@ async def search_memories(
                         created_at=r.get("created_at", ""),
                         updated_at=r.get("updated_at", ""),
                         compression_tier=_tier_from_meta(r.get("metadata")),
+                        # rank_score is the multi-signal blended score from
+                        # kemory.search.ranking; falls back to the RRF score
+                        # if re-ranking didn't run, then to the dense/sparse
+                        # pass score. Always a float in [0.0, 1.0].
+                        similarity_score=r.get("rank_score") or r.get("score"),
                     )
                 )
             except Exception:
