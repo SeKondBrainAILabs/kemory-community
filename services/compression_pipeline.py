@@ -103,6 +103,25 @@ L3_SYNTHESIS_MIN_NEW_MEMORIES: int = 2
 # Maximum source memories fed into a single L3.1 synthesis call
 L3_SYNTHESIS_MAX_SOURCES: int = 50
 
+# ── Cross-namespace merge detection ───────────────────────────────────────
+# Cosine similarity threshold between two namespace consolidated_summaries
+# that triggers a "suggest_merge" entry in related_namespaces.
+# Lower than the namespace-name AUTO_REDIRECT threshold (0.90) because
+# summaries are longer prose; 0.75 catches "same topic, different name"
+# without over-flagging loosely related namespaces.
+NAMESPACE_MERGE_THRESHOLD: float = float(
+    __import__("os").environ.get("KMV_NAMESPACE_MERGE_THRESHOLD", "0.75")
+)
+
+# Maximum number of namespaces with summaries before the pairwise comparison
+# is skipped (pathological-tenant guard — O(N²) cost).
+NAMESPACE_MERGE_MAX_NAMESPACES: int = 50
+
+# ── Session prewarm ────────────────────────────────────────────────────────
+# A namespace summary older than this many seconds is considered stale and
+# will be refreshed when an agent token is issued (prewarm_namespace).
+PREWARM_STALENESS_SECONDS: int = int(__import__("os").environ.get("KMV_PREWARM_STALENESS_S", "300"))
+
 # ── In-process debounce state ──────────────────────────────────────────────
 # Maps (user_id_str, namespace) → count of memories at last L3.1 synthesis run
 _last_synthesis_count: dict[tuple[str, str], int] = {}
@@ -182,6 +201,12 @@ async def _run_compression(
 
         async with _get_session_factory()() as db:
             await _maybe_synthesize_l3_1(db, user_id, namespace)
+            await db.commit()
+
+        # Stage 5: after synthesis is fresh, compare this namespace's summary
+        # against other namespace summaries to detect merge candidates.
+        async with _get_session_factory()() as db:
+            await _check_namespace_content_similarity(user_id, namespace, db)
             await db.commit()
 
     except Exception as exc:
@@ -1303,3 +1328,187 @@ def _content_hash(content: str) -> str:
 
     normalised = unicodedata.normalize("NFC", content).strip().lower()
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
+# ── Cross-namespace merge detection ───────────────────────────────────────
+
+
+async def _check_namespace_content_similarity(
+    user_id: str,
+    current_namespace: str,
+    db: AsyncSession,
+) -> None:
+    """Compare this namespace's consolidated_summary against all other
+    namespace summaries for the same user. Pairs with cosine similarity
+    >= NAMESPACE_MERGE_THRESHOLD are flagged in related_namespaces with
+    action='suggest_merge' on both NamespacePolicy rows.
+
+    Skips sibling pairs sharing the same ':'-prefix (e.g. project:alpha /
+    project:beta) — they are structurally distinct, not accidental duplicates.
+
+    Performance guard: skipped entirely when the user has >
+    NAMESPACE_MERGE_MAX_NAMESPACES namespaces with summaries.
+    """
+    from backend.models.namespace_policy import NamespacePolicy
+
+    # Scope to this user's namespaces via Memory (NamespacePolicy has no user_id).
+    user_ns_result = await db.execute(
+        select(Memory.namespace)
+        .where(Memory.user_id == uuid.UUID(user_id), Memory.invalid_at.is_(None))
+        .group_by(Memory.namespace)
+    )
+    user_namespaces = {row[0] for row in user_ns_result.all()}
+
+    policy_result = await db.execute(
+        select(NamespacePolicy).where(
+            NamespacePolicy.namespace.in_(user_namespaces),
+            NamespacePolicy.consolidated_summary.isnot(None),
+        )
+    )
+    policies = policy_result.scalars().all()
+
+    if len(policies) < 2:
+        return
+    if len(policies) > NAMESPACE_MERGE_MAX_NAMESPACES:
+        logger.debug(
+            "namespace_similarity.skipped.too_many",
+            count=len(policies),
+            user_id=user_id,
+        )
+        return
+
+    current_policy = next((p for p in policies if p.namespace == current_namespace), None)
+    if current_policy is None:
+        return
+
+    # Embed summaries, reusing the existing module-level cache.
+    def _embed_summary(text: str) -> list[float]:
+        cached = _summary_embedding_cache.get(text)
+        if cached is not None:
+            return cached
+        from memory_vault.embeddings.encoder import encode as _encode
+
+        vec = list(_encode(text))
+        if len(_summary_embedding_cache) > 256:
+            for k in list(_summary_embedding_cache.keys())[:64]:
+                _summary_embedding_cache.pop(k, None)
+        _summary_embedding_cache[text] = vec
+        return vec
+
+    def _are_siblings(a: str, b: str) -> bool:
+        if ":" not in a or ":" not in b:
+            return False
+        return a.rsplit(":", 1)[0] == b.rsplit(":", 1)[0]
+
+    def _already_flagged(policy: NamespacePolicy, target_ns: str) -> bool:
+        return any(
+            e.get("namespace") == target_ns and e.get("action") == "suggest_merge"
+            for e in (policy.related_namespaces or [])
+        )
+
+    current_vec = _embed_summary(current_policy.consolidated_summary)
+    now_iso = datetime.now(UTC).isoformat()
+    any_updated = False
+
+    for other in policies:
+        if other.namespace == current_namespace:
+            continue
+        if _are_siblings(current_namespace, other.namespace):
+            continue
+
+        other_vec = _embed_summary(other.consolidated_summary)
+        # L2-normalised vectors → cosine = dot product
+        similarity = sum(a * b for a, b in zip(current_vec, other_vec, strict=False))
+
+        if similarity < NAMESPACE_MERGE_THRESHOLD:
+            continue
+
+        entry_cur = {
+            "namespace": other.namespace,
+            "similarity": round(float(similarity), 4),
+            "detected_at": now_iso,
+            "action": "suggest_merge",
+        }
+        entry_oth = {
+            "namespace": current_namespace,
+            "similarity": round(float(similarity), 4),
+            "detected_at": now_iso,
+            "action": "suggest_merge",
+        }
+
+        if not _already_flagged(current_policy, other.namespace):
+            new_list = list(current_policy.related_namespaces or [])
+            new_list.append(entry_cur)
+            current_policy.related_namespaces = new_list[-20:]
+            any_updated = True
+
+        if not _already_flagged(other, current_namespace):
+            new_list = list(other.related_namespaces or [])
+            new_list.append(entry_oth)
+            other.related_namespaces = new_list[-20:]
+            any_updated = True
+
+        if any_updated:
+            logger.info(
+                "namespace_similarity.merge_candidate",
+                namespace_a=current_namespace,
+                namespace_b=other.namespace,
+                similarity=round(float(similarity), 4),
+            )
+
+    if any_updated:
+        await db.flush()
+
+
+# ── Session prewarm ────────────────────────────────────────────────────────
+
+
+async def prewarm_namespace(
+    user_id: str,
+    namespace: str,
+    db: AsyncSession,
+) -> None:
+    """Force-run L3 summarisation for a namespace if the summary is stale
+    or absent. Bypasses the novelty/debounce gates — the purpose here is
+    to guarantee a fresh summary exists when an agent's token is issued,
+    not to react to a specific memory write.
+
+    Called from _bg_prewarm_context in agents.py via asyncio.create_task.
+    """
+    from backend.models.namespace_policy import NamespacePolicy
+
+    policy_result = await db.execute(select(NamespacePolicy).where(NamespacePolicy.namespace == namespace))
+    policy = policy_result.scalar_one_or_none()
+
+    updated_at = policy.consolidated_summary_updated_at if policy else None
+    is_stale = updated_at is None or (
+        (datetime.now(UTC) - updated_at).total_seconds() > PREWARM_STALENESS_SECONDS
+    )
+    if not is_stale:
+        logger.debug(
+            "prewarm.skip.fresh",
+            namespace=namespace,
+            updated_at=updated_at.isoformat() if updated_at else None,
+        )
+        return
+
+    source_result = await db.execute(
+        select(Memory)
+        .where(
+            Memory.user_id == uuid.UUID(user_id),
+            Memory.namespace == namespace,
+            Memory.invalid_at.is_(None),
+            Memory.content_type != "concept",
+        )
+        .order_by(Memory.created_at.desc())
+    )
+    source_memories = source_result.scalars().all()
+    count = len(source_memories)
+
+    if count < L3_SUMMARY_THRESHOLD:
+        logger.debug("prewarm.skip.below_threshold", namespace=namespace, count=count)
+        return
+
+    key = (user_id, namespace)
+    await _do_summarize_l3(db, user_id, namespace, source_memories, count, key)
+    logger.info("prewarm.summarized", namespace=namespace, source_count=count)

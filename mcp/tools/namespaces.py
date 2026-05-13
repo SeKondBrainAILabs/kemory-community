@@ -2,8 +2,9 @@
 MCP tools — namespace listing and contextual retrieval.
 
 Tools in this module:
-  s9nmem_list_namespaces — enumerate namespaces + memory counts
-  s9nmem_get_context     — topic-relevant memories with optional LLM synthesis
+  s9nmem_list_namespaces   — enumerate namespaces + memory counts
+  s9nmem_get_context       — topic-relevant memories with optional LLM synthesis
+  s9nmem_get_user_context  — cross-namespace summary for session-start injection
 """
 
 from __future__ import annotations
@@ -13,6 +14,43 @@ from backend.services.memory_service import (
     MemorySearchRequest,
     list_namespaces,
     search_memories,
+)
+
+_USER_CONTEXT_DEFINITION = MCPToolDefinition(
+    name="s9nmem_get_user_context",
+    description=(
+        "Get a cross-namespace memory overview for the user. "
+        "Ideal for session-start context injection — gives the agent a single "
+        "block covering all of the user's memory namespaces.\n\n"
+        "depth='l3' (default): returns per-namespace L3/L3.1 summaries already "
+        "computed by the compression pipeline — fast, no LLM call.\n"
+        "depth='l4': adds one LLM synthesis pass across all namespace summaries "
+        "via core-ai-backend — richer but slower; synthesis=null if backend "
+        "is unavailable.\n\n"
+        "Optional 'namespaces' list restricts which namespaces are included."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "depth": {
+                "type": "string",
+                "enum": ["l3", "l4"],
+                "description": (
+                    "'l3' = stored summaries only (fast, no LLM). "
+                    "'l4' = LLM synthesis across all summaries (slower)."
+                ),
+                "default": "l3",
+            },
+            "namespaces": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of namespace names to include. " "Default: all namespaces for the user."
+                ),
+            },
+        },
+        "required": [],
+    },
 )
 
 DEFINITIONS: list[MCPToolDefinition] = [
@@ -62,6 +100,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             "required": ["topic"],
         },
     ),
+    _USER_CONTEXT_DEFINITION,
 ]
 
 
@@ -163,7 +202,44 @@ async def _handle_get_context(args, user_id, agent_id, db):
     )
 
 
+async def _handle_get_user_context(args, user_id, agent_id, db):
+    """Calls get_user_context() service directly — no HTTP round-trip."""
+    depth = args.get("depth", "l3")
+    namespaces_filter: list[str] | None = args.get("namespaces") or None
+
+    if depth not in ("l3", "l4"):
+        return MCPToolResult(
+            content=[{"type": "text", "text": f"Invalid depth '{depth}'. Use 'l3' or 'l4'."}],
+            isError=True,
+        )
+
+    result = await get_user_context(
+        user_id,
+        db,
+        depth=depth,
+        namespaces_filter=namespaces_filter,
+    )
+
+    ns_list = result.get("namespaces", [])
+    lines = [f"User context (depth={depth}, {len(ns_list)} namespace(s)):\n"]
+    for ns in ns_list:
+        tier = ns.get("tier") or "none"
+        count = ns.get("memory_count", 0)
+        summary = (ns.get("summary") or "(no summary yet)").strip()
+        if len(summary) > 400:
+            summary = summary[:397] + "..."
+        lines.append(f"[{ns['namespace']}] tier={tier} memories={count}\n  {summary}\n")
+
+    if result.get("synthesis"):
+        lines.append(f"\nL4 synthesis:\n{result['synthesis']}")
+
+    return MCPToolResult(
+        content=[{"type": "text", "text": "\n".join(lines)}],
+    )
+
+
 HANDLERS: dict[str, object] = {
     "s9nmem_list_namespaces": _handle_list_namespaces,
     "s9nmem_get_context": _handle_get_context,
+    "s9nmem_get_user_context": _handle_get_user_context,
 }

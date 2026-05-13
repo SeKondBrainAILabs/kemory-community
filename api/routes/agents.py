@@ -13,6 +13,7 @@ Endpoints for agent lifecycle management:
 Spec reference: Section 10 (API Contracts), F01-US-001 through F01-US-003
 """
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -172,11 +173,59 @@ async def generate_token_endpoint(
 
     The token expires after the configured JWT_EXPIRY_MINUTES (default: 15).
     Only active agents can receive tokens.
+
+    KMV-CTX-01: fires a background prewarm task so namespace L3 summaries
+    are fresh by the time the agent makes its first memory call.
     """
     try:
-        return await generate_token_for_agent(agent_id, auth.user_id, db)
+        result = await generate_token_for_agent(agent_id, auth.user_id, db)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    asyncio.create_task(
+        _bg_prewarm_context(auth.user_id, agent_id),
+        name=f"prewarm:{agent_id}",
+    )
+    return result
+
+
+async def _bg_prewarm_context(user_id: uuid.UUID, agent_id: uuid.UUID) -> None:
+    """Fire-and-forget: refresh stale namespace summaries on token issuance.
+
+    Opens its own DB session per namespace (same pattern as
+    _bg_touch_last_active in auth_service.py) so it never blocks or races
+    with the request transaction. Failures are logged and swallowed.
+    """
+    import structlog as _sl
+
+    _log = _sl.get_logger(__name__)
+    try:
+        from backend.core.database import _get_session_factory
+        from backend.services.compression_pipeline import prewarm_namespace
+        from backend.services.memory_service import list_namespaces
+
+        async with _get_session_factory()() as db:
+            namespaces = await list_namespaces(user_id, db)
+
+        for ns_entry in namespaces:
+            ns = ns_entry["namespace"]
+            try:
+                async with _get_session_factory()() as db:
+                    await prewarm_namespace(str(user_id), ns, db)
+                    await db.commit()
+            except Exception as ns_exc:
+                _log.debug(
+                    "prewarm.namespace.skipped",
+                    namespace=ns,
+                    error=str(ns_exc),
+                )
+    except Exception as exc:
+        _log.warning(
+            "prewarm.failed",
+            user_id=str(user_id),
+            agent_id=str(agent_id),
+            error=str(exc),
+        )
 
 
 # ─── WS-5: key rotation ────────────────────────────────────────────────
