@@ -36,6 +36,14 @@ export interface McpClientDescriptor {
   notes?: string[]
   /** Optional name of a pre-packaged `.mcp.json` file to mention. */
   projectScopedHint?: string
+  /**
+   * System prompt template to show on the final step.
+   * Placeholders: {{KEMORY_URL}}, {{KEMORY_API_KEY}}, {{PROJECT_SLUG}}.
+   * Rendered with live values substituted so the user can copy-paste directly.
+   */
+  systemPromptTemplate?: string
+  /** Where to paste the prompt, shown as label. E.g. "CLAUDE.md" or "Custom Instructions". */
+  promptDestination?: string
 }
 
 interface Props {
@@ -56,6 +64,13 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
 
   const serverKey = descriptor.serverKey ?? 'kemory'
   const total = 3
+
+  const systemPrompt = useMemo(() => {
+    if (!descriptor.systemPromptTemplate) return null
+    return descriptor.systemPromptTemplate
+      .replace(/\{\{KEMORY_URL\}\}/g, apiUrl)
+      .replace(/\{\{KEMORY_API_KEY\}\}/g, apiKey || '<YOUR_API_KEY>')
+  }, [descriptor.systemPromptTemplate, apiUrl, apiKey])
 
   const configJson = useMemo(
     () =>
@@ -213,8 +228,13 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
           )}
         </div>
         {regError && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-status-danger/10 px-3 py-2 text-xs text-status-danger">
-            <AlertCircle size={14} /> {regError}
+          <div className="mt-3 flex items-start gap-2 rounded-lg bg-status-danger/10 px-3 py-2 text-xs text-status-danger">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {regError === 'missing_org_claim'
+                ? 'Your account is missing an org_id claim. This usually means TENANT_ENFORCEMENT is set to "enforce" but Keycloak has not provisioned an org for your user. Ask your admin to set TENANT_ENFORCEMENT=off, or provision the org_id claim in Keycloak.'
+                : regError}
+            </span>
           </div>
         )}
         <WizardNav
@@ -265,7 +285,7 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
             ))}
           </ul>
         </div>
-        <CodeBlock label="2. Paste or merge this into the file:" code={configJson} />
+        <CodeBlock label="2. Paste or merge this into the config file:" code={configJson} />
         {descriptor.notes && descriptor.notes.length > 0 && (
           <ul className="mt-2 space-y-1 text-xs text-content-tertiary">
             {descriptor.notes.map((n, i) => (
@@ -273,12 +293,23 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
             ))}
           </ul>
         )}
+        {systemPrompt && (
+          <div className="mt-4 border-t border-border pt-4">
+            <CodeBlock
+              label={`3. Paste this system prompt into ${descriptor.promptDestination ?? 'your AI client'}:`}
+              code={systemPrompt}
+            />
+            <p className="mt-1.5 text-xs text-content-tertiary">
+              Replace <code className="rounded bg-surface-secondary px-1">{'{{PROJECT_SLUG}}'}</code> with your project name (e.g. <code className="rounded bg-surface-secondary px-1">my-app</code>).
+            </p>
+          </div>
+        )}
       </div>
 
       <p className="mt-3 text-center text-xs text-content-tertiary">
-        Restart {descriptor.name} after saving the config. 6 tools:
-        s9nmem_store_memory, s9nmem_recall_memory, s9nmem_delete_memory,
-        s9nmem_check_access, s9nmem_list_namespaces, s9nmem_get_context.
+        Restart {descriptor.name} after saving the config. 14 MCP tools available
+        including s9nmem_store_memory, s9nmem_recall_memory, s9nmem_get_context,
+        and s9nmem_get_user_context.
       </p>
       <WizardNav step={2} total={total} onBack={() => setStep(1)} onNext={onClose} nextLabel="Done" />
     </>

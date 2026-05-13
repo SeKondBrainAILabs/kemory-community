@@ -3,6 +3,7 @@ import { WizardSteps, WizardNav, CodeBlock } from '../ConnectorWizard'
 import { Check, Terminal, AlertCircle } from 'lucide-react'
 import { registerAgent } from '@/api/agents'
 import { useQueryClient } from '@tanstack/react-query'
+import { PROMPT_CLAUDE_CODE } from '@/lib/connectorSystemPrompts'
 import { useAgents } from '@/hooks/useAgents'
 import { defaultApiUrl, defaultScriptPath } from '@/lib/connectorDefaults'
 
@@ -149,25 +150,7 @@ export function ClaudeCodeWizard({ onClose }: Props) {
   }
 
   // Step 2: Output — config + CLAUDE.md prompt
-
-  const claudeMdSnippet = `## Memory
-
-Use the **S9N Memory Vault MCP tools** for persistent memory across sessions.
-
-**At session start:**
-1. Call \`s9nmem_get_context\` with the current task topic
-2. Call \`s9nmem_list_namespaces\` to see what memory buckets exist
-
-**Store memories immediately when** the user shares preferences, project facts, technical decisions, or feedback.
-
-**Namespaces:**
-| Namespace | Purpose |
-|-----------|---------|
-| \`shared\` | Project facts, technical decisions |
-| \`user:preferences\` | Personal preferences and style |
-
-**Never store:** passwords, API keys, or credentials.
-**Be transparent:** tell the user what you're storing and why.`
+  const claudeMdSnippet = PROMPT_CLAUDE_CODE
 
   return (
     <>
@@ -195,8 +178,11 @@ Use the **S9N Memory Vault MCP tools** for persistent memory across sessions.
         <CodeBlock label="2. Add to CLAUDE.md (memory instructions):" code={claudeMdSnippet} />
       </div>
 
+      <p className="mt-1.5 text-xs text-content-tertiary">
+        Replace <code className="rounded bg-surface-secondary px-1">{'{{PROJECT_SLUG}}'}</code> with your project name.
+      </p>
       <p className="mt-3 text-center text-xs text-content-tertiary">
-        Restart Claude Code after adding the MCP config. 6 tools: s9nmem_store_memory, s9nmem_recall_memory, s9nmem_delete_memory, s9nmem_check_access, s9nmem_list_namespaces, s9nmem_get_context
+        Restart Claude Code after adding the MCP config. 14 MCP tools available including s9nmem_get_user_context for cross-namespace session bootstrap.
       </p>
       <WizardNav step={2} total={total} onBack={() => setStep(1)} onNext={onClose} nextLabel="Done" />
     </>

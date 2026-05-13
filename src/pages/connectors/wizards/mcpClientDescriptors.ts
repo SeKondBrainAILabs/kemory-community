@@ -1,4 +1,9 @@
 import type { McpClientDescriptor } from './McpClientWizard'
+import {
+  PROMPT_GENERIC_MCP,
+  PROMPT_CLINE,
+  PROMPT_CHATGPT_REST,
+} from '@/lib/connectorSystemPrompts'
 
 /**
  * Catalogue of MCP clients onboarded via the generic McpClientWizard.
@@ -21,6 +26,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
       'Settings → MCP → toggle the "kemory" server on after saving.',
       'Cursor shows tool invocations inline in the chat panel.',
     ],
+    systemPromptTemplate: PROMPT_GENERIC_MCP,
+    promptDestination: 'Cursor Rules (.cursorrules) or project .cursor/rules',
   },
   windsurf: {
     id: 'windsurf',
@@ -35,6 +42,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
     notes: [
       'Cascade → Settings → Plugins → Refresh, then enable "kemory".',
     ],
+    systemPromptTemplate: PROMPT_GENERIC_MCP,
+    promptDestination: 'Windsurf Global Rules or .windsurfrules',
   },
   cline: {
     id: 'cline',
@@ -49,6 +58,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
     notes: [
       'Open the Cline sidebar → MCP Servers → Edit. Saving reloads servers automatically.',
     ],
+    systemPromptTemplate: PROMPT_CLINE,
+    promptDestination: 'Cline Custom Instructions (sidebar → ⚙ → Custom Instructions)',
   },
   codex: {
     id: 'codex',
@@ -64,6 +75,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
       'Codex uses TOML — wrap the JSON below under an `[mcp_servers.kemory]` table with `command`, `args`, and `env` keys.',
       'Example TOML form is shown after registration; the JSON version is also valid if you keep it under a "json" key.',
     ],
+    systemPromptTemplate: PROMPT_CHATGPT_REST,
+    promptDestination: 'ChatGPT Custom Instructions or Codex CLI --instructions flag',
   },
   'gemini-cli': {
     id: 'gemini-cli',
@@ -78,6 +91,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
     notes: [
       'Gemini CLI reloads settings on next invocation — no explicit restart needed.',
     ],
+    systemPromptTemplate: PROMPT_GENERIC_MCP,
+    promptDestination: 'Gemini CLI --system_prompt flag or GEMINI.md',
   },
   ollama: {
     id: 'ollama',
@@ -92,6 +107,8 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
     notes: [
       'Native Ollama MCP support is in beta — pair with an MCP-aware client (Open WebUI, Msty) if your Ollama build does not expose mcp.json directly.',
     ],
+    systemPromptTemplate: PROMPT_GENERIC_MCP,
+    promptDestination: 'your Ollama modelfile SYSTEM block or host client system prompt',
   },
   'custom-mcp': {
     id: 'custom-mcp',
@@ -108,5 +125,7 @@ export const mcpClientDescriptors: Record<string, McpClientDescriptor> = {
     notes: [
       'The bridge speaks MCP over stdio. If your client only speaks SSE/HTTP, run it as a long-lived process and forward via your client\'s HTTP transport.',
     ],
+    systemPromptTemplate: PROMPT_GENERIC_MCP,
+    promptDestination: 'your agent\'s system message',
   },
 }

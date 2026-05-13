@@ -3,6 +3,7 @@ import { WizardSteps, WizardNav, CodeBlock } from '../ConnectorWizard'
 import { Check, Monitor, AlertCircle } from 'lucide-react'
 import { registerAgent } from '@/api/agents'
 import { useQueryClient } from '@tanstack/react-query'
+import { PROMPT_CLAUDE_DESKTOP } from '@/lib/connectorSystemPrompts'
 import { useAgents } from '@/hooks/useAgents'
 import { defaultApiUrl, defaultScriptPath } from '@/lib/connectorDefaults'
 
@@ -143,24 +144,7 @@ export function ClaudeDesktopWizard({ onClose }: Props) {
     )
   }
 
-  const claudeMdSnippet = `## Memory
-
-Use the **S9N Memory Vault MCP tools** for persistent memory across sessions.
-
-**At session start:**
-1. Call \`s9nmem_get_context\` with the current task topic
-2. Call \`s9nmem_list_namespaces\` to see what memory buckets exist
-
-**Store memories immediately when** the user shares preferences, project facts, technical decisions, or feedback.
-
-**Namespaces:**
-| Namespace | Purpose |
-|-----------|---------|
-| \`shared\` | Project facts, technical decisions |
-| \`user:preferences\` | Personal preferences and style |
-
-**Never store:** passwords, API keys, or credentials.
-**Be transparent:** tell the user what you're storing and why.`
+  const claudeMdSnippet = PROMPT_CLAUDE_DESKTOP
 
   return (
     <>
