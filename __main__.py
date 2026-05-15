@@ -367,8 +367,7 @@ def keys_list(ctx: click.Context) -> None:
     for r in rows:
         label = _extract_agent_label(r.get("agent_description"))
         click.echo(
-            f"{r.get('agent_id')}  {(r.get('agent_name') or '-'):<30}  "
-            f"{label:<14}  {r.get('status', '-')}"
+            f"{r.get('agent_id')}  {(r.get('agent_name') or '-'):<30}  {label:<14}  {r.get('status', '-')}"
         )
 
 
