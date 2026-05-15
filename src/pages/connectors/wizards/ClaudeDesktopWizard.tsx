@@ -21,7 +21,7 @@ export function ClaudeDesktopWizard({ onClose }: Props) {
   const [regError, setRegError] = useState('')
   const qc = useQueryClient()
   const agents = useAgents()
-  const existingAgent = (agents.data ?? []).find(a => a.agent_name === AGENT_NAME)
+  const existingAgent = (agents.data ?? []).find(a => a.agent_name === AGENT_NAME && a.status !== 'revoked')
 
   async function handleRegister() {
     setRegistering(true)

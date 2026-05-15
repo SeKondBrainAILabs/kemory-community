@@ -21,7 +21,7 @@ export function ClaudeCodeWizard({ onClose }: Props) {
   const [regError, setRegError] = useState('')
   const qc = useQueryClient()
   const agents = useAgents()
-  const existingAgent = (agents.data ?? []).find(a => a.agent_name === AGENT_NAME)
+  const existingAgent = (agents.data ?? []).find(a => a.agent_name === AGENT_NAME && a.status !== 'revoked')
 
   function buildConfig(key: string) {
     return JSON.stringify(

@@ -60,7 +60,7 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
   const [regError, setRegError] = useState('')
   const qc = useQueryClient()
   const agents = useAgents()
-  const existingAgent = (agents.data ?? []).find((a) => a.agent_name === descriptor.agentName)
+  const existingAgent = (agents.data ?? []).find((a) => a.agent_name === descriptor.agentName && a.status !== 'revoked')
 
   const serverKey = descriptor.serverKey ?? 'kemory'
   const total = 3
