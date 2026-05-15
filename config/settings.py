@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # P1 #9 phase 2 migration on main); the Python package `kemory`
     # remains on its legacy name (a refactor for a separate change).
     app_name: str = "Kemory"
-    app_version: str = "0.1.0"
+    app_version: str = "0.5.1"
     environment: str = "development"
     log_level: str = "INFO"
     debug: bool = False
