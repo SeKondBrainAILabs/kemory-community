@@ -27,11 +27,11 @@ from backend.services.agent_service import (
     AgentRegistrationResponse,
     AgentResponse,
     approve_agent,
+    delete_agent,
     generate_token_for_agent,
     get_agent,
     list_agents,
     register_agent,
-    delete_agent,
     revoke_agent,
     suspend_agent,
 )

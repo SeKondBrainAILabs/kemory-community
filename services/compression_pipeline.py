@@ -944,7 +944,7 @@ async def _summarize_with_groq(
     if not base_url:
         raise RuntimeError("CORE_AI_BACKEND_URL not set — L3 narrative summary cannot run")
 
-    memories_text = "\n".join(f"[{i+1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
+    memories_text = "\n".join(f"[{i + 1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
 
     prompt = (
         f"You are summarizing the {scope} of memory records for namespace "

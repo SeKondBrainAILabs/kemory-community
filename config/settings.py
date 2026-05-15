@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     # the agent_registry table after they obtain a Keycloak token.
     max_agents_per_user: int = 50
 
+    # Public base URL of the API as the AI's MCP client will see it.
+    # Echoed back to clients in the pair‑claim response so they know which
+    # host to point their MCP transport at. Falls back to a localhost URL
+    # for dev; override in prod (e.g. https://api.memory.example.com).
+    api_public_url: str = "http://localhost:8100"
+
     # P4 #22: hard cap on request body size. Default 1 MiB is generous
     # for typical memories (a long conversation summary is ~5 KB) and
     # tight enough to prevent a malicious 10 GB body from OOMing the

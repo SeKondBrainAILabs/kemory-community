@@ -181,8 +181,7 @@ async def register_agent(
         "Agent registered + auto-approved (AUTO_APPROVE_AGENTS=true). "
         "API key shown once — store it securely. Use it immediately."
         if _settings.auto_approve_agents
-        else "Agent registered. API key shown once — store it securely. "
-        "Agent requires approval before use."
+        else "Agent registered. API key shown once — store it securely. Agent requires approval before use."
     )
 
     agent = AgentRegistry(

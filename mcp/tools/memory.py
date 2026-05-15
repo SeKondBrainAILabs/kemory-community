@@ -13,6 +13,10 @@ from __future__ import annotations
 import uuid
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
+from backend.services.cross_agent_context import (
+    format_cross_agent_section,
+    get_cross_agent_context,
+)
 from backend.services.gatekeeper_service import (
     EvaluationRequest,
     evaluate,
@@ -193,6 +197,19 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
             f"Content: {item.content[:500]}{'...' if len(item.content) > 500 else ''}\n"
             f"Version: {item.version} | Quality: {item.quality_score or 'N/A'}\n"
         )
+
+    namespaces = {item.namespace for item in result.items if item.namespace}
+    if not namespaces and args.get("namespace"):
+        namespaces = {args["namespace"]}
+    cross = await get_cross_agent_context(
+        user_id=user_id,
+        current_agent_id=agent_id,
+        namespaces=namespaces,
+        db=db,
+    )
+    section = format_cross_agent_section(cross)
+    if section:
+        lines.append(section)
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],

@@ -10,6 +10,10 @@ Tools in this module:
 from __future__ import annotations
 
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
+from backend.services.cross_agent_context import (
+    format_cross_agent_section,
+    get_cross_agent_context,
+)
 from backend.services.memory_service import (
     MemorySearchRequest,
     list_namespaces,
@@ -45,7 +49,7 @@ _USER_CONTEXT_DEFINITION = MCPToolDefinition(
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Optional list of namespace names to include. " "Default: all namespaces for the user."
+                    "Optional list of namespace names to include. Default: all namespaces for the user."
                 ),
             },
         },
@@ -184,10 +188,20 @@ async def _handle_get_context(args, user_id, agent_id, db):
     except Exception:
         pass  # fall back to raw context block
 
+    namespaces = {item.namespace for item in result.items if item.namespace}
+    if not namespaces and namespace:
+        namespaces = {namespace}
+    cross = await get_cross_agent_context(
+        user_id=user_id,
+        current_agent_id=agent_id,
+        namespaces=namespaces,
+        db=db,
+    )
+    cross_section = format_cross_agent_section(cross)
+
     if synthesised:
-        return MCPToolResult(
-            content=[{"type": "text", "text": synthesised}],
-        )
+        text = synthesised + ("\n" + cross_section if cross_section else "")
+        return MCPToolResult(content=[{"type": "text", "text": text}])
 
     # Fallback: format as context block
     lines = [f"Context for '{topic}' ({len(result.items)} memories):\n"]
@@ -196,6 +210,8 @@ async def _handle_get_context(args, user_id, agent_id, db):
             f"[{item.content_type}] ({item.namespace}) "
             f"{item.content[:300]}{'...' if len(item.content) > 300 else ''}\n"
         )
+    if cross_section:
+        lines.append(cross_section)
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
