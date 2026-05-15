@@ -46,7 +46,7 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-white shadow-lg">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[95vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-border px-6 py-4">
             <Dialog.Title className="text-base font-semibold text-content-primary">
               {titles[connectorId]}
@@ -57,7 +57,7 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
               </button>
             </Dialog.Close>
           </div>
-          <div className="px-6 py-5">
+          <div className="overflow-y-auto px-6 py-5">
             {connectorId === 'claude-code' && <ClaudeCodeWizard onClose={onClose} />}
             {connectorId === 'claude-desktop' && <ClaudeDesktopWizard onClose={onClose} />}
             {connectorId === 'custom-agent' && <AgentWizard onClose={onClose} />}

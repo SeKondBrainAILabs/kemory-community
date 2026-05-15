@@ -24,6 +24,7 @@ import {
   Puzzle,
 } from 'lucide-react'
 import { ConnectorWizard } from './ConnectorWizard'
+import { QuickConnectPanel } from './QuickConnectPanel'
 
 export type ConnectorId =
   | 'claude-code'
@@ -170,9 +171,12 @@ export function ConnectorsPage() {
     <PageShell>
       <div className="mb-6">
         <p className="text-sm text-content-secondary">
-          Connect external systems to Kemory. Each connector provides a step-by-step setup wizard.
+          Connect external systems to Kemory. Use Quick connect for any modern AI — or pick a specific
+          client below for the step‑by‑step wizard.
         </p>
       </div>
+
+      <QuickConnectPanel />
 
       {categories.map((cat) => {
         const items = connectors.filter((c) => c.category === cat)
