@@ -31,6 +31,7 @@ from backend.services.agent_service import (
     get_agent,
     list_agents,
     register_agent,
+    delete_agent,
     revoke_agent,
     suspend_agent,
 )
@@ -155,6 +156,23 @@ async def revoke_agent_endpoint(
     """Permanently revoke an agent. This action is irreversible."""
     try:
         return await revoke_agent(agent_id, auth.user_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete(
+    "/{agent_id}",
+    status_code=204,
+    summary="Delete a revoked agent",
+)
+async def delete_agent_endpoint(
+    agent_id: uuid.UUID,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hard-delete a revoked agent record. Only revoked agents can be deleted."""
+    try:
+        await delete_agent(agent_id, auth.user_id, db)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

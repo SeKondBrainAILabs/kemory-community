@@ -255,6 +255,19 @@ async def revoke_agent(
     return _to_response(agent)
 
 
+async def delete_agent(
+    agent_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> None:
+    """Hard-delete a revoked agent record. Only revoked agents may be deleted."""
+    agent = await _get_agent_for_user(agent_id, user_id, db)
+    if agent.status != "revoked":
+        raise ValueError("Only revoked agents can be deleted. Revoke the agent first.")
+    await db.delete(agent)
+    await db.flush()
+
+
 async def rotate_agent_key(
     agent_id: uuid.UUID,
     user_id: uuid.UUID,
