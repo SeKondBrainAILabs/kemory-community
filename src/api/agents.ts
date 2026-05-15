@@ -26,6 +26,10 @@ export async function revokeAgent(agentId: string): Promise<AgentResponse> {
   return api.post(`api/v1/agents/${agentId}/revoke`).json()
 }
 
+export async function deleteAgent(agentId: string): Promise<void> {
+  await api.delete(`api/v1/agents/${agentId}`)
+}
+
 export async function getAgentToken(agentId: string) {
   return api.post(`api/v1/agents/${agentId}/token`).json<{
     access_token: string

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { PageShell } from '@/components/layout/PageShell'
-import { useAgents, useAgentAction } from '@/hooks/useAgents'
+import { useAgents, useAgentAction, useDeleteAgent } from '@/hooks/useAgents'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { cn } from '@/lib/utils'
 import {
@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Pause,
   Ban,
+  Trash2,
   Play,
   Code2,
   Wind,
@@ -149,6 +150,7 @@ export function ConnectorsPage() {
   const [activeWizard, setActiveWizard] = useState<ConnectorId | null>(null)
   const agents = useAgents()
   const agentAction = useAgentAction()
+  const deleteAgent = useDeleteAgent()
 
   const agentNames = new Set(
     (agents.data ?? []).filter((a) => a.status === 'active').map((a) => a.agent_name),
@@ -267,6 +269,18 @@ export function ConnectorsPage() {
                           className="rounded-lg border border-border px-2.5 py-2 text-xs text-content-tertiary hover:bg-status-danger/10 hover:text-status-danger transition-colors"
                         >
                           <Ban size={14} />
+                        </button>
+                      )}
+                      {agent && agent.status === 'revoked' && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete ${agent.agent_name}? This cannot be undone.`))
+                              deleteAgent.mutate(agent.agent_id)
+                          }}
+                          title="Delete agent"
+                          className="rounded-lg border border-border px-2.5 py-2 text-xs text-content-tertiary hover:bg-status-danger/10 hover:text-status-danger transition-colors"
+                        >
+                          <Trash2 size={14} />
                         </button>
                       )}
                     </div>

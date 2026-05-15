@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listAgents, getAgent, registerAgent, approveAgent, suspendAgent, revokeAgent } from '@/api/agents'
+import { listAgents, getAgent, registerAgent, approveAgent, suspendAgent, revokeAgent, deleteAgent } from '@/api/agents'
 import type { AgentRegistrationRequest } from '@/api/types'
 
 export function useAgents(status?: string) {
@@ -39,6 +39,16 @@ export function useAgentAction() {
       const fn = { approve: approveAgent, suspend: suspendAgent, revoke: revokeAgent }[action]
       return fn(agentId)
     },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] })
+    },
+  })
+}
+
+export function useDeleteAgent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (agentId: string) => deleteAgent(agentId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
     },

@@ -18,11 +18,11 @@ import { DataTable } from '@/components/shared/DataTable'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
-import { useAgents, useAgentAction, useRegisterAgent } from '@/hooks/useAgents'
+import { useAgents, useAgentAction, useDeleteAgent, useRegisterAgent } from '@/hooks/useAgents'
 import { formatRelativeTime } from '@/lib/utils'
 import type { AgentResponse } from '@/api/types'
 import { cn } from '@/lib/utils'
-import { CheckCircle, PauseCircle, XCircle, Plus, X } from 'lucide-react'
+import { CheckCircle, PauseCircle, XCircle, Trash2, Plus, X } from 'lucide-react'
 
 const statusFilters = ['all', 'pending', 'active', 'suspended', 'revoked'] as const
 
@@ -230,14 +230,28 @@ function RegisterAgentModal({
 function AgentActionButtons({
   agent,
   onAction,
+  onDelete,
   isPending,
 }: {
   agent: AgentResponse
   onAction: (action: AgentActionType) => void
+  onDelete: () => void
   isPending: boolean
 }) {
   return (
     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      {agent.status === 'revoked' && (
+        <button
+          onClick={() => {
+            if (confirm(`Delete ${agent.agent_name}? This cannot be undone.`)) onDelete()
+          }}
+          disabled={isPending}
+          title="Delete"
+          className="rounded p-1.5 text-content-tertiary hover:bg-red-50 hover:text-status-danger disabled:opacity-40"
+        >
+          <Trash2 size={15} />
+        </button>
+      )}
       {agent.status === 'pending' && (
         <button
           onClick={() => onAction('approve')}
@@ -281,6 +295,7 @@ export function AgentListPage() {
   const agents = useAgents(filter === 'all' ? undefined : filter)
   const navigate = useNavigate()
   const action = useAgentAction()
+  const deleteAgent = useDeleteAgent()
 
   // Build columns inside the component so action handlers have access to state
   const columns: ColumnDef<AgentResponse, unknown>[] = [
@@ -313,7 +328,8 @@ export function AgentListPage() {
       cell: ({ row }: { row: Row<AgentResponse> }) => (
         <AgentActionButtons
           agent={row.original}
-          isPending={action.isPending}
+          isPending={action.isPending || deleteAgent.isPending}
+          onDelete={() => deleteAgent.mutate(row.original.agent_id)}
           onAction={(act) =>
             setPendingAction({
               agentId: row.original.agent_id,
