@@ -30,7 +30,7 @@ export function ClaudeCodeWizard({ onClose }: Props) {
           'kemory': {
             command: 'python3',
             args: [serverPath],
-            env: { S9NMV_API_URL: apiUrl, S9NMV_API_KEY: key },
+            env: { KEMORY_API_URL: apiUrl, KEMORY_API_KEY: key },
           },
         },
       },
