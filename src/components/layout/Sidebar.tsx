@@ -18,8 +18,12 @@ import {
   Settings,
   MessageCircle,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { getLiveness } from '@/api/health'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
+
+declare const __FE_VERSION__: string
 
 /**
  * Kemory inner sidebar.
@@ -101,6 +105,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function Sidebar() {
   const { hasRole } = useAuth()
+  const { data: liveness } = useQuery({ queryKey: ['health-live'], queryFn: getLiveness, staleTime: 60_000 })
   const visibleOps = opsNav.filter(
     (item) => !item.requiredRole || hasRole(item.requiredRole),
   )
@@ -123,7 +128,7 @@ export function Sidebar() {
             by SekondBrain AI
           </div>
           <div className="mt-1.5 font-mono text-[10px] leading-tight text-content-tertiary/80">
-            FE:0.1.0 / BE:0.5.0
+            FE:{__FE_VERSION__} / BE:{liveness?.version ?? '…'}
           </div>
         </div>
       </div>
