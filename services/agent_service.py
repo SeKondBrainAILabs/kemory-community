@@ -100,6 +100,7 @@ async def register_agent(
     request: AgentRegistrationRequest,
     db: AsyncSession,
     org_id: str = "",
+    auto_activate: bool = False,
 ) -> AgentRegistrationResponse:
     """
     Register a new agent for a user.
@@ -176,7 +177,11 @@ async def register_agent(
     # always the registering user's own data.
     from backend.config.settings import settings as _settings
 
-    initial_status = "active" if _settings.auto_approve_agents else "pending_approval"
+    # auto_activate is the caller-side override used by the pair-claim flow:
+    # the human user proved consent by minting the pair code, so we don't
+    # need a second approval round-trip. It supersedes the global
+    # AUTO_APPROVE_AGENTS setting just for this call.
+    initial_status = "active" if (_settings.auto_approve_agents or auto_activate) else "pending_approval"
     activation_message = (
         "Agent registered + auto-approved (AUTO_APPROVE_AGENTS=true). "
         "API key shown once — store it securely. Use it immediately."
