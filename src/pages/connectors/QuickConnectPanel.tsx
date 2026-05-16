@@ -41,11 +41,13 @@ The response contains:
   - mcp_url — the base for your MCP transport (POST /tools/list, /tools/call, /prompts/get).
   - brief — your instructions for using Kemory. Read it carefully. Refresh it on every reconnect via prompts/get name="kemory_brief".
   - tools — the list of memory tools available right now.
+  - setup — a per-client MCP config block ({ snippet, config_path, restart_hint }). Show me the snippet, tell me where to paste it (config_path), and what to restart afterwards. If you have shell access, offer to write the file yourself.
 
-After claiming:
-  1. Store a small test memory and immediately recall it ("Connected to Kemory at <timestamp> from <your name>").
-  2. Report back to me: "✅ Connected to Kemory as <agent_name> — round-trip test passed."
-  3. From now on, use Kemory as your default memory store. Confirm with me before storing anything personal.`
+After claiming, follow the brief in this order:
+  1. PERSIST: show me the setup.snippet and where to paste it so future sessions auto-connect.
+  2. SMOKE TEST: store and recall one small test memory.
+  3. Report back: "✅ Connected to Kemory as <agent_name> — MCP entry ready, round-trip test passed."
+  4. From now on, ASK ME before storing anything else. Recall freely.`
 }
 
 interface QuickConnectContentProps {
