@@ -210,6 +210,16 @@ async def pair_claim_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
+    # Render brief BEFORE marking the pair claimed. If brief rendering
+    # ever fails (e.g. the prompts/ asset is missing from the image), we
+    # want the pair to remain usable so the user can retry, rather than
+    # burning the code and forcing them to start over.
+    brief = render_brief(
+        agent_name=registration.agent_name,
+        agent_id=registration.agent_id,
+        client_name=request.client_name,
+    )
+
     claimed = await mark_claimed(
         code,
         agent_id=registration.agent_id,
@@ -222,12 +232,6 @@ async def pair_claim_endpoint(
             status_code=status.HTTP_410_GONE,
             detail="pair_code_invalid_or_already_claimed",
         )
-
-    brief = render_brief(
-        agent_name=registration.agent_name,
-        agent_id=registration.agent_id,
-        client_name=request.client_name,
-    )
 
     tools = [ToolSummary(name=t.name, description=t.description) for t in TOOL_DEFINITIONS]
 
