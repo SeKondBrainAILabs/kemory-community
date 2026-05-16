@@ -222,6 +222,22 @@ async def pair_claim_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
+    # The pair code itself is the user's consent proof — the human user
+    # minted it from an authenticated dashboard session and the AI just
+    # presented it. Force the agent to `active` regardless of the global
+    # AUTO_APPROVE_AGENTS setting, so the returned api_key is immediately
+    # usable instead of 401ing on every subsequent MCP call.
+    if registration.status != "active":
+        import uuid as _uuid_active
+
+        from backend.models.agent import AgentRegistry
+
+        agent_row = await db.get(AgentRegistry, _uuid_active.UUID(registration.agent_id))
+        if agent_row is not None:
+            agent_row.status = "active"
+            await db.flush()
+            registration.status = "active"
+
     # Render brief BEFORE marking the pair claimed. If brief rendering
     # ever fails (e.g. the prompts/ asset is missing from the image), we
     # want the pair to remain usable so the user can retry, rather than
