@@ -86,6 +86,7 @@ class ToolSummary(BaseModel):
 class ClientSetupPayload(BaseModel):
     client_id: str
     display: str
+    supports_mcp: bool
     config_path: str
     format: str
     snippet: str
@@ -264,6 +265,7 @@ async def pair_claim_endpoint(
         setup=ClientSetupPayload(
             client_id=setup.client_id,
             display=setup.display,
+            supports_mcp=setup.supports_mcp,
             config_path=setup.config_path,
             format=setup.format,
             snippet=setup.snippet,
