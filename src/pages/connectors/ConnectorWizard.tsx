@@ -3,45 +3,48 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConnectorId } from './ConnectorsPage'
-import { ClaudeCodeWizard } from './wizards/ClaudeCodeWizard'
-import { ClaudeDesktopWizard } from './wizards/ClaudeDesktopWizard'
 import { AgentWizard } from './wizards/AgentWizard'
 import { CognitionBridgeWizard } from './wizards/CognitionBridgeWizard'
 import { WebhookWizard } from './wizards/WebhookWizard'
-import { McpClientWizard } from './wizards/McpClientWizard'
-import { mcpClientDescriptors } from './wizards/mcpClientDescriptors'
+import { QuickConnectContent } from './QuickConnectPanel'
 
 interface Props {
   connectorId: ConnectorId
   onClose: () => void
 }
 
+// Human‑readable label used to pre‑fill the pair prompt's `client_name`
+// for AI/MCP clients. Non‑AI connectors (webhook, cognition bridge,
+// custom agent) keep their dedicated wizards.
+const aiClientHint: Partial<Record<ConnectorId, string>> = {
+  'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop',
+  cursor: 'Cursor',
+  windsurf: 'Windsurf',
+  cline: 'Cline',
+  codex: 'ChatGPT / Codex CLI',
+  'gemini-cli': 'Gemini CLI',
+  ollama: 'Ollama',
+  'custom-mcp': 'Custom MCP Client',
+}
+
 const titles: Record<ConnectorId, string> = {
-  'claude-code': 'Set up Claude Code',
-  'claude-desktop': 'Set up Claude Desktop',
-  cursor: 'Set up Cursor',
-  windsurf: 'Set up Windsurf',
-  cline: 'Set up Cline',
-  codex: 'Set up ChatGPT / Codex CLI',
-  'gemini-cli': 'Set up Gemini CLI',
-  ollama: 'Set up Ollama',
-  'custom-mcp': 'Set up Custom MCP Client',
+  'claude-code': 'Connect Claude Code',
+  'claude-desktop': 'Connect Claude Desktop',
+  cursor: 'Connect Cursor',
+  windsurf: 'Connect Windsurf',
+  cline: 'Connect Cline',
+  codex: 'Connect ChatGPT / Codex CLI',
+  'gemini-cli': 'Connect Gemini CLI',
+  ollama: 'Connect Ollama',
+  'custom-mcp': 'Connect a Custom MCP Client',
   'custom-agent': 'Register Custom Agent',
   'cognition-os': 'Configure Cognition OS Bridge',
   webhook: 'Configure Webhook',
 }
 
-const GENERIC_MCP_IDS: ReadonlySet<ConnectorId> = new Set<ConnectorId>([
-  'cursor',
-  'windsurf',
-  'cline',
-  'codex',
-  'gemini-cli',
-  'ollama',
-  'custom-mcp',
-])
-
 export function ConnectorWizard({ connectorId, onClose }: Props) {
+  const clientHint = aiClientHint[connectorId]
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -58,17 +61,15 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
             </Dialog.Close>
           </div>
           <div className="overflow-y-auto px-6 py-5">
-            {connectorId === 'claude-code' && <ClaudeCodeWizard onClose={onClose} />}
-            {connectorId === 'claude-desktop' && <ClaudeDesktopWizard onClose={onClose} />}
-            {connectorId === 'custom-agent' && <AgentWizard onClose={onClose} />}
-            {connectorId === 'cognition-os' && <CognitionBridgeWizard onClose={onClose} />}
-            {connectorId === 'webhook' && <WebhookWizard onClose={onClose} />}
-            {GENERIC_MCP_IDS.has(connectorId) && mcpClientDescriptors[connectorId] && (
-              <McpClientWizard
-                descriptor={mcpClientDescriptors[connectorId]}
-                onClose={onClose}
-              />
-            )}
+            {clientHint ? (
+              <QuickConnectContent clientHint={clientHint} embedded />
+            ) : connectorId === 'custom-agent' ? (
+              <AgentWizard onClose={onClose} />
+            ) : connectorId === 'cognition-os' ? (
+              <CognitionBridgeWizard onClose={onClose} />
+            ) : connectorId === 'webhook' ? (
+              <WebhookWizard onClose={onClose} />
+            ) : null}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
