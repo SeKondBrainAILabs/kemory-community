@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-BRIEF_VERSION = "1.1.0"
+BRIEF_VERSION = "1.2.0"
 
 _BRIEF_PATH = Path(__file__).resolve().parents[2] / "prompts" / "kemory-brief.md"
 

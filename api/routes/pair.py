@@ -33,6 +33,7 @@ from backend.services.agent_service import (
     register_agent,
 )
 from backend.services.brief_service import BRIEF_VERSION, render_brief
+from backend.services.mcp_setup_service import build_setup
 from backend.services.pair_service import (
     PAIR_TTL_SECONDS,
     delete_pair,
@@ -82,6 +83,15 @@ class ToolSummary(BaseModel):
     description: str
 
 
+class ClientSetupPayload(BaseModel):
+    client_id: str
+    display: str
+    config_path: str
+    format: str
+    snippet: str
+    restart_hint: str
+
+
 class PairClaimResponse(BaseModel):
     api_key: str
     agent_id: str
@@ -90,6 +100,7 @@ class PairClaimResponse(BaseModel):
     brief: str
     brief_version: str
     tools: list[ToolSummary]
+    setup: ClientSetupPayload
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
@@ -235,20 +246,27 @@ async def pair_claim_endpoint(
 
     tools = [ToolSummary(name=t.name, description=t.description) for t in TOOL_DEFINITIONS]
 
-    # Pair codes are single‑use; free the slot promptly so the dashboard
-    # status poll sees `claimed=true` exactly once (via mark_claimed) and
-    # subsequent polls return 404. Wait — the dashboard needs the claim
-    # status to surface "Connected as <agent_name>". Keep the record around
-    # until natural TTL expiry; don't delete here.
+    # Pair codes are single‑use; the dashboard keeps polling /status until
+    # the record TTL expires so it can surface "Connected as <agent_name>".
     _ = delete_pair  # imported for completeness; intentional no‑op call site
 
     base = settings.api_public_url.rstrip("/")
+    mcp_url = f"{base}/mcp/v1"
+    setup = build_setup(request.client_name, mcp_url, registration.api_key)
     return PairClaimResponse(
         api_key=registration.api_key,
         agent_id=registration.agent_id,
         agent_name=registration.agent_name,
-        mcp_url=f"{base}/mcp/v1",
+        mcp_url=mcp_url,
         brief=brief,
         brief_version=BRIEF_VERSION,
         tools=tools,
+        setup=ClientSetupPayload(
+            client_id=setup.client_id,
+            display=setup.display,
+            config_path=setup.config_path,
+            format=setup.format,
+            snippet=setup.snippet,
+            restart_hint=setup.restart_hint,
+        ),
     )
