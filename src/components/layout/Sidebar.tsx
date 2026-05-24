@@ -17,6 +17,10 @@ import {
   GitGraph,
   Settings,
   MessageCircle,
+  // chats-v1
+  MessagesSquare,
+  Link as LinkIcon,
+  Smartphone,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { getLiveness } from '@/api/health'
@@ -53,9 +57,17 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
   { to: '/memories', icon: Database, label: 'Memories' },
+  // chats-v1: raw conversation capture (Kanvas Chrome Extension)
+  { to: '/chats', icon: MessagesSquare, label: 'Chats' },
   { to: '/namespaces', icon: FolderTree, label: 'Namespaces' },
   { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/access', icon: Network, label: 'Access Map' },
+]
+
+// chats-v1: chat-related operations live in opsNav (settings-ish surfaces).
+const chatsOpsNav: NavItem[] = [
+  { to: '/chat-mappings', icon: LinkIcon, label: 'Chat Mappings' },
+  { to: '/devices', icon: Smartphone, label: 'Devices' },
 ]
 
 // Operations / control plane (matches post-rebrand baseline routes).
@@ -67,6 +79,9 @@ const opsNav: NavItem[] = [
   { to: '/access-graph', icon: GitGraph, label: 'Access Graph' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/connectors', icon: Plug, label: 'Connectors' },
+  // chats-v1 ops surfaces, slotted next to Connectors so they sit
+  // together in the "things you wire up once" pile.
+  ...chatsOpsNav,
   {
     to: '/security',
     icon: AlertTriangle,

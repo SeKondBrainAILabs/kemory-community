@@ -17,6 +17,11 @@ import { ConsentQueuePage } from '@/pages/consent/ConsentQueuePage'
 import { StorageAnalyticsPage } from '@/pages/analytics/StorageAnalyticsPage'
 import { SecurityAlertsPage } from '@/pages/security/SecurityAlertsPage'
 import { ConnectorsPage } from '@/pages/connectors/ConnectorsPage'
+// chats-v1 UI
+import { ChatsListPage } from '@/pages/chats/ChatsListPage'
+import { ChatDetailPage } from '@/pages/chats/ChatDetailPage'
+import { ChatMappingsPage } from '@/pages/chat-mappings/ChatMappingsPage'
+import { DevicesPage } from '@/pages/devices/DevicesPage'
 
 export function App() {
   return (
@@ -46,6 +51,12 @@ export function App() {
         <Route path="consent" element={<ConsentQueuePage />} />
         <Route path="analytics" element={<StorageAnalyticsPage />} />
         <Route path="connectors" element={<ConnectorsPage />} />
+
+        {/* chats-v1 — Kanvas Chrome Extension surface */}
+        <Route path="chats" element={<ChatsListPage />} />
+        <Route path="chats/:chatId" element={<ChatDetailPage />} />
+        <Route path="chat-mappings" element={<ChatMappingsPage />} />
+        <Route path="devices" element={<DevicesPage />} />
 
         {/* Super admin only */}
         <Route
