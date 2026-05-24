@@ -246,6 +246,21 @@ class Memory(Base):
         comment="ISO date YYYY-MM-DD of the consolidation epoch this memory belongs to (KMV-S13.2)",
     )
 
+    # ── Source provenance (chats-v1, forward-compat) ──────────────
+    # Populated by the chat→memory extraction pipeline (phase 2). v1 leaves
+    # them NULL — the columns exist now so phase 2 needs no migration. See
+    # backend/models/ai_chat.py and migrations/versions/015_ai_chats_module.py.
+    source_chat_id = Column(
+        GUID(),
+        nullable=True,
+        comment="kemory_ai_chats.chat_id the memory was extracted from (phase 2).",
+    )
+    source_turn_id = Column(
+        GUID(),
+        nullable=True,
+        comment="kemory_ai_chat_turns.turn_id within the source chat (phase 2).",
+    )
+
     # ── Timestamps ────────────────────────────────────────────────
     created_at = Column(
         DateTime(timezone=True),
@@ -281,6 +296,7 @@ class Memory(Base):
         Index("idx_memories_consolidation", "consolidation_status"),
         Index("idx_memories_epoch", "namespace", "epoch_date"),
         Index("idx_memories_org_user", "org_id", "user_id"),
+        Index("idx_memories_source_chat", "source_chat_id"),
         Index(
             "uq_memories_user_ns_hash",
             "user_id",

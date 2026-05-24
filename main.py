@@ -12,9 +12,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes.agents import router as agents_router
+from backend.api.routes.ai_chats import router as ai_chats_router  # chats-v1
 from backend.api.routes.audit import router as audit_router
+from backend.api.routes.chat_mappings import router as chat_mappings_router  # chats-v1
 from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
 from backend.api.routes.enrichment import router as enrichment_router
+from backend.api.routes.extension_keys import router as extension_keys_router  # chats-v1
 from backend.api.routes.graph import router as graph_router  # F12: Access Graph
 from backend.api.routes.health import router as health_router
 from backend.api.routes.me import router as me_router  # WS-11: identity
@@ -118,3 +121,10 @@ app.include_router(teams_router)  # WS-9: org/team admin
 app.include_router(consolidation_router)  # KMV-E14: namespace policies + consolidation stats
 app.include_router(user_router)  # KMV-CTX-01: cross-namespace user context
 app.include_router(pair_router)  # quick‑connect pair flow
+# ── chats-v1: AI Chats module ─────────────────────────────────────
+# Routers registered after pair so the existing pair-flow paths keep
+# their order; the chats routes live under /api/v1/chats,
+# /api/v1/chat-mappings, and /api/v1/extension/keys.
+app.include_router(ai_chats_router)
+app.include_router(chat_mappings_router)
+app.include_router(extension_keys_router)

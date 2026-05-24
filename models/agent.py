@@ -104,6 +104,20 @@ class AgentRegistry(Base):
         comment="Agent status: pending_approval, active, suspended, revoked",
     )
 
+    # ── Kind (chats-v1) ───────────────────────────────────────────
+    # 'agent'     = regular MCP / SDK agent (default)
+    # 'extension' = Kanvas Chrome Extension install. Auth path is identical
+    #               (same X-API-Key flow, same Gatekeeper checks); the kind
+    #               only changes which mint/list endpoints surface the row
+    #               and lets the dashboard render extension installs in
+    #               their own tab. See backend/api/routes/extension_keys.py.
+    agent_kind = Column(
+        String(20),
+        nullable=False,
+        default="agent",
+        comment="agent | extension. See chats-v1 migration 015.",
+    )
+
     # Timestamps
     registered_at = Column(
         DateTime(timezone=True),
@@ -129,6 +143,7 @@ class AgentRegistry(Base):
         Index("idx_agent_registry_status", "user_id", "status"),
         Index("idx_agent_registry_key_prefix", "api_key_prefix"),
         Index("idx_agent_registry_org_user", "org_id", "user_id"),
+        Index("idx_agent_registry_kind", "user_id", "agent_kind"),
     )
 
     def __repr__(self):

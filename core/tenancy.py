@@ -219,6 +219,13 @@ TENANT_SCOPED_MODEL_NAMES: tuple[str, ...] = (
     "AuditLog",
     "PermissionRule",
     "Team",
+    # chats-v1 — AI Chats module. Same simple org_id-equality predicate
+    # as AgentRegistry/AuditLog/PermissionRule (handled by the default
+    # branch in _build_tenant_predicate). No visibility tiers.
+    "AIChat",
+    "AIChatTurn",
+    "AIChatArtifact",
+    "ChatNamespaceMapping",
 )
 
 

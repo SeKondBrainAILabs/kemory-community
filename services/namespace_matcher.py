@@ -185,9 +185,18 @@ async def _existing_namespaces(
     """
     Return [(namespace, description)] for every active namespace the user has.
 
-    Pulls names from both Memory (authoritative set of namespaces in use) and
-    NamespacePolicy (so a policy created without any memories is still
-    considered).
+    Pulls names from three sources so chats and memories share one namespace
+    world (chats-v1 invariant; see houserules.md):
+      * Memory.namespace                — authoritative set of memory namespaces
+      * NamespacePolicy.namespace       — namespaces with descriptions/summaries
+                                          (a policy created without any memories
+                                          is still considered)
+      * AIChat.namespace                — chat namespaces (so a chat-only
+                                          namespace is visible to the matcher
+                                          when a future memory write picks one)
+
+    Lazy-imports AIChat to keep this module dependency-free from
+    backend.models.ai_chat (memory matcher was here before chats existed).
     """
     mem_rows = (
         await db.execute(
@@ -218,10 +227,32 @@ async def _existing_namespaces(
         )
     ).all()
 
+    # Chat namespaces (chats-v1). Same user-scoping rule as memories.
+    chat_rows: list = []
+    try:
+        from backend.models.ai_chat import AIChat as _AIChat
+
+        chat_rows = (
+            await db.execute(
+                select(_AIChat.namespace)
+                .where(
+                    _AIChat.user_id == user_id,
+                    _AIChat.invalid_at.is_(None),
+                )
+                .group_by(_AIChat.namespace)
+            )
+        ).all()
+    except Exception as exc:
+        # Defensive: if the chats migration isn't applied yet, swallow
+        # the missing-table error and fall back to memories-only matching.
+        logger.debug("namespace_matcher.chats_unavailable", extra={"error": str(exc)})
+
     desc_by_ns: dict[str, str | None] = {}
     for ns, desc in pol_rows:
         desc_by_ns[ns] = desc
     for (ns,) in mem_rows:
+        desc_by_ns.setdefault(ns, None)
+    for (ns,) in chat_rows:
         desc_by_ns.setdefault(ns, None)
     return list(desc_by_ns.items())
 
