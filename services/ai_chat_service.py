@@ -401,6 +401,23 @@ async def _lookup_mapping(
     return None
 
 
+# chats-v1 inbox: when no explicit namespace and no mapping fires, new
+# chats land in a per-platform inbox so they're easy to triage. The
+# extension typically can't pick a meaningful namespace at capture time,
+# so a flat per-platform bucket (`kora:claude`, `kora:chatgpt`) hides
+# everything in one pile. The inbox marker `kora:inbox:<platform>`
+# tells the dashboard "show in the Inbox tab" and the classifier
+# "skip yourself as a destination". When a project name IS known
+# (ChatGPT Project / Claude Project) we still derive a content-aware
+# default `kora:<platform>:<slug>` because there's a clear human intent.
+INBOX_PREFIX = "kora:inbox:"
+
+
+def is_inbox_namespace(namespace: str | None) -> bool:
+    """True when the namespace is one of the per-platform inboxes."""
+    return bool(namespace and namespace.startswith(INBOX_PREFIX))
+
+
 def _derive_default_namespace(
     platform: str,
     source_project_name: str | None,
@@ -408,13 +425,13 @@ def _derive_default_namespace(
     """Fall-back when no caller namespace and no mapping fires.
 
     Examples:
-      ('claude', 'Steady Quill') → 'kora:claude:steady-quill'
-      ('chatgpt', None)          → 'kora:chatgpt'
+      ('claude', 'Steady Quill') → 'kora:claude:steady-quill'  (project known)
+      ('chatgpt', None)          → 'kora:inbox:chatgpt'        (inbox)
     """
-    base = f"kora:{platform.lower()}"
+    plat = platform.lower()
     if source_project_name:
-        return f"{base}:{_slugify(source_project_name)}"
-    return base
+        return f"kora:{plat}:{_slugify(source_project_name)}"
+    return f"{INBOX_PREFIX}{plat}"
 
 
 async def _resolve_namespace(
@@ -668,6 +685,40 @@ async def upsert_chat(
         )
 
     # Existing row, content changed — update chat metadata + upsert turns.
+    #
+    # chats-v1 inbox invariant: once the user (or a future classifier)
+    # moves a chat out of `kora:inbox:*`, subsequent extension upserts
+    # must NOT silently snap it back to inbox. The extension typically
+    # doesn't send an explicit `namespace` on its periodic re-pushes
+    # (debounced sync of the live conversation), so without this guard
+    # `_resolve_namespace` recomputes the default and overwrites the
+    # user's deliberate destination on the next 6-second debounce.
+    #
+    # Rule: preserve the existing namespace when (a) the caller didn't
+    # explicitly supply one in this payload AND no mapping fires (the
+    # default-derivation branch took effect), AND (b) the existing chat
+    # already lives somewhere other than the per-platform inbox. If the
+    # caller is explicit OR a mapping is matching, honour the new
+    # destination — that's still a user-driven intent signal.
+    caller_was_explicit = bool(payload.namespace) or bool(payload.source_project_id) or bool(
+        payload.source_project_name
+    )
+    if (
+        not caller_was_explicit
+        and not is_inbox_namespace(existing.namespace)
+        and namespace != existing.namespace
+    ):
+        logger.debug(
+            "ai_chat_service.preserve_user_namespace",
+            chat_id=str(existing.chat_id),
+            kept=existing.namespace,
+            would_have_been=namespace,
+        )
+        namespace = existing.namespace
+        # Don't surface a "requested vs resolved" diff on a preserved row —
+        # the caller didn't ask for anything different.
+        requested_namespace = existing.requested_namespace
+
     existing.namespace = namespace
     existing.requested_namespace = requested_namespace
     existing.source_project_id = payload.source_project_id
@@ -686,6 +737,68 @@ async def upsert_chat(
     turn_count = await _count_turns(existing.chat_id, db)
     return _to_response(
         existing,
+        turn_count=turn_count,
+        was_created=False,
+        was_updated=True,
+        turns=None,
+    )
+
+
+async def move_chat(
+    chat_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_namespace: str,
+    db: AsyncSession,
+    allow_duplicate: bool = False,
+) -> ChatResponse:
+    """Move an existing chat to a different namespace.
+
+    The new namespace runs through :func:`namespace_matcher.resolve_namespace`
+    just like memory writes, so a typo auto-redirects to the existing
+    namespace and a too-close-but-not-matching name raises a 409. Pass
+    ``allow_duplicate=True`` to bypass the matcher and write as-is.
+
+    Updating the namespace also clears ``requested_namespace`` (the
+    legacy "matcher redirected" marker) because the move IS the new
+    intent. The chat's content / turns / content_hash are untouched.
+    """
+    if not new_namespace or not new_namespace.strip():
+        raise ValueError("namespace must be a non-empty string")
+    target = new_namespace.strip()
+
+    chat = await _get_chat_for_user(chat_id, user_id, db)
+    resolved = target
+    if not allow_duplicate:
+        try:
+            from backend.services.namespace_matcher import (
+                RelatedNamespaceConflict,
+                ResolutionAction,
+                apply_resolution,
+                resolve_namespace,
+            )
+
+            resolution = await resolve_namespace(user_id, target, None, db)
+            if resolution.action == ResolutionAction.SUGGEST:
+                raise RelatedNamespaceConflict(target, resolution.candidates)
+            await apply_resolution(resolution, None, db, user_id)
+            resolved = resolution.namespace
+        except Exception as exc:
+            # RelatedNamespaceConflict needs to surface to the route handler
+            # so it can return 409 — let it through.
+            from backend.services.namespace_matcher import RelatedNamespaceConflict
+
+            if isinstance(exc, RelatedNamespaceConflict):
+                raise
+            logger.debug("ai_chat_service.move_chat.matcher_skipped", reason=str(exc))
+
+    chat.namespace = resolved
+    chat.requested_namespace = None
+    chat.updated_at = datetime.now(UTC)
+    await db.flush()
+
+    turn_count = await _count_turns(chat.chat_id, db)
+    return _to_response(
+        chat,
         turn_count=turn_count,
         was_created=False,
         was_updated=True,

@@ -28,6 +28,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import AuthContext, require_auth
@@ -40,10 +41,25 @@ from backend.services.ai_chat_service import (
     append_turns,
     get_chat,
     list_chats,
+    move_chat,
     soft_delete_chat,
     upsert_chat,
 )
+from backend.services.chat_classifier import ChatClassifyResponse, classify_chat
 from backend.services.namespace_matcher import RelatedNamespaceConflict
+
+
+class ChatMoveRequest(BaseModel):
+    """Body for ``POST /api/v1/chats/{chat_id}/move``."""
+
+    namespace: str = Field(..., min_length=1, max_length=100)
+    allow_duplicate: bool = Field(
+        default=False,
+        description=(
+            "Skip the namespace matcher 409 path — accept the namespace "
+            "as-is even when it looks similar to an existing one."
+        ),
+    )
 
 router = APIRouter(prefix="/api/v1", tags=["AI Chats"])
 
@@ -177,6 +193,77 @@ async def get_chat_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+
+@router.post(
+    "/chats/{chat_id}/classify",
+    response_model=ChatClassifyResponse,
+    summary="Suggest destination namespaces for a chat based on its content",
+)
+async def classify_chat_endpoint(
+    chat_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=20),
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pure read — never modifies the chat. Returns top-N existing
+    namespaces by embedding-cosine of the chat content against each
+    namespace's representative text (consolidated summary > description
+    > name).
+
+    The UI uses this to power the "Suggested namespaces" panel; the user
+    explicitly clicks one to call ``POST /chats/{chat_id}/move``.
+    Background classifiers can do the same — auto-move on similarity
+    above a chosen threshold — but kemory itself does NOT auto-move.
+    """
+    try:
+        return await classify_chat(auth.user_id, chat_id, db, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/chats/{chat_id}/move",
+    response_model=ChatResponse,
+    summary="Move a chat to a different namespace",
+)
+async def move_chat_endpoint(
+    chat_id: uuid.UUID,
+    request: ChatMoveRequest,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move a chat between namespaces. Runs the namespace matcher to
+    auto-redirect typos and 409 on close-but-not-matching names — the
+    same contract as memory writes. After a move, subsequent extension
+    upserts of this chat preserve the new destination (see the
+    ``preserve_user_namespace`` rule in ``ai_chat_service.upsert_chat``)."""
+    try:
+        return await move_chat(
+            chat_id,
+            auth.user_id,
+            request.namespace,
+            db,
+            allow_duplicate=request.allow_duplicate,
+        )
+    except RelatedNamespaceConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.to_dict(),
+        ) from exc
+    except ValueError as exc:
+        # ValueError from _get_chat_for_user (not found) vs an explicit
+        # validation error — both surface as 400-or-404. Use 404 for the
+        # not-found shape and 400 for the rest.
+        msg = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND if "not found" in msg.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=msg) from exc
 
 
 @router.delete(
