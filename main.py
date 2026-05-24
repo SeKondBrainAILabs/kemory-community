@@ -84,10 +84,29 @@ app = FastAPI(
 )
 
 # ─── Middleware ───────────────────────────────────────────────────
+# CORS — wildcard allow_origins with allow_credentials=False is the
+# correct shape for kemory because every authenticated client speaks
+# header-based auth (X-API-Key or Authorization: Bearer ...), NEVER
+# cookies. Concretely:
+#
+#   * Dashboard (app.memory.dxb-gw.basanti.ai)  → Bearer token via ky
+#   * MCP agents                                → X-API-Key
+#   * Kanvas Chrome Extension                   → X-API-Key
+#
+# None of these set `credentials: 'include'` on fetch, so flipping
+# allow_credentials=False does NOT regress them. It DOES let
+# chrome-extension://* origins through the preflight, which the prior
+# allow-list-based config blocked (extension-id origins can't be
+# enumerated up front, and Chrome rejects Allow-Origin:* when paired
+# with Allow-Credentials:true).
+#
+# If a future client ever needs cookie-credentialed cross-origin
+# requests, switch back to a specific allow-list and set
+# allow_credentials=True — those two MUST move together.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.environment == "development" else settings.cors_origins_list,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
