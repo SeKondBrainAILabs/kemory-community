@@ -147,7 +147,11 @@ async def list_chats_endpoint(
     namespace: str | None = Query(None, max_length=100),
     platform: str | None = Query(None, max_length=32),
     since: datetime | None = Query(None, description="Only chats updated at-or-after this timestamp."),
-    limit: int = Query(20, ge=1, le=100),
+    # Cap raised from 100 → 500 so the NamespacesPage aggregator (which
+    # pulls every chat to group by namespace client-side) can fetch a
+    # whole user's catalogue in one shot. Hits the matching guard in
+    # ai_chat_service.list_chats which clamps to the same upper bound.
+    limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),

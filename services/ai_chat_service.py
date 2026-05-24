@@ -665,6 +665,11 @@ async def upsert_chat(
         await _persist_turns(chat, payload.turns, db)
         await db.flush()
         turn_count = await _count_turns(chat.chat_id, db)
+        # chats-v1 auto-classify: fire-and-forget background task that
+        # re-evaluates the namespace once the chat has accumulated enough
+        # content. Extension keeps pushing by (platform, conv_id), unaware
+        # — we silently redirect to the right namespace under the hood.
+        _schedule_auto_classify_safe(chat.chat_id, user_id)
         return _to_response(
             chat,
             turn_count=turn_count,
@@ -735,6 +740,10 @@ async def upsert_chat(
     await _persist_turns(existing, payload.turns, db)
     await db.flush()
     turn_count = await _count_turns(existing.chat_id, db)
+    # Fire auto-classify again on every content-changing update — the
+    # chat may have just crossed the AUTO_MIN_TURNS / AUTO_MIN_CHARS
+    # gates with this push. No-op when the chat is no longer pending.
+    _schedule_auto_classify_safe(existing.chat_id, user_id)
     return _to_response(
         existing,
         turn_count=turn_count,
@@ -742,6 +751,19 @@ async def upsert_chat(
         was_updated=True,
         turns=None,
     )
+
+
+def _schedule_auto_classify_safe(chat_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Lazy-import wrapper. Keeps chat_classifier off the import path
+    when ai_chat_service is loaded but auto-classify isn't wanted (tests
+    mocking it out, etc.). Swallows any scheduling error — auto-classify
+    is advisory and must never break the write path."""
+    try:
+        from backend.services.chat_classifier import schedule_auto_classify
+
+        schedule_auto_classify(chat_id, user_id)
+    except Exception as exc:
+        logger.debug("ai_chat_service.auto_classify_schedule_failed", reason=str(exc))
 
 
 async def move_chat(
@@ -872,7 +894,10 @@ async def list_chats(
     limit: int = 20,
     offset: int = 0,
 ) -> ChatListResponse:
-    limit = max(1, min(limit, 100))
+    # Cap matches the route's Query(le=500). Higher ceiling lets the
+    # dashboard's NamespacesPage aggregator pull a whole user's catalogue
+    # in one shot to group chats by namespace client-side.
+    limit = max(1, min(limit, 500))
     offset = max(0, offset)
 
     base_where = [AIChat.user_id == user_id, AIChat.invalid_at.is_(None)]

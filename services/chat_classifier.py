@@ -34,10 +34,13 @@ selection.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import re
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -54,6 +57,47 @@ MAX_TURNS = 12
 MAX_CHARS = 4_000
 
 INBOX_PREFIX = "kora:inbox:"
+
+# ── Auto-redirect thresholds (chats-v1 auto-classify) ───────────────
+#
+# Conservative defaults. The auto-router only fires when the chat is in
+# one of the "pending" buckets (kora:inbox:* OR plain kora:<platform>),
+# has enough content to be meaningful, AND the top suggestion is a
+# clear winner. Anything ambiguous stays put for manual triage.
+AUTO_MIN_TURNS = 4          # need ≥4 turns of real exchange
+AUTO_MIN_CHARS = 600        # body must total ≥600 chars (skips trivials)
+AUTO_MOVE_THRESHOLD = 0.55  # top suggestion cosine must clear this
+AUTO_MOVE_GAP = 0.08        # top must beat #2 by this margin (clear winner)
+# When NO existing namespace clears the threshold, we may auto-create a
+# fresh one from the chat title — but only when the title is meaningful
+# (skips generic "claude conversation" / "untitled" etc.).
+AUTO_TITLE_MIN_CHARS = 8
+_GENERIC_TITLE_RE = re.compile(
+    r"^(untitled|new chat|new conversation|"
+    r"(chatgpt|claude|gemini|manus) (chat|conversation)|"
+    r"\(no title\)|\(untitled\)|"
+    r"chat \d+|conversation \d+)$",
+    re.IGNORECASE,
+)
+
+
+def is_pending_namespace(namespace: str | None) -> bool:
+    """True when a chat is still in a holding bucket awaiting classification.
+
+    Covers BOTH the new `kora:inbox:<platform>` inboxes AND the plain
+    `kora:<platform>` buckets that pre-v3.32.0 captures landed in. We
+    treat the latter as pending so old chats get retroactively rescued
+    by the auto-classifier (and aren't trapped in their original default).
+    """
+    if not namespace:
+        return False
+    if namespace.startswith(INBOX_PREFIX):
+        return True
+    # `kora:<platform>` with no further `:` — bare per-platform bucket.
+    parts = namespace.split(":")
+    if len(parts) == 2 and parts[0] == "kora":
+        return True
+    return False
 
 
 # ─── Response shapes ─────────────────────────────────────────────────
@@ -336,3 +380,199 @@ async def classify_chat(
         sample_chars=len(sample),
         suggestions=scored[:limit],
     )
+
+
+# ─── Auto-redirect (fire-and-forget on chat upsert) ──────────────────
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug_from_title(title: str) -> str:
+    slug = _SLUG_RE.sub("-", title.strip().lower()).strip("-")
+    return slug[:48]
+
+
+def _is_generic_title(title: str | None) -> bool:
+    if not title:
+        return True
+    t = title.strip()
+    if len(t) < AUTO_TITLE_MIN_CHARS:
+        return True
+    return bool(_GENERIC_TITLE_RE.match(t))
+
+
+def schedule_auto_classify(chat_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Fire-and-forget background task triggered from ai_chat_service.upsert_chat.
+
+    Matches the compression_pipeline pattern: never blocks the write
+    path, failures logged and swallowed. The task opens its OWN session
+    via _get_session_factory() (asyncio.create_task runs outside the
+    request's contextvars Context, so the request's session would be
+    torn down before we get to act on it).
+    """
+    asyncio.create_task(
+        _run_auto_classify(str(chat_id), str(user_id)),
+        name=f"auto-classify:{chat_id}",
+    )
+
+
+async def _run_auto_classify(chat_id_str: str, user_id_str: str) -> None:
+    """Inspect the chat; if it's pending + content-rich + top suggestion
+    is a clear winner, silently redirect to the chosen namespace.
+
+    Decision tree:
+      1. Chat must be in a "pending" namespace (kora:inbox:* or kora:<plat>).
+      2. Chat must have ≥ AUTO_MIN_TURNS turns AND ≥ AUTO_MIN_CHARS of body.
+      3. Run classify_chat() — get top-N suggestions.
+      4. If top.similarity ≥ AUTO_MOVE_THRESHOLD AND
+         (top.similarity − second.similarity) ≥ AUTO_MOVE_GAP →
+         silently move to top.namespace.
+      5. Else if title is meaningful (not generic) →
+         derive `project:<slug>` and move there (creates the namespace).
+      6. Else: do nothing — leave for manual triage.
+
+    Every auto-move records itself in chat_metadata.auto_classified so
+    the dashboard can label it. Idempotent: if the chat has already
+    been auto-classified in this lifecycle we still re-evaluate (a
+    later turn may swing the decision toward a new destination), but
+    we only act when the new choice is materially different.
+    """
+    chat_id = uuid.UUID(chat_id_str)
+    user_id = uuid.UUID(user_id_str)
+
+    # Lazy imports to keep this module light + dodge any import cycles
+    # between chat_classifier ↔ ai_chat_service ↔ namespace_matcher.
+    from backend.core.database import _get_session_factory
+    from backend.core.tenancy import bypass_tenant_filter
+
+    try:
+        async with _get_session_factory()() as db:
+            async with db.begin():
+                # Background tasks run outside the request's tenant scope;
+                # bypass the filter so our SELECT actually returns the row
+                # (the filter would emit an always-false predicate against
+                # the empty scope and we'd see "Chat not found" on a chat
+                # we just wrote two milliseconds ago).
+                with bypass_tenant_filter():
+                    chat = (
+                        await db.execute(
+                            select(AIChat).where(
+                                AIChat.chat_id == chat_id,
+                                AIChat.user_id == user_id,
+                                AIChat.invalid_at.is_(None),
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if chat is None:
+                        return
+
+                    if not is_pending_namespace(chat.namespace):
+                        return
+
+                    # Substantive-content gate.
+                    turn_count = (
+                        await db.execute(
+                            select(AIChatTurn)
+                            .where(AIChatTurn.chat_id == chat.chat_id)
+                            .order_by(AIChatTurn.sequence.asc())
+                        )
+                    ).scalars().all()
+                    if len(turn_count) < AUTO_MIN_TURNS:
+                        return
+                    total_chars = sum(len(t.content or "") for t in turn_count)
+                    if total_chars < AUTO_MIN_CHARS:
+                        return
+
+                    # Re-use the same classifier the manual endpoint uses
+                    # so the dashboard's "Suggested namespaces" and the
+                    # auto-router stay in lockstep on ranking logic.
+                    result = await classify_chat(user_id, chat_id, db, limit=5)
+                    target_ns: str | None = None
+                    decision_signal = "none"
+                    decision_sim: float | None = None
+
+                    if result.suggestions:
+                        top = result.suggestions[0]
+                        second_sim = (
+                            result.suggestions[1].similarity
+                            if len(result.suggestions) > 1
+                            else 0.0
+                        )
+                        if (
+                            top.similarity >= AUTO_MOVE_THRESHOLD
+                            and (top.similarity - second_sim) >= AUTO_MOVE_GAP
+                            and top.namespace != chat.namespace
+                        ):
+                            target_ns = top.namespace
+                            decision_signal = f"existing:{top.signal}"
+                            decision_sim = top.similarity
+
+                    if target_ns is None and not _is_generic_title(chat.title):
+                        slug = _slug_from_title(chat.title or "")
+                        if slug:
+                            candidate = f"project:{slug}"
+                            if candidate != chat.namespace:
+                                target_ns = candidate
+                                decision_signal = "title"
+
+                    if target_ns is None:
+                        return
+
+                    # Apply via the namespace matcher so a typo on the
+                    # title-derived slug auto-redirects to a similar
+                    # existing namespace instead of fragmenting.
+                    try:
+                        from backend.services.namespace_matcher import (
+                            ResolutionAction,
+                            apply_resolution,
+                            resolve_namespace,
+                        )
+
+                        resolution = await resolve_namespace(user_id, target_ns, None, db)
+                        if resolution.action != ResolutionAction.SUGGEST:
+                            await apply_resolution(resolution, None, db, user_id)
+                            target_ns = resolution.namespace
+                        # SUGGEST → ambiguous, don't auto-act; leave for triage.
+                        elif resolution.action == ResolutionAction.SUGGEST:
+                            return
+                    except Exception as exc:
+                        logger.debug(
+                            "chat_classifier.matcher_skipped",
+                            extra={"reason": str(exc), "chat_id": chat_id_str},
+                        )
+
+                    previous_namespace = chat.namespace
+                    chat.namespace = target_ns
+                    chat.requested_namespace = None
+                    chat.updated_at = datetime.now(UTC)
+                    # Stash classification provenance so the UI can show
+                    # "Auto-classified by Kemory · 87% confidence" and the
+                    # user can audit / undo manually.
+                    meta = dict(chat.chat_metadata or {})
+                    meta["auto_classified"] = {
+                        "at": datetime.now(UTC).isoformat(),
+                        "from": previous_namespace,
+                        "to": target_ns,
+                        "signal": decision_signal,
+                        "similarity": (
+                            round(decision_sim, 4) if decision_sim is not None else None
+                        ),
+                    }
+                    chat.chat_metadata = meta
+                    logger.info(
+                        "chat_classifier.auto_redirected",
+                        extra={
+                            "chat_id": chat_id_str,
+                            "from": previous_namespace,
+                            "to": target_ns,
+                            "signal": decision_signal,
+                            "similarity": decision_sim,
+                        },
+                    )
+    except Exception as exc:
+        # Auto-classify is advisory; never let it surface to the user.
+        logger.warning(
+            "chat_classifier.auto_classify_failed",
+            extra={"chat_id": chat_id_str, "error": str(exc)},
+        )
