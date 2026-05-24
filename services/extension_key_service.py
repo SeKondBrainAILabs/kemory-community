@@ -31,6 +31,7 @@ the ``agent_kind`` column add.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -107,6 +108,27 @@ class ExtensionKeyInfo(BaseModel):
 # ─── Service functions ──────────────────────────────────────────────
 
 
+# Synthetic / service-account org_ids that should NEVER own user-facing
+# extension keys. The Kanvas extension's `/auth?reMint=1` flow once
+# minted under `org_id=kora-extension` instead of the human's Keycloak
+# org, producing chats invisible to the dashboard owner. Refusing this
+# class of org_id at mint time makes the failure loud (400) instead of
+# silently fragmenting ownership.
+#
+# Override via KEMORY_EXTENSION_REFUSE_ORG_IDS env (CSV) when this list
+# legitimately needs to grow.
+_SYNTHETIC_EXTENSION_ORG_IDS: frozenset[str] = frozenset({
+    "kora-extension",
+})
+
+
+def _refused_org_ids() -> frozenset[str]:
+    override = os.environ.get("KEMORY_EXTENSION_REFUSE_ORG_IDS", "").strip()
+    if not override:
+        return _SYNTHETIC_EXTENSION_ORG_IDS
+    return frozenset({s.strip() for s in override.split(",") if s.strip()})
+
+
 async def mint_extension_key(
     user_id: uuid.UUID,
     org_id: str,
@@ -118,7 +140,23 @@ async def mint_extension_key(
     When ``installation_id`` matches an existing extension row for this
     user, the key is rotated in place — the old key stops working as soon
     as this transaction commits. When omitted, a fresh row is minted.
+
+    Refuses to mint when the caller's ``org_id`` is on the synthetic
+    denylist (see _SYNTHETIC_EXTENSION_ORG_IDS). This catches the case
+    where the extension authenticates with a service-account JWT instead
+    of the human's Keycloak token — silent failure mode previously left
+    chats owned by an identity the dashboard owner couldn't see.
     """
+    if org_id and org_id in _refused_org_ids():
+        raise ValueError(
+            f"Refusing to mint extension key for org_id={org_id!r}. This "
+            f"looks like a synthetic / service-account identity, not a "
+            f"human user. The extension must authenticate with the user's "
+            f"Keycloak token (or an HS256 token whose org_id matches a "
+            f"real user account). If this is intentional, override via "
+            f"KEMORY_EXTENSION_REFUSE_ORG_IDS env."
+        )
+
     label = request.label.strip()
     if not label:
         raise ValueError("label must be a non-empty string")
