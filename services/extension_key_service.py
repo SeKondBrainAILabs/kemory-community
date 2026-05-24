@@ -123,8 +123,19 @@ _SYNTHETIC_EXTENSION_ORG_IDS: frozenset[str] = frozenset({
 
 
 def _refused_org_ids() -> frozenset[str]:
-    override = os.environ.get("KEMORY_EXTENSION_REFUSE_ORG_IDS", "").strip()
-    if not override:
+    """Resolve the active denylist.
+
+    Precedence:
+      * env var UNSET    → built-in default ({'kora-extension'})
+      * env var SET      → use the env value verbatim (CSV); set to ''
+                           to disable the guard entirely. This is
+                           important for test/dev: you can run with
+                           KEMORY_EXTENSION_REFUSE_ORG_IDS='' to opt
+                           out without having to know what the default
+                           list contains.
+    """
+    override = os.environ.get("KEMORY_EXTENSION_REFUSE_ORG_IDS")
+    if override is None:
         return _SYNTHETIC_EXTENSION_ORG_IDS
     return frozenset({s.strip() for s in override.split(",") if s.strip()})
 
