@@ -142,6 +142,28 @@ export function ChatDetailPanel({ chatId }: Props) {
               )}
               {chat.model && <span>model · {chat.model}</span>}
               <span>{chat.turn_count} turns</span>
+              {(() => {
+                // chats-v1 auto-classify: surface provenance when the
+                // background classifier redirected this chat.
+                const auto = (chat.chat_metadata as Record<string, unknown> | null)?.[
+                  'auto_classified'
+                ] as
+                  | { from?: string; to?: string; signal?: string; similarity?: number | null }
+                  | undefined
+                if (!auto) return null
+                const sim =
+                  typeof auto.similarity === 'number'
+                    ? ` · ${Math.round(auto.similarity * 100)}%`
+                    : ''
+                return (
+                  <span
+                    className="rounded-full bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 ring-1 ring-indigo-200"
+                    title={`Auto-classified from ${auto.from} (signal: ${auto.signal})`}
+                  >
+                    auto-classified{sim}
+                  </span>
+                )
+              })()}
             </div>
             {(chat.source_project_name || chat.source_project_id) && (
               <div className="mt-1 text-[11px] text-content-tertiary">
