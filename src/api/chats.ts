@@ -125,3 +125,52 @@ export async function getChat(
 export async function deleteChat(chatId: string): Promise<void> {
   await api.delete(`api/v1/chats/${encodeURIComponent(chatId)}`)
 }
+
+// ─── Classify + Move (chats-v1 inbox) ───────────────────────────────
+
+export interface NamespaceSuggestion {
+  namespace: string
+  similarity: number
+  signal: 'summary' | 'description' | 'name'
+  memory_count: number
+  chat_count: number
+}
+
+export interface ChatClassifyResponse {
+  chat_id: string
+  current_namespace: string
+  in_inbox: boolean
+  sample_chars: number
+  suggestions: NamespaceSuggestion[]
+  fallback: boolean
+}
+
+/** True when the namespace string is one of the per-platform inboxes. */
+export function isInboxNamespace(ns: string | null | undefined): boolean {
+  return typeof ns === 'string' && ns.startsWith('kora:inbox:')
+}
+
+export async function classifyChat(
+  chatId: string,
+  limit = 5,
+): Promise<ChatClassifyResponse> {
+  return api
+    .post(`api/v1/chats/${encodeURIComponent(chatId)}/classify`, {
+      searchParams: { limit },
+    })
+    .json()
+}
+
+export interface ChatMoveRequest {
+  namespace: string
+  allow_duplicate?: boolean
+}
+
+export async function moveChat(
+  chatId: string,
+  data: ChatMoveRequest,
+): Promise<ChatResponse> {
+  return api
+    .post(`api/v1/chats/${encodeURIComponent(chatId)}/move`, { json: data })
+    .json()
+}

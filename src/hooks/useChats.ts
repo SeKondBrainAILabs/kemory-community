@@ -7,10 +7,13 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  classifyChat,
   deleteChat,
   getChat,
   listChats,
+  moveChat,
   type ChatListParams,
+  type ChatMoveRequest,
 } from '@/api/chats'
 
 export function useChatList(params: ChatListParams = {}) {
@@ -49,6 +52,32 @@ export function useDeleteChat() {
     mutationFn: (chatId: string) => deleteChat(chatId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['chats', 'list'] })
+    },
+  })
+}
+
+// chats-v1 inbox: classify + move. The classify call is a pure read
+// (no caching needed beyond a short staleTime since suggestions can
+// shift as more memories/chats accumulate). The move call invalidates
+// the list + the per-chat detail.
+export function useClassifyChat(chatId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['chats', chatId ?? '', 'classify'],
+    queryFn: () => classifyChat(chatId!),
+    enabled: !!chatId && enabled,
+    staleTime: 30_000,
+  })
+}
+
+export function useMoveChat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ chatId, data }: { chatId: string; data: ChatMoveRequest }) =>
+      moveChat(chatId, data),
+    onSuccess: (_res, { chatId }) => {
+      qc.invalidateQueries({ queryKey: ['chats', 'list'] })
+      qc.invalidateQueries({ queryKey: ['chats', chatId] })
+      qc.invalidateQueries({ queryKey: ['chats', chatId, 'classify'] })
     },
   })
 }

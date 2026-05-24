@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ExternalLink, RefreshCw, Trash2, X } from 'lucide-react'
+import { ExternalLink, Inbox, RefreshCw, Trash2, X } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { PageShell } from '@/components/layout/PageShell'
@@ -17,6 +17,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useChatList, useDeleteChat } from '@/hooks/useChats'
 import { useNamespaces } from '@/hooks/useMemories'
+import { isInboxNamespace } from '@/api/chats'
 import type { ChatListItem, Platform } from '@/api/chats'
 import { ChatDetailPanel } from './ChatDetailPanel'
 
@@ -50,6 +51,11 @@ export function ChatsListPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [namespace, setNamespace] = useState<string>('')
   const [platform, setPlatform] = useState<'' | Platform>('')
+  // chats-v1 inbox: client-side "show only inbox" filter. We could push
+  // this into the API with a `?inbox=true` flag, but namespace pattern
+  // matching on the server requires a new column; for now we fetch as
+  // usual and filter the rendered rows. Fine at single-user scale.
+  const [inboxOnly, setInboxOnly] = useState(false)
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<ChatListItem | null>(null)
 
@@ -60,7 +66,9 @@ export function ChatsListPage() {
   const list = useChatList({
     namespace: namespace || undefined,
     platform: (platform || undefined) as Platform | undefined,
-    limit: PAGE_SIZE,
+    // Pull a larger page when filtering inbox-only so the client-side
+    // filter still has enough rows to show.
+    limit: inboxOnly ? 100 : PAGE_SIZE,
     offset: page * PAGE_SIZE,
   })
   const deleteMutation = useDeleteChat()
@@ -108,11 +116,19 @@ export function ChatsListPage() {
       {
         accessorKey: 'namespace',
         header: 'Namespace',
-        cell: ({ row }) => (
-          <span className="font-mono text-xs text-content-secondary">
-            {row.original.namespace}
-          </span>
-        ),
+        cell: ({ row }) =>
+          isInboxNamespace(row.original.namespace) ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+              title="Sitting in the inbox — open the chat to classify or move it"
+            >
+              <Inbox size={10} /> {row.original.namespace}
+            </span>
+          ) : (
+            <span className="font-mono text-xs text-content-secondary">
+              {row.original.namespace}
+            </span>
+          ),
       },
       {
         accessorKey: 'turn_count',
@@ -208,6 +224,22 @@ export function ChatsListPage() {
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => {
+            setInboxOnly((v) => !v)
+            setPage(0)
+          }}
+          className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+            inboxOnly
+              ? 'border-amber-300 bg-amber-50 text-amber-700'
+              : 'border-border bg-white text-content-secondary hover:bg-surface-secondary'
+          }`}
+          title="Show only chats sitting in kora:inbox:* — typically the ones the extension just pushed"
+        >
+          <Inbox size={14} />
+          {inboxOnly ? 'Inbox only' : 'Inbox'}
+        </button>
         <div className="text-xs text-content-tertiary">
           {totalCount} chat{totalCount === 1 ? '' : 's'}
         </div>
@@ -235,7 +267,9 @@ export function ChatsListPage() {
             <>
               <DataTable
                 columns={columns}
-                data={list.data?.items ?? []}
+                data={(list.data?.items ?? []).filter(
+                  (r) => !inboxOnly || isInboxNamespace(r.namespace),
+                )}
                 onRowClick={(row) => selectChat(row.chat_id)}
               />
               <div className="flex items-center justify-between text-xs text-content-tertiary">
