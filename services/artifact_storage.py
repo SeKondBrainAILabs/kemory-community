@@ -1,5 +1,5 @@
 """
-Kemory — chat artifact storage (chats-v1 file/audio/video, v3.33.0).
+Kemory — chat artifact storage (chats-v1 file/audio/video, v3.33.0+).
 
 Two responsibilities:
 
@@ -9,11 +9,23 @@ Two responsibilities:
      * ``minio`` (default) — Kemory writes directly to its own minio
        bucket (``kemory-chat-artifacts``) using the minio SDK.
 
-     * ``core_backend`` — Kemory delegates uploads to Core_Backend's
-       ``POST /upload`` public endpoint (no auth required; same minio
-       instance, ``core-backend`` bucket).  Reads and deletes still go
-       via minio SDK using shared credentials because Core_Backend has
-       no download or delete HTTP endpoints.
+     * ``core_backend`` — Kemory delegates all storage operations to
+       Core_Backend's tenant storage API (``/storage/*``).  Auth is
+       via a long-lived application API key (``X-API-Key: sk-…``)
+       minted against the kemory Application in Core_Backend.
+
+       Core_Backend stores each file in a per-org minio bucket named
+       ``{STORAGE_BUCKET_PREFIX}-{org_id}`` (default prefix ``tenant``).
+       Bucket creation is idempotent — Core_Backend auto-creates it on
+       first upload.
+
+       Key encoding in AIChatArtifact.artifact_metadata['storage_key']:
+         minio mode  →  plain path  e.g. ``org/user/chat/artifact.mp3``
+         core_backend mode  →  ``cb:{core_backend_file_uuid}``
+
+       This lets get_artifact / delete_artifact dispatch correctly for
+       both new uploads and legacy minio-stored artifacts without any
+       DB migration.
 
   2. Mint HMAC-signed short-lived URLs that the browser can use directly
      in ``<audio src=…>`` / ``<video src=…>`` / ``<img src=…>`` tags.
@@ -22,18 +34,9 @@ Two responsibilities:
      embeds the signature in the query string; the blob endpoint
      verifies it on read. TTL 1 hour by default.
 
-Storage layout:
-
-  minio mode:
-    kemory-chat-artifacts / {org_id}/{user_id}/{chat_id}/{artifact_id}{ext}
-
-  core_backend mode:
-    core-backend / uploads/{uuid}-{filename}  (key returned by Core_Backend)
-
 Config (env):
 
     KEMORY_ARTIFACT_BACKEND          default 'minio'  ('minio' | 'core_backend')
-    KEMORY_CORE_BACKEND_URL          default 'http://core-backend:8001'
 
     For minio backend:
     KEMORY_ARTIFACT_BUCKET           default 'kemory-chat-artifacts'
@@ -43,21 +46,24 @@ Config (env):
     KEMORY_ARTIFACT_S3_SECURE        default 'false' (http inside docker)
     KEMORY_ARTIFACT_SIGNED_URL_TTL   default '3600' (seconds)
 
-    For core_backend backend the same minio env vars are used for the
-    read/delete path (same shared-infra minio, different bucket).
+    For core_backend backend:
+    KEMORY_CORE_BACKEND_URL          default 'http://core_backend:8001'
+    KEMORY_CORE_BACKEND_API_KEY      required — sk-… key minted via
+                                     POST /api-keys in Core_Backend admin
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import io as _io
 import logging
 import mimetypes
 import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import IO
 
 import structlog
@@ -74,18 +80,35 @@ def _env(name: str, default: str) -> str:
 
 
 ARTIFACT_BACKEND = _env("KEMORY_ARTIFACT_BACKEND", "minio")
-CORE_BACKEND_URL = _env("KEMORY_CORE_BACKEND_URL", "http://core_backend:8001")
 
+# ── minio backend ──────────────────────────────────────────────────
 DEFAULT_BUCKET = _env("KEMORY_ARTIFACT_BUCKET", "kemory-chat-artifacts")
-# The core-backend bucket name — must match MINIO_BUCKET in Core_Backend's env.
-CORE_BACKEND_BUCKET = _env("KEMORY_CORE_BACKEND_BUCKET", "core-backend")
-
 S3_ENDPOINT = _env("KEMORY_ARTIFACT_S3_ENDPOINT", "minio:9000")
 S3_ACCESS_KEY = _env("KEMORY_ARTIFACT_S3_ACCESS_KEY", "minioadmin")
 # Defaults to the shared-infra dev secret. Override in prod via env.
 S3_SECRET_KEY = _env("KEMORY_ARTIFACT_S3_SECRET_KEY", "sharedinfra_minio_2026")
 S3_SECURE = _env("KEMORY_ARTIFACT_S3_SECURE", "false").lower() in {"true", "1", "yes"}
 SIGNED_URL_TTL_SECONDS = int(_env("KEMORY_ARTIFACT_SIGNED_URL_TTL", "3600"))
+
+# ── core_backend backend ───────────────────────────────────────────
+CORE_BACKEND_URL = _env("KEMORY_CORE_BACKEND_URL", "http://core_backend:8001")
+# API key for the kemory Application in Core_Backend (sk-… format).
+# Must be minted once via POST /api-keys in Core_Backend admin.
+CORE_BACKEND_API_KEY = os.environ.get("KEMORY_CORE_BACKEND_API_KEY", "").strip()
+
+# Prefix used in AIChatArtifact.storage_key to identify core_backend-stored
+# artifacts.  Value: "cb:{core_backend_file_uuid}".
+_CB_KEY_PREFIX = "cb:"
+
+
+def _core_backend_headers() -> dict[str, str]:
+    """Build auth headers for Core_Backend storage API calls."""
+    if not CORE_BACKEND_API_KEY:
+        raise RuntimeError(
+            "KEMORY_CORE_BACKEND_API_KEY is not set. "
+            "Create an API key in Core_Backend (POST /api-keys) and set this env var."
+        )
+    return {"X-API-Key": CORE_BACKEND_API_KEY}
 
 
 # ─── Signing helpers (HMAC-SHA256 over canonical token) ─────────────
@@ -149,11 +172,12 @@ class PutResult:
 
 @dataclass
 class GetResult:
-    """Result of a get_object. ``stream`` is a chunked iterator that
-    callers MUST close (use as a context manager or call ``release_conn``
-    in the finally block — see ``stream_artifact`` in the route handler
-    for the pattern)."""
+    """Result of a get_object / download call.
 
+    ``stream`` must be closed by the caller.  For minio results also call
+    ``stream.release_conn()`` in the finally block.  For core_backend
+    results ``stream`` is a ``BytesIO`` — ``close()`` is sufficient.
+    """
     bucket: str
     key: str
     size_bytes: int | None
@@ -161,14 +185,14 @@ class GetResult:
     stream: IO[bytes]
 
 
-# ─── Minio client (shared for both backends on read/delete) ──────────
+# ─── Minio client (minio backend) ───────────────────────────────────
 
 
 _minio_client = None
 _minio_lock = threading.Lock()
 
 
-def _get_client():
+def _get_minio_client():
     """Lazy singleton — defer import + connection until first use so the
     rest of the app keeps booting when minio isn't reachable in dev."""
     global _minio_client
@@ -185,28 +209,15 @@ def _get_client():
             secret_key=S3_SECRET_KEY,
             secure=S3_SECURE,
         )
-        # Idempotent bucket bootstrap for each backend.
-        for bucket in _buckets_to_ensure():
-            try:
-                if not client.bucket_exists(bucket):
-                    client.make_bucket(bucket)
-                    logger.info("artifact_storage.bucket_created", bucket=bucket)
-            except Exception as exc:
-                # Don't crash the process — next put_object call will
-                # surface the real error.
-                logger.warning("artifact_storage.bucket_check_failed", bucket=bucket, error=str(exc))
+        # Idempotent bucket bootstrap for the direct minio path.
+        try:
+            if not client.bucket_exists(DEFAULT_BUCKET):
+                client.make_bucket(DEFAULT_BUCKET)
+                logger.info("artifact_storage.bucket_created", bucket=DEFAULT_BUCKET)
+        except Exception as exc:
+            logger.warning("artifact_storage.bucket_check_failed", bucket=DEFAULT_BUCKET, error=str(exc))
         _minio_client = client
         return _minio_client
-
-
-def _buckets_to_ensure() -> list[str]:
-    """Which minio buckets to auto-create on startup."""
-    if ARTIFACT_BACKEND == "core_backend":
-        # Kemory only reads/deletes from core-backend bucket; Core_Backend
-        # creates its own bucket on first use, but it may not have run yet.
-        # Ensure it exists so reads don't 404.
-        return [CORE_BACKEND_BUCKET]
-    return [DEFAULT_BUCKET]
 
 
 # ─── Storage-key helpers ────────────────────────────────────────────
@@ -219,7 +230,7 @@ def storage_key_for(
     artifact_id: str | uuid.UUID,
     filename: str | None = None,
 ) -> str:
-    """Build the canonical minio object key (used by ``minio`` backend).
+    """Build the canonical minio object key (``minio`` backend only).
 
     Including an extension when we have one helps browsers + minio infer
     content type when serving direct URLs, even though we still set
@@ -232,6 +243,16 @@ def storage_key_for(
             ext = filename[idx:].lower()
     safe_org = (org_id or "no-org").replace("/", "_")
     return f"{safe_org}/{user_id}/{chat_id}/{artifact_id}{ext}"
+
+
+def _is_core_backend_key(key: str) -> bool:
+    """True when ``key`` encodes a Core_Backend file UUID (``cb:{uuid}``)."""
+    return key.startswith(_CB_KEY_PREFIX)
+
+
+def _extract_cb_file_id(key: str) -> str:
+    """Strip the ``cb:`` prefix and return the bare Core_Backend file UUID."""
+    return key[len(_CB_KEY_PREFIX):]
 
 
 # ─── Write path ─────────────────────────────────────────────────────
@@ -250,12 +271,9 @@ def put_artifact(
 ) -> PutResult:
     """Upload bytes to object storage.
 
-    Delegates to Core_Backend's ``POST /upload`` when
+    Routes to Core_Backend's ``/storage/upload`` endpoint when
     ``KEMORY_ARTIFACT_BACKEND=core_backend``; otherwise writes directly
     to minio.
-
-    Returns the storage key + facts the caller persists on the
-    AIChatArtifact row.
     """
     if ARTIFACT_BACKEND == "core_backend":
         return _put_via_core_backend(
@@ -286,7 +304,7 @@ def _put_via_minio(
     mimetype: str | None,
     bucket: str | None,
 ) -> PutResult:
-    """Direct minio upload (original behaviour)."""
+    """Direct minio upload (``minio`` backend)."""
     bucket = bucket or DEFAULT_BUCKET
     key = storage_key_for(org_id, user_id, chat_id, artifact_id, filename)
 
@@ -294,9 +312,7 @@ def _put_via_minio(
         guess, _ = mimetypes.guess_type(filename or "")
         mimetype = guess or "application/octet-stream"
 
-    import io as _io
-
-    client = _get_client()
+    client = _get_minio_client()
     client.put_object(
         bucket_name=bucket,
         object_name=key,
@@ -321,19 +337,29 @@ def _put_via_core_backend(
     filename: str | None,
     mimetype: str | None,
 ) -> PutResult:
-    """Upload via Core_Backend's public POST /upload endpoint.
+    """Upload via Core_Backend's tenant storage API (``core_backend`` backend).
 
-    Core_Backend's /upload is registered as a public (IP-rate-limited)
-    route — no Bearer token required.  It returns::
+    Calls ``POST /storage/upload`` with ``X-API-Key`` auth.  Core_Backend
+    stores the file in the per-org minio bucket ``tenant-{org_id}`` (or
+    whichever prefix is configured via ``STORAGE_BUCKET_PREFIX``) and
+    returns a DB metadata record including a stable file ``id``.
 
-        {"key": "uploads/{uuid}-{filename}", "url": "http://minio:9000/..."}
+    The returned ``PutResult.key`` is encoded as ``cb:{file_uuid}`` so
+    that ``get_artifact`` and ``delete_artifact`` can transparently route
+    subsequent reads / deletes through Core_Backend's HTTP API rather
+    than hitting minio directly.
 
-    The returned URL is the internal minio address so it is NOT suitable
-    for browser use; kemory generates its own signed blob URL instead and
-    stores the key so it can stream the object directly from minio.
+    Response shape (Core_Backend Development branch):
+        {
+          "id": "uuid",
+          "storage_key": "uploads/{hex}-{filename}",
+          "storage_bucket": "tenant-{org_id}",
+          "checksum": "<sha256>",
+          "mime_type": "...",
+          "size_bytes": 12345,
+          ...
+        }
     """
-    import io as _io
-
     import httpx
 
     if not mimetype:
@@ -341,19 +367,14 @@ def _put_via_core_backend(
         mimetype = guess or "application/octet-stream"
 
     safe_name = filename or "artifact"
+    upload_url = f"{CORE_BACKEND_URL.rstrip('/')}/storage/upload"
 
-    # Ensure the core-backend bucket exists before delegating. Core_Backend
-    # does NOT auto-create it; if it doesn't exist the POST /upload returns
-    # 500. Calling _get_client() here triggers our idempotent bucket bootstrap.
-    _get_client()
-
-    upload_url = f"{CORE_BACKEND_URL.rstrip('/')}/upload"
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             resp = client.post(
                 upload_url,
                 files={"file": (safe_name, _io.BytesIO(data), mimetype)},
-                data={"prefix": "uploads/"},
+                headers=_core_backend_headers(),
             )
         resp.raise_for_status()
         result = resp.json()
@@ -363,26 +384,36 @@ def _put_via_core_backend(
             status=exc.response.status_code,
             body=exc.response.text[:200],
         )
-        raise RuntimeError(f"Core_Backend upload failed: HTTP {exc.response.status_code}") from exc
+        raise RuntimeError(
+            f"Core_Backend upload failed: HTTP {exc.response.status_code} — {exc.response.text[:120]}"
+        ) from exc
     except Exception as exc:
         logger.error("artifact_storage.core_backend_upload_error", error=str(exc))
         raise RuntimeError(f"Core_Backend upload error: {exc}") from exc
 
-    key = result.get("key")
-    if not key:
-        raise RuntimeError(f"Core_Backend /upload returned no key: {result}")
+    file_id = result.get("id")
+    if not file_id:
+        raise RuntimeError(f"Core_Backend /storage/upload returned no id: {result}")
 
-    sha = hashlib.sha256(data).hexdigest()
+    # Prefer the checksum Core_Backend computed; fall back to local.
+    sha = result.get("checksum") or hashlib.sha256(data).hexdigest()
+
     logger.info(
         "artifact_storage.core_backend_upload_ok",
-        key=key,
-        size=len(data),
+        file_id=file_id,
+        storage_key=result.get("storage_key"),
+        storage_bucket=result.get("storage_bucket"),
+        size=result.get("size_bytes", len(data)),
     )
+
     return PutResult(
-        bucket=CORE_BACKEND_BUCKET,
-        key=key,
-        size_bytes=len(data),
-        mimetype=mimetype,
+        # Bucket from core_backend response (e.g. "tenant-{org_id}")
+        bucket=result.get("storage_bucket", "core_backend_tenant"),
+        # Encode the Core_Backend file UUID so we can route reads/deletes
+        # through the HTTP API without touching minio directly.
+        key=f"{_CB_KEY_PREFIX}{file_id}",
+        size_bytes=result.get("size_bytes", len(data)),
+        mimetype=result.get("mime_type", mimetype),
         sha256=sha,
     )
 
@@ -393,15 +424,19 @@ def _put_via_core_backend(
 def get_artifact(bucket: str | None, key: str) -> GetResult:
     """Open a streaming read against the stored object.
 
-    Works for both backends — both store on the shared minio instance so
-    we always read via the minio SDK using the ``bucket`` stored on the
-    AIChatArtifact row.
-
-    Caller is responsible for closing the underlying response (use
-    try/finally with ``stream.close()`` + ``stream.release_conn()``).
+    Dispatches to Core_Backend's ``GET /storage/files/{id}/download``
+    when ``key`` starts with ``cb:`` (i.e. was uploaded via the
+    core_backend backend).  Falls back to minio SDK for plain keys
+    (minio backend, or legacy artifacts uploaded before the switch).
     """
-    effective_bucket = bucket or (CORE_BACKEND_BUCKET if ARTIFACT_BACKEND == "core_backend" else DEFAULT_BUCKET)
-    client = _get_client()
+    if _is_core_backend_key(key):
+        return _get_via_core_backend(key, bucket)
+    return _get_via_minio(bucket, key)
+
+
+def _get_via_minio(bucket: str | None, key: str) -> GetResult:
+    effective_bucket = bucket or DEFAULT_BUCKET
+    client = _get_minio_client()
     response = client.get_object(effective_bucket, key)
     size = None
     if response.headers and response.headers.get("Content-Length"):
@@ -419,23 +454,106 @@ def get_artifact(bucket: str | None, key: str) -> GetResult:
     )
 
 
+def _get_via_core_backend(key: str, bucket: str | None) -> GetResult:
+    """Stream artifact bytes from Core_Backend's download endpoint.
+
+    Reads the full body into a BytesIO buffer so the caller gets a
+    uniform stream interface.  For artifact sizes in the chat use-case
+    (typically <10 MB) this is acceptable; a chunked streaming path
+    can be added later if needed.
+    """
+    import httpx
+
+    file_id = _extract_cb_file_id(key)
+    download_url = f"{CORE_BACKEND_URL.rstrip('/')}/storage/files/{file_id}/download"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.get(download_url, headers=_core_backend_headers())
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "artifact_storage.core_backend_download_failed",
+            file_id=file_id,
+            status=exc.response.status_code,
+        )
+        raise RuntimeError(
+            f"Core_Backend download failed for file {file_id}: HTTP {exc.response.status_code}"
+        ) from exc
+    except Exception as exc:
+        logger.error("artifact_storage.core_backend_download_error", file_id=file_id, error=str(exc))
+        raise RuntimeError(f"Core_Backend download error: {exc}") from exc
+
+    # Content-Disposition carries the original filename but we don't need it here.
+    mimetype = resp.headers.get("Content-Type", "application/octet-stream")
+    body = resp.content
+    size = len(body)
+
+    logger.debug("artifact_storage.core_backend_download_ok", file_id=file_id, size=size)
+
+    return GetResult(
+        bucket=bucket or "core_backend_tenant",
+        key=key,
+        size_bytes=size,
+        mimetype=mimetype,
+        stream=_io.BytesIO(body),
+    )
+
+
 # ─── Delete path ────────────────────────────────────────────────────
 
 
 def delete_artifact(bucket: str | None, key: str) -> None:
-    """Best-effort deletion via minio SDK (Core_Backend has no delete endpoint).
+    """Delete or soft-delete a stored artifact.
 
-    Swallows errors — orphan blobs are tolerable (not user-visible), but a
-    delete that breaks chat soft-delete on the DB side would be a
-    regression.
+    * For ``cb:``-prefixed keys: calls ``DELETE /storage/files/{id}``
+      on Core_Backend (soft-delete — DB record marked deleted; lifecycle
+      policies on the bucket handle physical cleanup).
+
+    * For plain keys: removes the object directly from minio.
+
+    Both paths are best-effort — errors are logged but not re-raised so
+    a failed delete never breaks chat soft-delete on the DB side.
     """
-    effective_bucket = bucket or (CORE_BACKEND_BUCKET if ARTIFACT_BACKEND == "core_backend" else DEFAULT_BUCKET)
+    if _is_core_backend_key(key):
+        _delete_via_core_backend(key)
+    else:
+        _delete_via_minio(bucket, key)
+
+
+def _delete_via_minio(bucket: str | None, key: str) -> None:
+    effective_bucket = bucket or DEFAULT_BUCKET
     try:
-        _get_client().remove_object(effective_bucket, key)
+        _get_minio_client().remove_object(effective_bucket, key)
     except Exception as exc:
         logger.warning(
-            "artifact_storage.delete_failed",
+            "artifact_storage.minio_delete_failed",
             bucket=effective_bucket,
             key=key,
+            error=str(exc),
+        )
+
+
+def _delete_via_core_backend(key: str) -> None:
+    import httpx
+
+    file_id = _extract_cb_file_id(key)
+    delete_url = f"{CORE_BACKEND_URL.rstrip('/')}/storage/files/{file_id}"
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.delete(delete_url, headers=_core_backend_headers())
+        if resp.status_code not in (204, 404):
+            logger.warning(
+                "artifact_storage.core_backend_delete_unexpected",
+                file_id=file_id,
+                status=resp.status_code,
+            )
+        else:
+            logger.debug("artifact_storage.core_backend_delete_ok", file_id=file_id)
+    except Exception as exc:
+        logger.warning(
+            "artifact_storage.core_backend_delete_failed",
+            file_id=file_id,
             error=str(exc),
         )
