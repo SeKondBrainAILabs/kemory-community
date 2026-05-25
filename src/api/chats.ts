@@ -14,7 +14,15 @@ import { api } from './client'
 
 export type Platform = 'chatgpt' | 'claude' | 'gemini' | 'manus' | 'other'
 export type Role = 'user' | 'assistant' | 'system' | 'tool'
-export type ArtifactType = 'code' | 'image' | 'file' | 'react' | 'html' | 'svg'
+export type ArtifactType =
+  | 'code'
+  | 'image'
+  | 'file'
+  | 'react'
+  | 'html'
+  | 'svg'
+  | 'audio' // chats-v1 v3.33.0
+  | 'video' // chats-v1 v3.33.0
 
 export interface ArtifactResponse {
   artifact_id: string
