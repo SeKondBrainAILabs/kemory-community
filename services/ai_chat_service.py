@@ -63,7 +63,14 @@ MAX_TURNS_PER_BATCH = 500
 
 VALID_PLATFORMS = {"chatgpt", "claude", "gemini", "manus", "other"}
 VALID_ROLES = {"user", "assistant", "system", "tool"}
-VALID_ARTIFACT_TYPES = {"code", "image", "file", "react", "html", "svg"}
+# audio + video added in v3.33.0 — extension uploads now route through
+# the minio-backed POST /chats/{id}/artifacts/upload endpoint and store
+# their object key in artifact_metadata.storage_key. Inline content for
+# audio/video isn't practically useful (>1MB cap kicks in immediately)
+# so the dashboard treats those types as content_url-only.
+VALID_ARTIFACT_TYPES = {
+    "code", "image", "file", "react", "html", "svg", "audio", "video",
+}
 
 
 # ─── Request / Response schemas ─────────────────────────────────────
@@ -1115,22 +1122,45 @@ async def _load_turns(
                 sequence=r.sequence,
                 created_at=r.created_at.isoformat() if r.created_at else "",
                 artifacts=[
-                    ArtifactResponse(
-                        artifact_id=str(a.artifact_id),
-                        turn_id=str(a.turn_id),
-                        artifact_type=a.artifact_type,
-                        language=a.language,
-                        content=a.content,
-                        content_url=a.content_url,
-                        content_sha256=a.content_sha256,
-                        artifact_metadata=a.artifact_metadata,
-                        created_at=a.created_at.isoformat() if a.created_at else "",
-                    )
+                    _artifact_to_response(a)
                     for a in artifacts_by_turn.get(r.turn_id, [])
                 ],
             )
         )
     return out
+
+
+def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
+    """Build an ArtifactResponse from a row, refreshing content_url on
+    the fly for minio-backed artifacts so the browser always gets a
+    fresh signed URL it can use directly in <audio>/<video>/<img>.
+
+    Persisted content_url (legacy / extension-supplied external URLs)
+    are passed through unchanged. The signed-URL path only kicks in
+    when artifact_metadata.storage_key is set — that's our marker that
+    the body lives in our minio bucket and needs an HMAC-signed URL.
+    """
+    meta = a.artifact_metadata or {}
+    storage_key = meta.get("storage_key") if isinstance(meta, dict) else None
+    content_url = a.content_url
+    if storage_key and not content_url:
+        try:
+            from backend.services.artifact_storage import build_signed_blob_url
+
+            content_url = build_signed_blob_url(a.chat_id, a.artifact_id)
+        except Exception as exc:
+            logger.debug("ai_chat_service.signed_url_failed", reason=str(exc))
+    return ArtifactResponse(
+        artifact_id=str(a.artifact_id),
+        turn_id=str(a.turn_id),
+        artifact_type=a.artifact_type,
+        language=a.language,
+        content=a.content,
+        content_url=content_url,
+        content_sha256=a.content_sha256,
+        artifact_metadata=meta or None,
+        created_at=a.created_at.isoformat() if a.created_at else "",
+    )
 
 
 def _to_response(

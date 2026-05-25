@@ -19,6 +19,8 @@ limit and revisit when the first endpoint needs more.
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from fastapi import HTTPException, Request, status
 
@@ -26,10 +28,23 @@ from backend.config.settings import settings
 
 logger = structlog.get_logger(__name__)
 
+# chats-v1 v3.33.0: artifact uploads (file / audio / video) legitimately
+# need larger bodies than the global 1 MB cap. We allow up to 50 MB on
+# the chat-artifact upload path specifically; everything else stays
+# under the default global cap.
+_LARGE_BODY_PATH_RE = re.compile(r"^/api/v1/chats/[^/]+/artifacts/upload/?$")
+_LARGE_BODY_LIMIT_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _limit_for(path: str) -> int:
+    if _LARGE_BODY_PATH_RE.match(path):
+        return _LARGE_BODY_LIMIT_BYTES
+    return settings.max_request_body_bytes
+
 
 async def body_size_limit_middleware(request: Request, call_next):
-    """Reject requests whose body exceeds settings.max_request_body_bytes."""
-    max_bytes = settings.max_request_body_bytes
+    """Reject requests whose body exceeds the per-path limit."""
+    max_bytes = _limit_for(request.url.path)
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:

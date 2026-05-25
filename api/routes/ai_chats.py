@@ -23,12 +23,15 @@ Spec reference: ``docs/chrome-extension-push-guide.md``.
 
 from __future__ import annotations
 
+import json
+import time
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import AuthContext, require_auth
@@ -268,6 +271,262 @@ async def move_chat_endpoint(
             else status.HTTP_400_BAD_REQUEST
         )
         raise HTTPException(status_code=code, detail=msg) from exc
+
+
+# ── chats-v1 file/audio/video (v3.33.0) ─────────────────────────────
+
+
+@router.post(
+    "/chats/{chat_id}/artifacts/upload",
+    summary="Upload a binary artifact (file / audio / video / image) for a turn",
+)
+async def upload_artifact_endpoint(
+    chat_id: uuid.UUID,
+    file: UploadFile = File(..., description="The binary payload (any type)."),
+    artifact_type: str = Form(
+        ...,
+        description="One of: file, audio, video, image, code, html, react, svg.",
+    ),
+    source_turn_id: str = Form(
+        ...,
+        description="The Kanvas source_turn_id (NOT the internal turn_id UUID). "
+        "We resolve it to the turn row server-side.",
+    ),
+    language: str | None = Form(None),
+    artifact_metadata: str | None = Form(
+        None,
+        description="Optional extra JSON metadata. Filename + mimetype + size "
+        "are added automatically from the upload.",
+    ),
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload the binary body of an artifact to object storage and
+    create the matching AIChatArtifact row.
+
+    Designed for the Kanvas Chrome Extension to call when it observes
+    a user attaching a file/audio/video in ChatGPT or Claude (where
+    inline base64 in the JSON push is wasteful or impossible because
+    of the 1 MB body cap). The extension:
+
+      1. Pushes the chat shell via POST /api/v1/chats (text-only turns).
+      2. Calls this endpoint once per attached binary, referencing the
+         turn via its source_turn_id (the data-message-id the extension
+         already tracks).
+      3. The artifact row's content_url is generated on response build
+         as a short-lived signed URL the browser can use directly in
+         <audio>/<video>/<img> tags — no auth header needed.
+
+    Storage layout in minio:
+      ``kemory-chat-artifacts/{org_id}/{user_id}/{chat_id}/{artifact_id}{ext}``
+    """
+    from backend.models.ai_chat import AIChat, AIChatArtifact, AIChatTurn
+    from backend.services.ai_chat_service import (
+        VALID_ARTIFACT_TYPES,
+        _artifact_to_response,
+    )
+    from backend.services.artifact_storage import put_artifact
+
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid artifact_type '{artifact_type}'. "
+            f"Valid: {sorted(VALID_ARTIFACT_TYPES)}",
+        )
+
+    # Look up the chat (scoped to the auth user) and the target turn.
+    chat = (
+        await db.execute(
+            select(AIChat).where(
+                AIChat.chat_id == chat_id,
+                AIChat.user_id == auth.user_id,
+                AIChat.invalid_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    turn = (
+        await db.execute(
+            select(AIChatTurn).where(
+                AIChatTurn.chat_id == chat_id,
+                AIChatTurn.source_turn_id == source_turn_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if turn is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Turn with source_turn_id={source_turn_id!r} not found on this chat. "
+            "Push the chat (including this turn) first via POST /api/v1/chats.",
+        )
+
+    # Read whole body into memory. ASGI multipart in this codebase
+    # already buffers to disk for large uploads, so this isn't doubling
+    # peak memory beyond what FastAPI already holds.
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload body.")
+
+    artifact_id = uuid.uuid4()
+    try:
+        put_result = put_artifact(
+            org_id=auth.org_id or "no-org",
+            user_id=auth.user_id,
+            chat_id=chat_id,
+            artifact_id=artifact_id,
+            data=data,
+            filename=file.filename,
+            mimetype=file.content_type,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Object storage write failed: {exc}",
+        ) from exc
+
+    # Merge caller-supplied metadata with storage facts. Caller-supplied
+    # keys win EXCEPT for the storage_* keys which we own — letting the
+    # extension forge those would let it point us at someone else's
+    # bucket key.
+    extra_meta: dict = {}
+    if artifact_metadata:
+        try:
+            extra_meta = json.loads(artifact_metadata)
+            if not isinstance(extra_meta, dict):
+                extra_meta = {}
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="artifact_metadata must be a JSON object string.",
+            )
+    meta = {
+        **extra_meta,
+        "filename": file.filename or extra_meta.get("filename"),
+        "mimetype": put_result.mimetype,
+        "size_bytes": put_result.size_bytes,
+        "storage_bucket": put_result.bucket,
+        "storage_key": put_result.key,
+    }
+
+    row = AIChatArtifact(
+        artifact_id=artifact_id,
+        turn_id=turn.turn_id,
+        chat_id=chat_id,
+        user_id=auth.user_id,
+        org_id=chat.org_id,
+        artifact_type=artifact_type,
+        language=language,
+        content=None,  # body lives in minio, not Postgres
+        content_url=None,  # generated on read via _artifact_to_response
+        content_sha256=put_result.sha256,
+        artifact_metadata=meta,
+    )
+    db.add(row)
+    await db.flush()
+    return _artifact_to_response(row).model_dump(mode="json")
+
+
+@router.get(
+    "/chats/{chat_id}/artifacts/{artifact_id}/blob",
+    summary="Stream a binary artifact body (signed-URL auth, no bearer needed)",
+)
+async def stream_artifact_blob_endpoint(
+    chat_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    exp: int = Query(..., description="Unix timestamp after which the URL is invalid."),
+    sig: str = Query(..., description="HMAC-SHA256 signature minted by the API."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream the artifact body to the browser. Authentication is the
+    HMAC signature in the query string (NOT Bearer / X-API-Key) so
+    ``<audio src=…>`` / ``<video src=…>`` / ``<img src=…>`` work
+    directly — those elements don't attach auth headers.
+
+    The signature was minted by ``build_signed_blob_url`` when the
+    ChatResponse was assembled. The dashboard receives the signed URL
+    inside ArtifactResponse.content_url and uses it as-is.
+
+    Security model:
+      * Signature is HMAC-SHA256 over ``chat_id|artifact_id|exp`` using
+        the same secret JWT_SECRET_KEY uses, so a leaked signed URL
+        cannot escalate privileges (it grants exactly the data inside
+        one artifact row).
+      * Default TTL is 1 hour — copying a URL to another browser works
+        until expiry; after that, the dashboard has to refresh and get
+        a new signed URL via GET /chats/{id}?include=artifacts.
+    """
+    from backend.core.tenancy import bypass_tenant_filter
+    from backend.models.ai_chat import AIChatArtifact
+    from backend.services.artifact_storage import get_artifact, verify_signed_token
+
+    if not verify_signed_token(str(chat_id), str(artifact_id), exp, sig):
+        # Combined "expired or bad sig" — don't tell the caller which
+        # so signature-grinding attacks can't distinguish.
+        raise HTTPException(status_code=403, detail="invalid_or_expired_signature")
+
+    # The signature already authorises this read — no user-scoped DB
+    # filter needed (and we don't have an AuthContext anyway). Bypass
+    # the tenancy filter so the SELECT actually returns the row.
+    with bypass_tenant_filter():
+        row = (
+            await db.execute(
+                select(AIChatArtifact).where(
+                    AIChatArtifact.artifact_id == artifact_id,
+                    AIChatArtifact.chat_id == chat_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    meta = row.artifact_metadata or {}
+    if not isinstance(meta, dict) or not meta.get("storage_key"):
+        # Legacy / inline / external-URL artifact — there's nothing to
+        # stream from minio. The dashboard shouldn't be hitting this
+        # endpoint for those rows (the response builder only signs URLs
+        # when storage_key is present), but be explicit.
+        raise HTTPException(
+            status_code=404,
+            detail="No object-storage body for this artifact",
+        )
+
+    try:
+        result = get_artifact(meta.get("storage_bucket"), meta["storage_key"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Object storage read failed: {exc}",
+        ) from exc
+
+    response_headers = {
+        "Cache-Control": f"private, max-age={max(0, exp - int(time.time()))}",
+    }
+    filename = meta.get("filename") if isinstance(meta, dict) else None
+    if filename:
+        # inline so audio/video/image render in-page; the file dialog
+        # only opens if the browser decides it can't render the type.
+        response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
+
+    def _iter():
+        try:
+            for chunk in result.stream.stream(amt=64 * 1024):
+                yield chunk
+        finally:
+            result.stream.close()
+            try:
+                result.stream.release_conn()
+            except Exception:
+                pass
+
+    media_type = result.mimetype or meta.get("mimetype") or "application/octet-stream"
+    return StreamingResponse(
+        _iter(),
+        media_type=media_type,
+        headers=response_headers,
+    )
 
 
 @router.delete(
