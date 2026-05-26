@@ -85,6 +85,7 @@ export interface ChatListItem {
   captured_at: string | null
   updated_at: string
   turn_count: number
+  artifact_count: number
 }
 
 export interface ChatListResponse {

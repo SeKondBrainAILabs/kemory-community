@@ -136,6 +136,18 @@ export function ChatsListPage() {
         cell: ({ row }) => <span className="tabular-nums">{row.original.turn_count}</span>,
       },
       {
+        accessorKey: 'artifact_count',
+        header: 'Files',
+        cell: ({ row }) =>
+          row.original.artifact_count > 0 ? (
+            <span className="tabular-nums font-medium text-brand-primary">
+              {row.original.artifact_count}
+            </span>
+          ) : (
+            <span className="tabular-nums text-content-tertiary">—</span>
+          ),
+      },
+      {
         accessorKey: 'updated_at',
         header: 'Updated',
         cell: ({ row }) => (
