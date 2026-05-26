@@ -213,6 +213,7 @@ class ChatListItem(BaseModel):
     captured_at: str | None
     updated_at: str
     turn_count: int
+    artifact_count: int = 0
 
 
 class ChatListResponse(BaseModel):
@@ -943,6 +944,7 @@ async def list_chats(
                 captured_at=chat.captured_at.isoformat() if chat.captured_at else None,
                 updated_at=chat.updated_at.isoformat() if chat.updated_at else "",
                 turn_count=await _count_turns(chat.chat_id, db),
+                artifact_count=await _count_artifacts(chat.chat_id, db),
             )
         )
 
@@ -1076,6 +1078,17 @@ async def _count_turns(chat_id: uuid.UUID, db: AsyncSession) -> int:
     total = (
         await db.execute(
             select(func.count()).select_from(AIChatTurn).where(AIChatTurn.chat_id == chat_id)
+        )
+    ).scalar()
+    return int(total or 0)
+
+
+async def _count_artifacts(chat_id: uuid.UUID, db: AsyncSession) -> int:
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(AIChatArtifact)
+            .where(AIChatArtifact.chat_id == chat_id)
         )
     ).scalar()
     return int(total or 0)
