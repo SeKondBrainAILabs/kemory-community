@@ -55,7 +55,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import event, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import with_loader_criteria
@@ -142,6 +142,7 @@ def bypass_tenant_filter() -> Iterator[None]:
 
 
 async def get_tenant_scope(
+    request: Request,
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> TenantScope:
@@ -201,6 +202,10 @@ async def get_tenant_scope(
     _current_org_id.set(scope.org_id)
     _current_user_id.set(scope.user_id)
     _current_team_ids.set(scope.team_ids)
+    # WS-8: stash org on request.state so the metrics middleware can label
+    # by org after call_next. request.state (ASGI scope) survives the
+    # BaseHTTPMiddleware boundary; the ContextVar above does not.
+    request.state.org_id = scope.org_id
     return scope
 
 

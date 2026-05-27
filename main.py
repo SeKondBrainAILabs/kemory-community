@@ -31,6 +31,7 @@ from backend.api.routes.user import router as user_router  # KMV-CTX-01: user co
 from backend.config.settings import settings
 from backend.core.body_size_limit import body_size_limit_middleware
 from backend.core.database import close_db, init_db
+from backend.core.metrics import metrics_endpoint, metrics_middleware  # WS-8
 from backend.core.redis import close_redis, init_redis
 from backend.core.tenant_rate_limit import tenant_rate_limit_middleware
 from backend.mcp.server import router as mcp_router
@@ -125,6 +126,13 @@ app.middleware("http")(tenant_rate_limit_middleware)
 # .middleware() registered is the first to run.
 app.middleware("http")(body_size_limit_middleware)
 
+# WS-8 metrics. Registered LAST → outermost layer → wraps everything,
+# so it times the full request and counts even pre-auth rejections
+# (429 from the rate limiter, 413 from the body-size limit). org_id is
+# read from request.state (set by get_tenant_scope); infra/unauth routes
+# record org_id="none".
+app.middleware("http")(metrics_middleware)
+
 # ─── Routes ──────────────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(agents_router)
@@ -141,6 +149,10 @@ app.include_router(teams_router)  # WS-9: org/team admin
 app.include_router(consolidation_router)  # KMV-E14: namespace policies + consolidation stats
 app.include_router(user_router)  # KMV-CTX-01: cross-namespace user context
 app.include_router(pair_router)  # quick‑connect pair flow
+
+# WS-8: Prometheus scrape endpoint. Unauthenticated (oauth2-proxy
+# skip-auth-route ^/metrics); returns text exposition format.
+app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 # ── chats-v1: AI Chats module ─────────────────────────────────────
 # Routers registered after pair so the existing pair-flow paths keep
 # their order; the chats routes live under /api/v1/chats,
