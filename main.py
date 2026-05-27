@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes.agents import router as agents_router
 from backend.api.routes.ai_chats import router as ai_chats_router  # chats-v1
+from backend.api.routes.artifacts import router as artifacts_router  # v3.35.0 project files
 from backend.api.routes.audit import router as audit_router
 from backend.api.routes.chat_mappings import router as chat_mappings_router  # chats-v1
 from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
@@ -147,3 +148,5 @@ app.include_router(pair_router)  # quick‑connect pair flow
 app.include_router(ai_chats_router)
 app.include_router(chat_mappings_router)
 app.include_router(extension_keys_router)
+# ── v3.35.0: namespace / memory level project files ───────────────
+app.include_router(artifacts_router)

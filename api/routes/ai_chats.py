@@ -416,6 +416,8 @@ async def upload_artifact_endpoint(
         chat_id=chat_id,
         user_id=auth.user_id,
         org_id=chat.org_id,
+        # namespace populated since v3.35.0 (required column after migration 016).
+        namespace=chat.namespace,
         artifact_type=artifact_type,
         language=language,
         content=None,  # body lives in minio, not Postgres
@@ -512,14 +514,21 @@ async def stream_artifact_blob_endpoint(
 
     def _iter():
         try:
-            for chunk in result.stream.stream(amt=64 * 1024):
-                yield chunk
+            if hasattr(result.stream, "stream"):
+                for chunk in result.stream.stream(amt=64 * 1024):
+                    yield chunk
+                try:
+                    result.stream.release_conn()
+                except Exception:
+                    pass
+            else:
+                while True:
+                    chunk = result.stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
         finally:
             result.stream.close()
-            try:
-                result.stream.release_conn()
-            except Exception:
-                pass
 
     media_type = result.mimetype or meta.get("mimetype") or "application/octet-stream"
     return StreamingResponse(

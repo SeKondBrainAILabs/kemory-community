@@ -232,34 +232,71 @@ class AIChatTurn(Base):
 
 
 class AIChatArtifact(Base):
-    """A code block / file / image / Claude Artifact attached to a turn.
+    """A code block / file / image / Claude Artifact.
 
-    For v1 the artifact payload is stored inline in ``content`` (capped at
-    ~1 MB at the service layer). ``content_url`` is reserved for the
-    object-storage migration that the Kanvas spec calls out for binary
-    artifacts; v1 leaves it NULL.
+    v3.35.0 generalisation: artifacts can now live at three granularities:
+
+      1. **Chat-turn** (existing) — both ``chat_id`` and ``turn_id`` set.
+      2. **Memory-attached** — ``memory_id`` set; ``chat_id`` / ``turn_id`` NULL.
+      3. **Namespace-level** (standalone project file) — only ``namespace``
+         set; ``chat_id`` / ``turn_id`` / ``memory_id`` all NULL.
+
+    ``namespace`` is always NOT NULL (back-filled from the parent chat for
+    rows written before v3.35.0).
+
+    For text artifacts the payload is stored inline in ``content`` (capped at
+    ~1 MB at the service layer).  Binary artifacts (images, audio, video,
+    arbitrary files) are stored in object storage and the key is held in
+    ``artifact_metadata['storage_key']``.  ``content_url`` is either a
+    short-lived HMAC-signed URL regenerated on read, or a legacy external URL
+    passed through as-is.
+
+    Migration: ``backend/migrations/versions/016_namespace_artifacts.py``.
     """
 
     __tablename__ = "kemory_ai_chat_artifacts"
 
     artifact_id = Column(GUID(), primary_key=True, default=uuid.uuid4, nullable=False)
+    # Nullable since v3.35.0 — NULL for namespace/memory artifacts.
     turn_id = Column(
         GUID(),
         ForeignKey("kemory_ai_chat_turns.turn_id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        comment="FK to kemory_ai_chat_turns. NULL for namespace/memory artifacts.",
     )
     chat_id = Column(
         GUID(),
         ForeignKey("kemory_ai_chats.chat_id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        comment="FK to kemory_ai_chats. NULL for namespace/memory artifacts.",
     )
     user_id = Column(GUID(), nullable=False, index=True)
     org_id = Column(String(64), nullable=False)
 
+    # Always set (backfilled from parent chat for pre-v3.35.0 rows).
+    namespace = Column(
+        String(100),
+        nullable=False,
+        comment="Kemory namespace this artifact belongs to.",
+    )
+
+    # Optional FK for memory-attached artifacts (v3.35.0).
+    memory_id = Column(
+        GUID(),
+        ForeignKey("kemory_memories.memory_id", ondelete="CASCADE"),
+        nullable=True,
+        comment="FK to kemory_memories. Set for memory-attached artifacts.",
+    )
+
+    # Source project provenance — mirrors kemory_ai_chats columns (v3.35.0).
+    source_project_id = Column(String(255), nullable=True)
+    source_project_name = Column(String(500), nullable=True)
+    source_platform = Column(String(50), nullable=True)
+
     artifact_type = Column(
         String(32),
         nullable=False,
-        comment="code | image | file | react | html | svg",
+        comment="code | image | file | react | html | svg | audio | video",
     )
     language = Column(String(50), nullable=True)
     content = Column(Text(), nullable=True)
@@ -277,12 +314,14 @@ class AIChatArtifact(Base):
         Index("idx_ai_chat_artifacts_turn", "turn_id"),
         Index("idx_ai_chat_artifacts_chat", "chat_id"),
         Index("idx_ai_chat_artifacts_org_user", "org_id", "user_id"),
+        # v3.35.0 indices (also created by migration 016)
+        Index("ix_artifacts_user_namespace", "user_id", "namespace"),
     )
 
     def __repr__(self) -> str:
         return (
             f"<AIChatArtifact(artifact_id={self.artifact_id}, "
-            f"type={self.artifact_type}, lang={self.language})>"
+            f"type={self.artifact_type}, namespace={self.namespace})>"
         )
 
 

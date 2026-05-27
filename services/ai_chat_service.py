@@ -151,13 +151,19 @@ class ChatUpsert(BaseModel):
 
 class ArtifactResponse(BaseModel):
     artifact_id: str
-    turn_id: str
+    # Nullable since v3.35.0 — None for namespace/memory artifacts.
+    turn_id: str | None
+    chat_id: str | None
+    namespace: str | None
     artifact_type: str
     language: str | None
     content: str | None
     content_url: str | None
     content_sha256: str
     artifact_metadata: dict[str, Any] | None
+    # Convenience fields extracted from artifact_metadata (populated on read).
+    filename: str | None = None
+    size_bytes: int | None = None
     created_at: str
 
 
@@ -1151,27 +1157,42 @@ def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
     Persisted content_url (legacy / extension-supplied external URLs)
     are passed through unchanged. The signed-URL path only kicks in
     when artifact_metadata.storage_key is set — that's our marker that
-    the body lives in our minio bucket and needs an HMAC-signed URL.
+    the body lives in object storage and needs an HMAC-signed URL.
+
+    Since v3.35.0 ``chat_id`` and ``turn_id`` may be None (namespace/memory
+    artifacts).  For those cases the new ``/api/v1/artifacts/{id}/blob``
+    endpoint is used instead of the chat-scoped blob endpoint.
     """
     meta = a.artifact_metadata or {}
     storage_key = meta.get("storage_key") if isinstance(meta, dict) else None
     content_url = a.content_url
     if storage_key and not content_url:
         try:
-            from backend.services.artifact_storage import build_signed_blob_url
-
-            content_url = build_signed_blob_url(a.chat_id, a.artifact_id)
+            if a.chat_id:
+                from backend.services.artifact_storage import build_signed_blob_url
+                content_url = build_signed_blob_url(a.chat_id, a.artifact_id)
+            else:
+                from backend.services.artifact_storage import build_artifact_blob_url
+                content_url = build_artifact_blob_url(a.artifact_id)
         except Exception as exc:
             logger.debug("ai_chat_service.signed_url_failed", reason=str(exc))
+
+    meta_dict: dict | None = meta if isinstance(meta, dict) and meta else None
     return ArtifactResponse(
         artifact_id=str(a.artifact_id),
-        turn_id=str(a.turn_id),
+        turn_id=str(a.turn_id) if a.turn_id else None,
+        chat_id=str(a.chat_id) if a.chat_id else None,
+        namespace=a.namespace if hasattr(a, "namespace") else None,
         artifact_type=a.artifact_type,
         language=a.language,
         content=a.content,
         content_url=content_url,
         content_sha256=a.content_sha256,
-        artifact_metadata=meta or None,
+        artifact_metadata=meta_dict,
+        filename=(meta.get("filename") if isinstance(meta, dict) else None),
+        size_bytes=(
+            int(meta["size_bytes"]) if isinstance(meta, dict) and meta.get("size_bytes") else None
+        ),
         created_at=a.created_at.isoformat() if a.created_at else "",
     )
 

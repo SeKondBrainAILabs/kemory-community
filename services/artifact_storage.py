@@ -149,6 +149,9 @@ def build_signed_blob_url(
     the API (via Caddy `*.memory.dxb-gw.basanti.ai`), and using a
     relative URL means the browser inherits the page's origin without
     us needing to know the public hostname at server-render time.
+
+    For namespace-level / memory-level artifacts (no chat_id) use
+    :func:`build_artifact_blob_url` instead.
     """
     chat_id = str(chat_id)
     artifact_id = str(artifact_id)
@@ -156,6 +159,41 @@ def build_signed_blob_url(
     exp = int(time.time()) + ttl
     sig = make_signed_token(chat_id, artifact_id, exp)
     return f"/api/v1/chats/{chat_id}/artifacts/{artifact_id}/blob?exp={exp}&sig={sig}"
+
+
+# ─── v3.35.0: generic artifact signed URLs (no chat_id required) ────
+
+
+def _make_artifact_sig(artifact_id: str, expires_at: int) -> str:
+    """HMAC-SHA256 over ``artifact_id|exp``."""
+    payload = f"{artifact_id}|{expires_at}".encode("utf-8")
+    return hmac.new(_signing_key(), payload, hashlib.sha256).hexdigest()
+
+
+def verify_artifact_sig(artifact_id: str, expires_at: int, sig: str) -> bool:
+    """Verify a token minted by :func:`build_artifact_blob_url`."""
+    if expires_at < int(time.time()):
+        return False
+    expected = _make_artifact_sig(artifact_id, expires_at)
+    return hmac.compare_digest(expected, sig)
+
+
+def build_artifact_blob_url(
+    artifact_id: str | uuid.UUID,
+    ttl_seconds: int | None = None,
+) -> str:
+    """Return a signed relative URL for ``GET /api/v1/artifacts/{id}/blob``.
+
+    Used for namespace-level and memory-level artifacts that have no
+    parent chat.  HMAC payload is ``artifact_id|exp`` (omits chat_id).
+    The TTL defaults to the same ``KEMORY_ARTIFACT_SIGNED_URL_TTL`` env
+    variable as the chat-artifact path.
+    """
+    artifact_id = str(artifact_id)
+    ttl = ttl_seconds if ttl_seconds is not None else SIGNED_URL_TTL_SECONDS
+    exp = int(time.time()) + ttl
+    sig = _make_artifact_sig(artifact_id, exp)
+    return f"/api/v1/artifacts/{artifact_id}/blob?exp={exp}&sig={sig}"
 
 
 # ─── Data classes ────────────────────────────────────────────────────
