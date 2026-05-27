@@ -64,10 +64,10 @@ INBOX_PREFIX = "kora:inbox:"
 # one of the "pending" buckets (kora:inbox:* OR plain kora:<platform>),
 # has enough content to be meaningful, AND the top suggestion is a
 # clear winner. Anything ambiguous stays put for manual triage.
-AUTO_MIN_TURNS = 4          # need ≥4 turns of real exchange
-AUTO_MIN_CHARS = 600        # body must total ≥600 chars (skips trivials)
+AUTO_MIN_TURNS = 4  # need ≥4 turns of real exchange
+AUTO_MIN_CHARS = 600  # body must total ≥600 chars (skips trivials)
 AUTO_MOVE_THRESHOLD = 0.55  # top suggestion cosine must clear this
-AUTO_MOVE_GAP = 0.08        # top must beat #2 by this margin (clear winner)
+AUTO_MOVE_GAP = 0.08  # top must beat #2 by this margin (clear winner)
 # When NO existing namespace clears the threshold, we may auto-create a
 # fresh one from the chat title — but only when the title is meaningful
 # (skips generic "claude conversation" / "untitled" etc.).
@@ -168,13 +168,17 @@ async def _load_chat_sample(
     """Return a single string with the first MAX_TURNS turns concatenated,
     capped at MAX_CHARS. Includes role hints so the encoder sees structure."""
     rows = (
-        await db.execute(
-            select(AIChatTurn)
-            .where(AIChatTurn.chat_id == chat.chat_id)
-            .order_by(AIChatTurn.sequence.asc())
-            .limit(MAX_TURNS)
+        (
+            await db.execute(
+                select(AIChatTurn)
+                .where(AIChatTurn.chat_id == chat.chat_id)
+                .order_by(AIChatTurn.sequence.asc())
+                .limit(MAX_TURNS)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     pieces: list[str] = []
     used = 0
@@ -472,12 +476,16 @@ async def _run_auto_classify(chat_id_str: str, user_id_str: str) -> None:
 
                     # Substantive-content gate.
                     turn_count = (
-                        await db.execute(
-                            select(AIChatTurn)
-                            .where(AIChatTurn.chat_id == chat.chat_id)
-                            .order_by(AIChatTurn.sequence.asc())
+                        (
+                            await db.execute(
+                                select(AIChatTurn)
+                                .where(AIChatTurn.chat_id == chat.chat_id)
+                                .order_by(AIChatTurn.sequence.asc())
+                            )
                         )
-                    ).scalars().all()
+                        .scalars()
+                        .all()
+                    )
                     if len(turn_count) < AUTO_MIN_TURNS:
                         return
                     total_chars = sum(len(t.content or "") for t in turn_count)
@@ -494,11 +502,7 @@ async def _run_auto_classify(chat_id_str: str, user_id_str: str) -> None:
 
                     if result.suggestions:
                         top = result.suggestions[0]
-                        second_sim = (
-                            result.suggestions[1].similarity
-                            if len(result.suggestions) > 1
-                            else 0.0
-                        )
+                        second_sim = result.suggestions[1].similarity if len(result.suggestions) > 1 else 0.0
                         if (
                             top.similarity >= AUTO_MOVE_THRESHOLD
                             and (top.similarity - second_sim) >= AUTO_MOVE_GAP
@@ -555,9 +559,7 @@ async def _run_auto_classify(chat_id_str: str, user_id_str: str) -> None:
                         "from": previous_namespace,
                         "to": target_ns,
                         "signal": decision_signal,
-                        "similarity": (
-                            round(decision_sim, 4) if decision_sim is not None else None
-                        ),
+                        "similarity": (round(decision_sim, 4) if decision_sim is not None else None),
                     }
                     chat.chat_metadata = meta
                     logger.info(

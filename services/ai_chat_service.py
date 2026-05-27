@@ -69,7 +69,14 @@ VALID_ROLES = {"user", "assistant", "system", "tool"}
 # audio/video isn't practically useful (>1MB cap kicks in immediately)
 # so the dashboard treats those types as content_url-only.
 VALID_ARTIFACT_TYPES = {
-    "code", "image", "file", "react", "html", "svg", "audio", "video",
+    "code",
+    "image",
+    "file",
+    "react",
+    "html",
+    "svg",
+    "audio",
+    "video",
 }
 
 
@@ -319,9 +326,7 @@ def _artifact_sha256(artifact: ArtifactUpsert) -> str:
 
 def _validate_payload(payload: ChatUpsert) -> None:
     if payload.platform.lower() not in VALID_PLATFORMS:
-        raise ValueError(
-            f"Invalid platform '{payload.platform}'. Valid: {sorted(VALID_PLATFORMS)}"
-        )
+        raise ValueError(f"Invalid platform '{payload.platform}'. Valid: {sorted(VALID_PLATFORMS)}")
     if len(payload.turns) > MAX_TURNS_PER_BATCH:
         raise ValueError(
             f"Too many turns in one upsert ({len(payload.turns)} > {MAX_TURNS_PER_BATCH}). "
@@ -392,21 +397,25 @@ async def _lookup_mapping(
 
     if source_project_name:
         patterns = (
-            await db.execute(
-                select(ChatNamespaceMapping)
-                .where(
-                    ChatNamespaceMapping.user_id == user_id,
-                    ChatNamespaceMapping.enabled.is_(True),
-                    ChatNamespaceMapping.platform == platform,
-                    ChatNamespaceMapping.source_project_id.is_(None),
-                    ChatNamespaceMapping.source_project_name_pattern.is_not(None),
-                )
-                .order_by(
-                    ChatNamespaceMapping.priority.asc(),
-                    ChatNamespaceMapping.created_at.asc(),
+            (
+                await db.execute(
+                    select(ChatNamespaceMapping)
+                    .where(
+                        ChatNamespaceMapping.user_id == user_id,
+                        ChatNamespaceMapping.enabled.is_(True),
+                        ChatNamespaceMapping.platform == platform,
+                        ChatNamespaceMapping.source_project_id.is_(None),
+                        ChatNamespaceMapping.source_project_name_pattern.is_not(None),
+                    )
+                    .order_by(
+                        ChatNamespaceMapping.priority.asc(),
+                        ChatNamespaceMapping.created_at.asc(),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         needle = source_project_name.lower()
         for m in patterns:
             pat = (m.source_project_name_pattern or "").lower()
@@ -499,10 +508,7 @@ async def _resolve_namespace(
 
     if resolution.action in (ResolutionAction.REUSE, ResolutionAction.AUTO_REDIRECT):
         await apply_resolution(resolution, payload.namespace_description, db, user_id)
-        if (
-            resolution.action == ResolutionAction.AUTO_REDIRECT
-            and resolution.namespace != candidate
-        ):
+        if resolution.action == ResolutionAction.AUTO_REDIRECT and resolution.namespace != candidate:
             return resolution.namespace, candidate
         return resolution.namespace, None
 
@@ -606,8 +612,10 @@ async def _replace_artifacts_for_turn(
     # Drop existing artifact rows for this turn; insert the new set.
     # Cheap because per-turn artifact counts are small (typically 0–3).
     existing = (
-        await db.execute(select(AIChatArtifact).where(AIChatArtifact.turn_id == turn.turn_id))
-    ).scalars().all()
+        (await db.execute(select(AIChatArtifact).where(AIChatArtifact.turn_id == turn.turn_id)))
+        .scalars()
+        .all()
+    )
     for row in existing:
         await db.delete(row)
     for art in artifacts:
@@ -719,8 +727,8 @@ async def upsert_chat(
     # already lives somewhere other than the per-platform inbox. If the
     # caller is explicit OR a mapping is matching, honour the new
     # destination — that's still a user-driven intent signal.
-    caller_was_explicit = bool(payload.namespace) or bool(payload.source_project_id) or bool(
-        payload.source_project_name
+    caller_was_explicit = (
+        bool(payload.namespace) or bool(payload.source_project_id) or bool(payload.source_project_name)
     )
     if (
         not caller_was_explicit
@@ -860,9 +868,7 @@ async def append_turns(
     via ``upsert_chat`` when the user finishes / leaves the page.
     """
     if len(turns) > MAX_TURNS_PER_BATCH:
-        raise ValueError(
-            f"Batch too large ({len(turns)} > {MAX_TURNS_PER_BATCH} turns)."
-        )
+        raise ValueError(f"Batch too large ({len(turns)} > {MAX_TURNS_PER_BATCH} turns).")
     for t in turns:
         _validate_turn(t)
 
@@ -923,20 +929,22 @@ async def list_chats(
         base_where.append(AIChat.updated_at >= since)
 
     total = (
-        await db.execute(
-            select(func.count()).select_from(AIChat).where(and_(*base_where))
-        )
+        await db.execute(select(func.count()).select_from(AIChat).where(and_(*base_where)))
     ).scalar() or 0
 
     rows = (
-        await db.execute(
-            select(AIChat)
-            .where(and_(*base_where))
-            .order_by(AIChat.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
+        (
+            await db.execute(
+                select(AIChat)
+                .where(and_(*base_where))
+                .order_by(AIChat.updated_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     items: list[ChatListItem] = []
     for chat in rows:
@@ -1000,12 +1008,16 @@ async def list_mappings(
     db: AsyncSession,
 ) -> list[ChatMappingResponse]:
     rows = (
-        await db.execute(
-            select(ChatNamespaceMapping)
-            .where(ChatNamespaceMapping.user_id == user_id)
-            .order_by(ChatNamespaceMapping.priority.asc(), ChatNamespaceMapping.created_at.asc())
+        (
+            await db.execute(
+                select(ChatNamespaceMapping)
+                .where(ChatNamespaceMapping.user_id == user_id)
+                .order_by(ChatNamespaceMapping.priority.asc(), ChatNamespaceMapping.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_mapping_response(r) for r in rows]
 
 
@@ -1082,9 +1094,7 @@ async def _get_mapping_for_user(
 
 async def _count_turns(chat_id: uuid.UUID, db: AsyncSession) -> int:
     total = (
-        await db.execute(
-            select(func.count()).select_from(AIChatTurn).where(AIChatTurn.chat_id == chat_id)
-        )
+        await db.execute(select(func.count()).select_from(AIChatTurn).where(AIChatTurn.chat_id == chat_id))
     ).scalar()
     return int(total or 0)
 
@@ -1092,9 +1102,7 @@ async def _count_turns(chat_id: uuid.UUID, db: AsyncSession) -> int:
 async def _count_artifacts(chat_id: uuid.UUID, db: AsyncSession) -> int:
     total = (
         await db.execute(
-            select(func.count())
-            .select_from(AIChatArtifact)
-            .where(AIChatArtifact.chat_id == chat_id)
+            select(func.count()).select_from(AIChatArtifact).where(AIChatArtifact.chat_id == chat_id)
         )
     ).scalar()
     return int(total or 0)
@@ -1106,21 +1114,23 @@ async def _load_turns(
     include_artifacts: bool = False,
 ) -> list[TurnResponse]:
     rows = (
-        await db.execute(
-            select(AIChatTurn)
-            .where(AIChatTurn.chat_id == chat_id)
-            .order_by(AIChatTurn.sequence.asc())
+        (
+            await db.execute(
+                select(AIChatTurn).where(AIChatTurn.chat_id == chat_id).order_by(AIChatTurn.sequence.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     artifacts_by_turn: dict[uuid.UUID, list[AIChatArtifact]] = {}
     if include_artifacts and rows:
         turn_ids = [r.turn_id for r in rows]
         arts = (
-            await db.execute(
-                select(AIChatArtifact).where(AIChatArtifact.turn_id.in_(turn_ids))
-            )
-        ).scalars().all()
+            (await db.execute(select(AIChatArtifact).where(AIChatArtifact.turn_id.in_(turn_ids))))
+            .scalars()
+            .all()
+        )
         for art in arts:
             artifacts_by_turn.setdefault(art.turn_id, []).append(art)
 
@@ -1140,10 +1150,7 @@ async def _load_turns(
                 turn_metadata=r.turn_metadata,
                 sequence=r.sequence,
                 created_at=r.created_at.isoformat() if r.created_at else "",
-                artifacts=[
-                    _artifact_to_response(a)
-                    for a in artifacts_by_turn.get(r.turn_id, [])
-                ],
+                artifacts=[_artifact_to_response(a) for a in artifacts_by_turn.get(r.turn_id, [])],
             )
         )
     return out
@@ -1170,9 +1177,11 @@ def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
         try:
             if a.chat_id:
                 from backend.services.artifact_storage import build_signed_blob_url
+
                 content_url = build_signed_blob_url(a.chat_id, a.artifact_id)
             else:
                 from backend.services.artifact_storage import build_artifact_blob_url
+
                 content_url = build_artifact_blob_url(a.artifact_id)
         except Exception as exc:
             logger.debug("ai_chat_service.signed_url_failed", reason=str(exc))
@@ -1190,9 +1199,7 @@ def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
         content_sha256=a.content_sha256,
         artifact_metadata=meta_dict,
         filename=(meta.get("filename") if isinstance(meta, dict) else None),
-        size_bytes=(
-            int(meta["size_bytes"]) if isinstance(meta, dict) and meta.get("size_bytes") else None
-        ),
+        size_bytes=(int(meta["size_bytes"]) if isinstance(meta, dict) and meta.get("size_bytes") else None),
         created_at=a.created_at.isoformat() if a.created_at else "",
     )
 

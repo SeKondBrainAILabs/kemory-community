@@ -64,6 +64,7 @@ class ChatMoveRequest(BaseModel):
         ),
     )
 
+
 router = APIRouter(prefix="/api/v1", tags=["AI Chats"])
 
 
@@ -266,10 +267,7 @@ async def move_chat_endpoint(
         # validation error — both surface as 400-or-404. Use 404 for the
         # not-found shape and 400 for the rest.
         msg = str(exc)
-        code = (
-            status.HTTP_404_NOT_FOUND if "not found" in msg.lower()
-            else status.HTTP_400_BAD_REQUEST
-        )
+        code = status.HTTP_404_NOT_FOUND if "not found" in msg.lower() else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=code, detail=msg) from exc
 
 
@@ -330,8 +328,7 @@ async def upload_artifact_endpoint(
     if artifact_type not in VALID_ARTIFACT_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid artifact_type '{artifact_type}'. "
-            f"Valid: {sorted(VALID_ARTIFACT_TYPES)}",
+            detail=f"Invalid artifact_type '{artifact_type}'. " f"Valid: {sorted(VALID_ARTIFACT_TYPES)}",
         )
 
     # Look up the chat (scoped to the auth user) and the target turn.

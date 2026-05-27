@@ -34,7 +34,6 @@ from backend.core.database import get_db
 from backend.services.artifact_service import (
     delete_artifact_row,
     get_artifact_response,
-    get_artifact_row,
     list_memory_artifacts,
     list_namespace_artifacts,
     upload_artifact,

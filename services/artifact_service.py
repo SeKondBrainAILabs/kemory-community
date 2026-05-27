@@ -33,7 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.ai_chat import AIChatArtifact
 from backend.services.ai_chat_service import ArtifactResponse, _artifact_to_response
 from backend.services.artifact_storage import (
-    build_artifact_blob_url,
     delete_artifact,
     put_artifact,
 )
@@ -43,9 +42,7 @@ logger = structlog.get_logger(__name__)
 
 # ─── Content-type → artifact_type mapping ───────────────────────────
 
-_VALID_ARTIFACT_TYPES = frozenset(
-    {"code", "image", "file", "react", "html", "svg", "audio", "video"}
-)
+_VALID_ARTIFACT_TYPES = frozenset({"code", "image", "file", "react", "html", "svg", "audio", "video"})
 
 
 def _infer_artifact_type(mimetype: str | None, filename: str | None) -> str:
@@ -246,15 +243,19 @@ async def list_memory_artifacts(
 ) -> list[ArtifactResponse]:
     """Return all artifacts attached to ``memory_id``."""
     rows = (
-        await db.execute(
-            select(AIChatArtifact)
-            .where(
-                AIChatArtifact.user_id == user_id,
-                AIChatArtifact.memory_id == memory_id,
+        (
+            await db.execute(
+                select(AIChatArtifact)
+                .where(
+                    AIChatArtifact.user_id == user_id,
+                    AIChatArtifact.memory_id == memory_id,
+                )
+                .order_by(AIChatArtifact.created_at.asc())
             )
-            .order_by(AIChatArtifact.created_at.asc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_artifact_to_response(r) for r in rows]
 
 

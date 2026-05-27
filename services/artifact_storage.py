@@ -57,13 +57,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io as _io
-import logging
 import mimetypes
 import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import IO
 
 import structlog
@@ -118,14 +117,16 @@ def _signing_key() -> bytes:
     """Reuse JWT_SECRET_KEY so we don't introduce a second long-lived secret."""
     from backend.config.settings import settings
 
-    return settings.jwt_secret_key.encode("utf-8") if isinstance(
-        settings.jwt_secret_key, str
-    ) else bytes(settings.jwt_secret_key)
+    return (
+        settings.jwt_secret_key.encode("utf-8")
+        if isinstance(settings.jwt_secret_key, str)
+        else bytes(settings.jwt_secret_key)
+    )
 
 
 def make_signed_token(chat_id: str, artifact_id: str, expires_at: int) -> str:
     """HMAC-SHA256 over ``chat_id|artifact_id|exp``. Stable, URL-safe."""
-    payload = f"{chat_id}|{artifact_id}|{expires_at}".encode("utf-8")
+    payload = f"{chat_id}|{artifact_id}|{expires_at}".encode()
     sig = hmac.new(_signing_key(), payload, hashlib.sha256).hexdigest()
     return sig
 
@@ -166,7 +167,7 @@ def build_signed_blob_url(
 
 def _make_artifact_sig(artifact_id: str, expires_at: int) -> str:
     """HMAC-SHA256 over ``artifact_id|exp``."""
-    payload = f"{artifact_id}|{expires_at}".encode("utf-8")
+    payload = f"{artifact_id}|{expires_at}".encode()
     return hmac.new(_signing_key(), payload, hashlib.sha256).hexdigest()
 
 
@@ -216,6 +217,7 @@ class GetResult:
     ``stream.release_conn()`` in the finally block.  For core_backend
     results ``stream`` is a ``BytesIO`` — ``close()`` is sufficient.
     """
+
     bucket: str
     key: str
     size_bytes: int | None
@@ -290,7 +292,7 @@ def _is_core_backend_key(key: str) -> bool:
 
 def _extract_cb_file_id(key: str) -> str:
     """Strip the ``cb:`` prefix and return the bare Core_Backend file UUID."""
-    return key[len(_CB_KEY_PREFIX):]
+    return key[len(_CB_KEY_PREFIX) :]
 
 
 # ─── Write path ─────────────────────────────────────────────────────

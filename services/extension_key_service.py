@@ -46,7 +46,6 @@ from backend.services.auth_service import (
     generate_api_key,
 )
 
-
 # ─── Schemas ─────────────────────────────────────────────────────────
 
 
@@ -117,9 +116,11 @@ class ExtensionKeyInfo(BaseModel):
 #
 # Override via KEMORY_EXTENSION_REFUSE_ORG_IDS env (CSV) when this list
 # legitimately needs to grow.
-_SYNTHETIC_EXTENSION_ORG_IDS: frozenset[str] = frozenset({
-    "kora-extension",
-})
+_SYNTHETIC_EXTENSION_ORG_IDS: frozenset[str] = frozenset(
+    {
+        "kora-extension",
+    }
+)
 
 
 def _refused_org_ids() -> frozenset[str]:
@@ -175,9 +176,7 @@ async def mint_extension_key(
     # If installation_id is supplied, see if we already have a row for it.
     existing: AgentRegistry | None = None
     if request.installation_id is not None:
-        existing = await _find_extension_by_installation(
-            user_id, request.installation_id, db
-        )
+        existing = await _find_extension_by_installation(user_id, request.installation_id, db)
 
     plaintext_key, hashed_key, key_prefix = generate_api_key()
 
@@ -228,15 +227,19 @@ async def list_extension_keys(
     db: AsyncSession,
 ) -> list[ExtensionKeyInfo]:
     rows = (
-        await db.execute(
-            select(AgentRegistry)
-            .where(
-                AgentRegistry.user_id == user_id,
-                AgentRegistry.agent_kind == "extension",
+        (
+            await db.execute(
+                select(AgentRegistry)
+                .where(
+                    AgentRegistry.user_id == user_id,
+                    AgentRegistry.agent_kind == "extension",
+                )
+                .order_by(AgentRegistry.registered_at.desc())
             )
-            .order_by(AgentRegistry.registered_at.desc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_to_info(r) for r in rows]
 
 

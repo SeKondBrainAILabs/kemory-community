@@ -74,21 +74,25 @@ async def lookup_namespace_mapping(
 
     if source_project_name:
         patterns = (
-            await db.execute(
-                select(ChatNamespaceMapping)
-                .where(
-                    ChatNamespaceMapping.user_id == user_id,
-                    ChatNamespaceMapping.enabled.is_(True),
-                    ChatNamespaceMapping.platform == platform,
-                    ChatNamespaceMapping.source_project_id.is_(None),
-                    ChatNamespaceMapping.source_project_name_pattern.is_not(None),
-                )
-                .order_by(
-                    ChatNamespaceMapping.priority.asc(),
-                    ChatNamespaceMapping.created_at.asc(),
+            (
+                await db.execute(
+                    select(ChatNamespaceMapping)
+                    .where(
+                        ChatNamespaceMapping.user_id == user_id,
+                        ChatNamespaceMapping.enabled.is_(True),
+                        ChatNamespaceMapping.platform == platform,
+                        ChatNamespaceMapping.source_project_id.is_(None),
+                        ChatNamespaceMapping.source_project_name_pattern.is_not(None),
+                    )
+                    .order_by(
+                        ChatNamespaceMapping.priority.asc(),
+                        ChatNamespaceMapping.created_at.asc(),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         needle = source_project_name.lower()
         for m in patterns:
             pat = (m.source_project_name_pattern or "").lower()
