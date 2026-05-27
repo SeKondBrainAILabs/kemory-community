@@ -27,6 +27,7 @@ import {
   ChevronRight,
   Database,
   MessagesSquare,
+  Paperclip,
   Search,
 } from 'lucide-react'
 import * as Tabs from '@radix-ui/react-tabs'
@@ -36,6 +37,7 @@ import { useNamespaces, useNamespaceSummary } from '@/hooks/useMemories'
 import { useChatList } from '@/hooks/useChats'
 import type { NamespaceInfo } from '@/api/types'
 import { formatRelativeTime, cn } from '@/lib/utils'
+import { NamespaceFilesTab } from './NamespaceFilesTab'
 
 // ─── Combined namespace row shape ───────────────────────────────────
 
@@ -120,6 +122,7 @@ function NamespaceDetailDrawer({
   ns: CombinedNamespace
 }) {
   const { data, isLoading } = useNamespaceSummary(ns.namespace)
+  const [showFiles, setShowFiles] = useState(false)
   const memoryCount = ns.memory_count
   const chatCount = ns.chat_count
 
@@ -219,6 +222,28 @@ function NamespaceDetailDrawer({
           >
             <MessagesSquare size={12} /> Open in Chats <ChevronRight size={14} />
           </Link>
+        )}
+      </div>
+
+      {/* ── Files section ─────────────────────────────────────── */}
+      <div className="border-t border-black/[0.04] pt-4">
+        <button
+          type="button"
+          onClick={() => setShowFiles((v) => !v)}
+          className="flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-content-tertiary hover:text-content-secondary"
+        >
+          <span className="flex items-center gap-1.5">
+            <Paperclip size={11} /> Files
+          </span>
+          <ChevronRight
+            size={12}
+            className={cn('transition-transform', showFiles ? 'rotate-90' : 'rotate-0')}
+          />
+        </button>
+        {showFiles && (
+          <div className="mt-3">
+            <NamespaceFilesTab namespace={ns.namespace} />
+          </div>
         )}
       </div>
     </div>

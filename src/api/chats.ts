@@ -26,13 +26,19 @@ export type ArtifactType =
 
 export interface ArtifactResponse {
   artifact_id: string
-  turn_id: string
+  // Nullable since v3.35.0 — null for namespace/memory artifacts.
+  turn_id: string | null
+  chat_id: string | null
+  namespace: string | null
   artifact_type: ArtifactType
   language: string | null
   content: string | null
   content_url: string | null
   content_sha256: string
   artifact_metadata: Record<string, unknown> | null
+  // Convenience fields extracted server-side from artifact_metadata.
+  filename: string | null
+  size_bytes: number | null
   created_at: string
 }
 
