@@ -65,6 +65,17 @@ class MemberAdd(BaseModel):
     can_write: bool = False
 
 
+class MemberUpdate(BaseModel):
+    """PATCH body — both fields optional; only set ones are updated.
+
+    ``role`` must be one of {"owner", "member"} when present. ``can_write``
+    is a plain bool. Empty body is a no-op (returns the row unchanged).
+    """
+
+    role: str | None = Field(default=None)
+    can_write: bool | None = None
+
+
 class MemberResponse(BaseModel):
     team_id: str
     user_id: str
@@ -269,3 +280,74 @@ async def remove_member(
         await db.flush()
     await invalidate_team_cache_for_org(user_id, scope.org_id)
     return None
+
+
+@router.patch(
+    "/api/v1/teams/{team_id}/members/{user_id}",
+    response_model=MemberResponse,
+    summary="Update a member's role / can_write flag",
+)
+async def update_member(
+    team_id: uuid.UUID,
+    user_id: uuid.UUID,
+    request: MemberUpdate,
+    auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
+    db: AsyncSession = Depends(get_db),
+) -> MemberResponse:
+    """Change a member's ``role`` or ``can_write``.
+
+    Authorization mirrors POST/DELETE: caller must be an org_admin OR an
+    owner of the team. The path-supplied team is implicitly org-scoped
+    by the global tenancy filter — cross-org attempts return 404.
+
+    Both body fields are optional. Empty body is a 200 no-op (returns
+    the row unchanged). Validates ``role`` is in the allowed set to
+    keep the column honest.
+    """
+    await _require_team_owner_or_admin(team_id, auth, scope, db)
+
+    result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == user_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+
+    # Demoting the LAST owner would orphan the team — refuse.
+    # (Idempotent demotion to "member" of a non-owner is fine.)
+    if request.role is not None:
+        if request.role not in {"owner", "member"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="role must be 'owner' or 'member'",
+            )
+        if member.role == "owner" and request.role != "owner":
+            owner_count = await db.execute(
+                select(TeamMember).where(
+                    TeamMember.team_id == team_id,
+                    TeamMember.role == "owner",
+                )
+            )
+            if len(list(owner_count.scalars())) <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="cannot demote the last team owner",
+                )
+        member.role = request.role
+
+    if request.can_write is not None:
+        member.can_write = request.can_write
+
+    await db.flush()
+    await invalidate_team_cache_for_org(user_id, scope.org_id)
+
+    return MemberResponse(
+        team_id=str(member.team_id),
+        user_id=str(member.user_id),
+        role=member.role,
+        can_write=member.can_write,
+    )
