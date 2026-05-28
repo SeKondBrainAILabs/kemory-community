@@ -35,7 +35,7 @@ export async function loadConfig(): Promise<RuntimeConfig> {
     _config = {
       KEYCLOAK_URL: import.meta.env.VITE_KEYCLOAK_URL ?? '/auth',
       KEYCLOAK_REALM: import.meta.env.VITE_KEYCLOAK_REALM ?? 's9n-mvp',
-      KEYCLOAK_CLIENT_ID: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? 'vault-dashboard',
+      KEYCLOAK_CLIENT_ID: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? 'kemory-dashboard',
       SKIP_AUTH: import.meta.env.VITE_SKIP_AUTH ?? 'false',
     }
   }
