@@ -26,26 +26,47 @@ export function clearApiKey() {
   localStorage.removeItem(API_KEY_STORAGE_KEY)
 }
 
+/**
+ * Rewrite a same-origin request to hit the API host configured at runtime.
+ *
+ * The dashboard is served from `app.memory.*` and the API lives at `api.memory.*`.
+ * Default `prefixUrl: '/'` makes ky resolve calls to the dashboard origin, which
+ * only works when an nginx / Vite proxy forwards `/api/*` upstream. When the
+ * deployment doesn't have that proxy (or it can't reach the API container),
+ * `config.json:API_URL` lets us point requests at the API host directly.
+ */
+export function applyApiUrl(request: Request): Request {
+  const apiUrl = getConfig()?.API_URL
+  if (!apiUrl) return request
+  const url = new URL(request.url)
+  if (url.origin !== window.location.origin) return request
+  const base = apiUrl.replace(/\/$/, '')
+  return new Request(`${base}${url.pathname}${url.search}`, request)
+}
+
 export const api = ky.create({
   prefixUrl: '/',
   timeout: 30_000,
   hooks: {
     beforeRequest: [
       (request) => {
+        const rewritten = applyApiUrl(request)
+
         // 1. Keycloak Bearer token (production)
         if (!isSkipAuth()) {
           const token = getToken()
           if (token) {
-            request.headers.set('Authorization', `Bearer ${token}`)
-            return
+            rewritten.headers.set('Authorization', `Bearer ${token}`)
+            return rewritten
           }
         }
 
         // 2. API key from localStorage or config.json (dev / agent mode)
         const apiKey = getApiKey() || getConfig()?.API_KEY || ''
         if (apiKey) {
-          request.headers.set('X-API-Key', apiKey)
+          rewritten.headers.set('X-API-Key', apiKey)
         }
+        return rewritten
       },
     ],
     afterResponse: [
