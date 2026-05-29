@@ -75,7 +75,7 @@ class Memory(Base):
         String(50),
         nullable=False,
         default="text",
-        comment="text, structured, conversation, fact, preference, embedding",
+        comment="text, structured, conversation, fact, preference, embedding, skill",
     )
     content_hash = Column(
         String(64),

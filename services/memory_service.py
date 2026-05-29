@@ -331,7 +331,11 @@ class MemoryAggregateResponse(BaseModel):
 
 # ─── Namespace Validation ─────────────────────────────────────────
 
-VALID_CONTENT_TYPES = {"text", "structured", "conversation", "fact", "preference", "embedding"}
+# "skill" is a first-class procedural-memory type used by the s9nmem_store_skill
+# / s9nmem_list_skills MCP tools (see backend/mcp/tools/skills.py). It was added
+# here after store_skill calls were 500-ing with "Invalid content_type: 'skill'"
+# — the validator hadn't been updated when the skills MCP feature shipped.
+VALID_CONTENT_TYPES = {"text", "structured", "conversation", "fact", "preference", "embedding", "skill"}
 
 
 # NOTE: validate_namespace() was removed — it always returned True.
