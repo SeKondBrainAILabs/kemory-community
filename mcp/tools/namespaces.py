@@ -19,6 +19,7 @@ from backend.services.memory_service import (
     list_namespaces,
     search_memories,
 )
+from backend.services.user_context_service import get_user_context
 
 _USER_CONTEXT_DEFINITION = MCPToolDefinition(
     name="s9nmem_get_user_context",
