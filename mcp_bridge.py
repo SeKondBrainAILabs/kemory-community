@@ -87,10 +87,22 @@ def _build_headers() -> dict[str, str]:
 
 
 def _client() -> httpx.AsyncClient:
+    """HTTP client used for every MCP tool call.
+
+    The read timeout must cover the slowest synchronous server path —
+    store operations run embedding generation + vector indexing inline
+    before the HTTP response returns. The previous 30s default produced
+    false-negative "Bridge error: ReadTimeout" messages while the write
+    had actually succeeded server-side; naive retries on that would
+    silently create duplicate memories. Connect timeout stays short so
+    we still fail fast if the API is unreachable. Override with
+    KEMORY_HTTP_TIMEOUT (seconds) if needed.
+    """
+    read_timeout = float(os.environ.get("KEMORY_HTTP_TIMEOUT", "120"))
     return httpx.AsyncClient(
         base_url=_resolve_url(),
         headers=_build_headers(),
-        timeout=30.0,
+        timeout=httpx.Timeout(read_timeout, connect=10.0),
     )
 
 
@@ -164,6 +176,24 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         f"  • Is the URL correct? Try `kemory doctor`.\n"
                         f"  • Set KEMORY_URL=<url> if you need to override.\n"
                         f"  • For local dev, run `docker compose up -d kemory-api`."
+                    ),
+                )
+            ]
+        except httpx.TimeoutException as exc:
+            # The backend may have completed the operation already — embedding
+            # + vector indexing on store paths can outrun the client read
+            # timeout. Don't surface this as an opaque failure: a caller that
+            # blindly retries would create duplicates.
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Bridge timeout after {_resolve_url()} did not respond in time "
+                        f"({type(exc).__name__}). The server MAY have completed the "
+                        f"operation — for writes, verify with s9nmem_list_namespaces "
+                        f"or s9nmem_recall_memory BEFORE retrying so you don't create a "
+                        f"duplicate. Raise KEMORY_HTTP_TIMEOUT (seconds) if this is "
+                        f"recurring."
                     ),
                 )
             ]
