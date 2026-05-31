@@ -692,24 +692,70 @@ def upgrade_cmd(yes: bool, check: bool) -> None:
         click.echo("Aborted.")
         return
 
-    spec = f"kemory @ {info.wheel_url}"
     uv = shutil.which("uv")
     if uv is None:
-        # We don't fall back silently to pipx — the install location would
-        # differ from the user's existing install, leaving two `kemory`
-        # binaries on PATH. Print the exact command and exit.
         click.echo(
-            click.style("error", fg="red") + ": `uv` not found on PATH. Either install uv "
-            "(https://docs.astral.sh/uv/) or run manually with your package manager, e.g.:"
+            click.style("error", fg="red") + ": `uv` not found on PATH. Install uv "
+            "(https://docs.astral.sh/uv/) and retry."
         )
-        click.echo(f"  pipx install --force '{spec}'")
         sys.exit(1)
 
-    click.echo(f"Running: uv tool install --force '{spec}'")
-    rc = subprocess.run([uv, "tool", "install", "--force", spec], check=False).returncode
-    if rc != 0:
-        click.echo(click.style("error", fg="red") + f": uv exited with status {rc}")
-        sys.exit(rc)
+    # The kemory repo is private, so the public wheel URL 404s without auth.
+    # Download via `gh release download` first (it uses the user's local
+    # GitHub CLI session), then `uv tool install --force` from the local
+    # path. The `[cli]` extra is REQUIRED — without it the install ships a
+    # bare backend wheel without click/httpx and `kemory --version` ImportErrors.
+    import tempfile
+    from pathlib import Path
+
+    gh = shutil.which("gh")
+    if gh is None:
+        click.echo(
+            click.style("error", fg="red") + ": `gh` (GitHub CLI) not found on PATH. "
+            "The kemory repo is private, so we need authenticated download. "
+            "Install with `brew install gh` and run `gh auth login`, or set "
+            "GH_TOKEN and download the wheel manually:"
+        )
+        click.echo(f"  {info.wheel_url}")
+        sys.exit(1)
+
+    with tempfile.TemporaryDirectory(prefix="kemory-upgrade-") as tmp:
+        click.echo(f"Downloading {info.tag} wheel via gh...")
+        rc = subprocess.run(
+            [
+                gh,
+                "release",
+                "download",
+                info.tag,
+                "--repo",
+                "SeKondBrainAILabs/kemory",
+                "--pattern",
+                "*.whl",
+                "--dir",
+                tmp,
+                "--clobber",
+            ],
+            check=False,
+        ).returncode
+        if rc != 0:
+            click.echo(
+                click.style("error", fg="red") + f": gh release download failed (rc={rc}). "
+                "Are you authenticated? Try `gh auth status`."
+            )
+            sys.exit(rc)
+
+        wheels = list(Path(tmp).glob("*.whl"))
+        if not wheels:
+            click.echo(click.style("error", fg="red") + ": no .whl found after download.")
+            sys.exit(1)
+        wheel = wheels[0]
+
+        spec = f"kemory[cli] @ {wheel}"
+        click.echo(f"Running: uv tool install --force '{spec}'")
+        rc = subprocess.run([uv, "tool", "install", "--force", spec], check=False).returncode
+        if rc != 0:
+            click.echo(click.style("error", fg="red") + f": uv exited with status {rc}")
+            sys.exit(rc)
 
     click.echo("")
     click.echo(click.style(f"Upgraded to {info.version}.", fg="green"))

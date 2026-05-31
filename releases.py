@@ -2,17 +2,26 @@
 Latest-CLI-release lookup against the kemory GitHub repo.
 
 kemory ships CLI wheels as GitHub Release assets (not PyPI), so
-`uv tool upgrade kemory` won't discover new versions. This helper hits
-`https://api.github.com/repos/.../releases`, finds the newest tag matching
-`cli-v*`, and returns its parsed version + wheel URL so the `kemory upgrade`
-command and `kemory doctor`'s freshness check can use the same result.
+`uv tool upgrade kemory` won't discover new versions. This helper finds the
+newest tag matching `cli-v*` and returns its parsed version + wheel URL so
+the `kemory upgrade` command and `kemory doctor`'s freshness check share
+one source of truth.
 
-Network failures are intentionally swallowed and returned as `None` —
-neither caller should hard-fail just because GitHub is unreachable.
+The kemory repo is **private**, so anonymous `GET /repos/.../releases`
+returns 404 and unauthenticated wheel downloads fail. We have two auth
+paths: prefer `gh api` (uses the user's local GitHub CLI session — works
+out of the box for any s9n engineer), and fall back to httpx + a
+GH_TOKEN/GITHUB_TOKEN env var for CI/non-gh environments. All network
+failures are swallowed and returned as `None` — neither caller should
+hard-fail just because GitHub is unreachable.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 
 import httpx
@@ -51,20 +60,13 @@ def _parse_semver(v: str) -> tuple[int, ...] | None:
         return None
 
 
-def latest_cli_release(timeout: float = 5.0) -> CliRelease | None:
-    """Return the newest `cli-v*` release on GitHub, or None on any failure.
+def _pick_release(releases: list[dict]) -> CliRelease | None:
+    """Pick the newest `cli-v*` release with a `.whl` asset.
 
-    Iterates the releases list (GitHub returns them newest-first) and returns
-    the first one with a `cli-v*` tag AND a `.whl` asset. Releases without a
-    wheel attached are skipped — they're not installable.
+    GitHub returns releases newest-first; we still skip releases without a
+    wheel attached (they're not installable). Shared between the gh-CLI
+    and httpx auth paths.
     """
-    try:
-        resp = httpx.get(RELEASES_URL, params={"per_page": 30}, timeout=timeout)
-        resp.raise_for_status()
-        releases = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return None
-
     for rel in releases:
         tag = rel.get("tag_name", "")
         if not tag.startswith(CLI_TAG_PREFIX):
@@ -86,6 +88,70 @@ def latest_cli_release(timeout: float = 5.0) -> CliRelease | None:
             html_url=rel.get("html_url", ""),
         )
     return None
+
+
+def _releases_via_gh(timeout: float) -> list[dict] | None:
+    """Fetch /releases via `gh api` (uses the user's existing GitHub auth).
+
+    This is the preferred path because the kemory repo is private and any
+    s9n engineer is already `gh auth login`-ed. Returns None if `gh` is
+    missing, unauthenticated, or errors for any reason — callers fall back.
+    """
+    gh = shutil.which("gh")
+    if gh is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [gh, "api", f"repos/{GITHUB_REPO}/releases?per_page=30"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        data = json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+def _releases_via_httpx(timeout: float) -> list[dict] | None:
+    """Fallback: hit the REST API with an explicit GH_TOKEN/GITHUB_TOKEN.
+
+    Useful in CI or any environment without `gh` installed. Without a token
+    this 404s (private repo); we surface that as None so callers SKIP.
+    """
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = httpx.get(
+            RELEASES_URL,
+            params={"per_page": 30},
+            headers=headers,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+def latest_cli_release(timeout: float = 5.0) -> CliRelease | None:
+    """Return the newest `cli-v*` release with a wheel, or None on any failure.
+
+    Tries `gh api` first (works out of the box for s9n engineers with
+    `gh auth login`), then httpx + GH_TOKEN (for CI/automation).
+    """
+    releases = _releases_via_gh(timeout)
+    if releases is None:
+        releases = _releases_via_httpx(timeout)
+    if releases is None:
+        return None
+    return _pick_release(releases)
 
 
 def is_newer(latest: str, current: str) -> bool | None:
