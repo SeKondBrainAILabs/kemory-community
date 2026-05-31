@@ -609,8 +609,114 @@ def doctor_cmd(ctx: click.Context) -> None:
     else:
         emit("mcp host config", False, "no kemory entry found — run `kemory mcp install --host all`")
 
+    # 5. CLI freshness — kemory wheels are GitHub Release assets, not PyPI, so
+    # nothing else will tell the user they're running a stale CLI (and the MCP
+    # bridge ships inside the CLI, so a stale CLI = a stale bridge with the old
+    # 30s read timeout). Soft-fail on network errors; a doctor run should not
+    # require GitHub to be up.
+    from kemory_cli.releases import is_newer, latest_cli_release
+
+    info = latest_cli_release(timeout=3.0)
+    if info is None:
+        emit("cli up-to-date", None, "github.com unreachable")
+    else:
+        verdict = is_newer(info.version, __version__)
+        if verdict is True:
+            emit(
+                "cli up-to-date",
+                False,
+                f"new version {info.version} available — run `kemory upgrade`",
+            )
+        elif verdict is False:
+            emit("cli up-to-date", True, f"latest is {info.version}")
+        else:
+            emit("cli up-to-date", None, f"could not compare {__version__!r} vs {info.version!r}")
+
     click.echo("")
     click.echo("Done. If a check failed, the hint after FAIL tells you what to do.")
+
+
+# ─── upgrade ──────────────────────────────────────────────────────────────
+
+
+@cli.command("upgrade")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt.")
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Print whether a newer version is available; don't install.",
+)
+def upgrade_cmd(yes: bool, check: bool) -> None:
+    """Upgrade the kemory CLI to the latest GitHub Release.
+
+    kemory wheels are published as GitHub Release assets (the project isn't on
+    PyPI), so a plain `uv tool upgrade kemory` doesn't see new versions. This
+    command queries the kemory repo's releases, finds the newest `cli-v*` tag,
+    and reinstalls via `uv tool install --force <wheel-url>`.
+    """
+    import shutil
+    import subprocess
+
+    from kemory_cli.releases import is_newer, latest_cli_release
+
+    info = latest_cli_release()
+    if info is None:
+        click.echo(
+            click.style("error", fg="red")
+            + ": could not fetch the latest release from GitHub. Check your network."
+        )
+        sys.exit(1)
+
+    click.echo(f"Current : {__version__}")
+    click.echo(f"Latest  : {info.version}  ({info.html_url})")
+
+    verdict = is_newer(info.version, __version__)
+    if verdict is False:
+        click.echo("")
+        click.echo(click.style(f"Already on the latest CLI version ({__version__}).", fg="green"))
+        return
+    if verdict is None:
+        click.echo("")
+        click.echo(
+            click.style("note", fg="yellow")
+            + f": couldn't compare versions ({__version__!r} vs {info.version!r}); proceeding."
+        )
+
+    if check:
+        click.echo("")
+        click.echo("A newer version is available. Run `kemory upgrade` to install it.")
+        return
+
+    click.echo("")
+    if not yes and not click.confirm(f"Upgrade kemory to {info.version}?", default=True):
+        click.echo("Aborted.")
+        return
+
+    spec = f"kemory @ {info.wheel_url}"
+    uv = shutil.which("uv")
+    if uv is None:
+        # We don't fall back silently to pipx — the install location would
+        # differ from the user's existing install, leaving two `kemory`
+        # binaries on PATH. Print the exact command and exit.
+        click.echo(
+            click.style("error", fg="red") + ": `uv` not found on PATH. Either install uv "
+            "(https://docs.astral.sh/uv/) or run manually with your package manager, e.g.:"
+        )
+        click.echo(f"  pipx install --force '{spec}'")
+        sys.exit(1)
+
+    click.echo(f"Running: uv tool install --force '{spec}'")
+    rc = subprocess.run([uv, "tool", "install", "--force", spec], check=False).returncode
+    if rc != 0:
+        click.echo(click.style("error", fg="red") + f": uv exited with status {rc}")
+        sys.exit(rc)
+
+    click.echo("")
+    click.echo(click.style(f"Upgraded to {info.version}.", fg="green"))
+    click.echo(
+        "Restart your MCP host (Claude Code / Claude Desktop / Cursor) so the new bridge "
+        "is loaded — the running `kemory mcp serve` process is the OLD code until then."
+    )
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────
