@@ -136,7 +136,16 @@ async def _handle_store_skill(args, user_id, agent_id, db):
             "visibility": args.get("visibility", "user-private"),
         },
     )
-    memory = await create_memory(user_id, agent_id, request, db)
+    # Stamp the row with the caller's org_id from the tenant context — exactly
+    # as _handle_store_memory does. Without this, create_memory falls back to
+    # the "legacy" sentinel, and every tenant-scoped read (recall, list_skills)
+    # filters on the caller's REAL org_id, so the skill is written but
+    # permanently invisible. This is why stored skills never appeared in
+    # s9nmem_list_skills. (Fixed 2026-06-01.)
+    from backend.core.tenancy import current_org_id
+
+    org_id = current_org_id() or None
+    memory = await create_memory(user_id, agent_id, request, db, org_id=org_id)
     return MCPToolResult(
         content=[
             {
