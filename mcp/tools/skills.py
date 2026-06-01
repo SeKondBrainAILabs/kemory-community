@@ -109,13 +109,23 @@ async def _handle_list_skills(args, user_id, agent_id, db):
 
 
 async def _handle_store_skill(args, user_id, agent_id, db):
+    # When the MCP call is authenticated via an OAuth user token (e.g. via
+    # `kemory login`), there is no agent_id — the request is bound to a user.
+    # The previous code f-stringed `agent_id` directly, producing the literal
+    # namespace "skills:None" which (a) is not actually agent-scoped, (b)
+    # collides across all OAuth-token callers, and (c) is invisible to
+    # `_handle_list_skills` when filtered by source_agent. Fall back to a
+    # deterministic per-user scope (`skills:user-<user_id>`) so the data is
+    # actually addressable. API-key callers (with a real agent_id) are
+    # unchanged.
+    scope = agent_id if agent_id is not None else f"user-{user_id}"
     skill_payload = {
         "name": args["name"],
         "trigger": args["trigger"],
         "steps": args["steps"],
         "version": 1,
     }
-    namespace = f"skills:{agent_id}"
+    namespace = f"skills:{scope}"
     request = MemoryCreate(
         namespace=namespace,
         content=json.dumps(skill_payload),
