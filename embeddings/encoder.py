@@ -126,8 +126,10 @@ def _load_model() -> Any:
             from sentence_transformers import SentenceTransformer  # type: ignore[import]
         except ImportError:  # pragma: no cover
             raise RuntimeError(
-                "sentence-transformers is not installed. "
-                "Install it with: pip install sentence-transformers onnxruntime"
+                "In-process embedding model requested but sentence-transformers "
+                "is not installed. The default (prod) install omits it to keep the "
+                "image slim — set EMBEDDING_SERVICE_URL to use core-embedding-service, "
+                "or install the local fallback with: pip install 'kemory[local-embeddings]'"
             )
         logger.info("Loading embedding model '%s' (first call — this may take a moment)", MODEL_ID)
         _model = SentenceTransformer(MODEL_ID)
