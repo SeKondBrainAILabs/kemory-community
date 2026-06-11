@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 15
 
+    # ─── API-key pepper (s9n-auth ApiKeyHasher, HMAC-SHA256) ─────
+    # Server-side secret that keys the HMAC over agent API keys. New keys are
+    # minted as `hmac-sha256:<kid>:<hex>`; existing bcrypt keys keep verifying
+    # (allow_legacy_bcrypt) and upgrade to HMAC on next use. Same fail-closed
+    # discipline as JWT_SECRET_KEY: empty in staging/prod → refuse to start;
+    # empty in dev → a FIXED dev pepper is used (NOT ephemeral — an ephemeral
+    # pepper would invalidate every HMAC key written before the last restart).
+    api_key_pepper: str = ""
+
     # ─── Multi-tenancy (KEMORY_MULTI_TENANT_AUTH_PLAN.md) ────────
     # Three modes:
     #   "off"     — legacy single-tenant behaviour, no enforcement
@@ -273,6 +282,26 @@ class Settings(BaseSettings):
             print(
                 f"[WARN] jwt.ephemeral_secret_generated environment={self.environment} "
                 "hint='Set JWT_SECRET_KEY to keep tokens valid across restarts'",
+                file=_sys.stderr,
+            )
+
+        # API-key pepper fail-closed (mirrors the JWT guard). Unlike the JWT
+        # secret, the dev fallback is a FIXED constant, never ephemeral: an
+        # ephemeral pepper would change on every restart and silently
+        # invalidate every HMAC-hashed API key already in the DB.
+        if self.api_key_pepper in {"", "change-me"}:
+            if self.environment in {"staging", "production", "prod"}:
+                raise ValueError(
+                    "API_KEY_PEPPER is empty in a non-dev environment. Refusing "
+                    "to start — agent API-key hashing needs a stable server-side "
+                    "pepper (32+ random bytes). Set it in the deployment env."
+                )
+            import sys as _sys
+
+            object.__setattr__(self, "api_key_pepper", "kemory-dev-api-key-pepper")
+            print(
+                f"[WARN] api_key.dev_pepper_in_use environment={self.environment} "
+                "hint='Set API_KEY_PEPPER for any shared/persistent environment'",
                 file=_sys.stderr,
             )
 

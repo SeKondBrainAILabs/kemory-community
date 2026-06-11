@@ -15,19 +15,23 @@ Performance:
 """
 
 import hashlib
-import secrets
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import bcrypt
+import structlog
 from jose import JWTError, jwt
 from pydantic import BaseModel
+from s9n_auth import ApiKeyHasher
+from s9n_auth import AuthContext as _S9nAuthContext
+from s9n_auth.events import AuthEvent
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
 from backend.models.agent import AgentRegistry
+
+logger = structlog.get_logger(__name__)
 
 
 async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
@@ -52,16 +56,55 @@ async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
         pass
 
 
-# ─── Password / API Key Hashing ──────────────────────────────────
-# P4 #24: dropped passlib (depends on stdlib `crypt` removed in Python 3.13).
-# We were only ever using the bcrypt scheme, so call bcrypt directly. The
-# wire format is identical ($2b$... bcrypt strings), so existing hashes
-# in the DB validate without re-hashing. bcrypt.hashpw / bcrypt.checkpw
-# are the canonical primitives.
-_BCRYPT_ROUNDS = 12  # matches passlib's default; tunable via env if needed
+# ─── API Key Hashing (s9n-auth ApiKeyHasher, HMAC-SHA256) ─────────
+# API keys are high-entropy random tokens, so a slow password hash buys no
+# security — s9n-auth keys them with HMAC-SHA256 under a server-side pepper
+# (deterministic, microsecond, constant-time). Stored as
+# `hmac-sha256:<kid>:<hex>`. Existing kemory bcrypt keys keep verifying via
+# allow_legacy_bcrypt and are transparently re-hashed to HMAC on next use
+# (verify-then-upgrade) — no forced re-issue. See ADR: kemory seeded s9n-auth.
+_BCRYPT_ROUNDS = 12  # legacy: rounds kemory used; kept for the migration test
+_hasher: ApiKeyHasher | None = None
+
+
+def _emit_auth_event(event: AuthEvent) -> None:
+    """Forward s9n-auth auth decisions to structlog for a unified audit trail.
+
+    Best-effort: the library swallows any exception raised here so telemetry
+    can never fail an authentication.
+    """
+    logger.info(
+        "auth.decision",
+        outcome=event.outcome,
+        method=event.auth_method,
+        org_id=event.org_id or None,
+        agent_id=str(event.agent_id) if event.agent_id else None,
+        key_prefix=event.key_prefix or None,
+        upgraded=event.upgraded or None,
+        reason=event.reason or None,
+    )
+
+
+def _get_hasher() -> ApiKeyHasher:
+    """Lazily build the process-wide ApiKeyHasher.
+
+    ``settings.api_key_pepper`` is guaranteed non-empty after settings
+    model_post_init (a fixed dev pepper in dev, a real secret in staging/prod;
+    empty there is fail-closed at startup). ``allow_legacy_bcrypt`` lets it
+    verify+upgrade kemory's pre-existing bcrypt hashes.
+    """
+    global _hasher
+    if _hasher is None:
+        _hasher = ApiKeyHasher.single(
+            settings.api_key_pepper,
+            allow_legacy_bcrypt=True,
+            on_event=_emit_auth_event,
+        )
+    return _hasher
+
 
 # ─── Auth Cache ──────────────────────────────────────────────────
-# Cache verified API keys for 5 minutes to avoid repeated bcrypt calls.
+# Cache verified API keys for 5 minutes to avoid repeated hash verification.
 # Key: SHA-256 of the plaintext API key → Value: (AuthContext, expiry_time)
 _auth_cache: dict[str, tuple["AuthContext", float]] = {}
 # Reverse index: agent_id (str) → set of cache keys for that agent.
@@ -86,40 +129,36 @@ import asyncio as _asyncio
 _auth_cache_lock = _asyncio.Lock()
 
 
-class AuthContext(BaseModel):
+class AuthContext(_S9nAuthContext):
     """Represents the authenticated identity for a request.
 
-    Multi-tenant fields (org_id, team_ids, roles) are populated by the
-    auth middleware (see backend/core/auth.py and backend/core/tenancy.py).
-    They default to empty values so existing single-tenant code paths keep
-    working while TENANT_ENFORCEMENT='off'.
+    Subclasses the shared ``s9n_auth.AuthContext`` (kemory is the codebase that
+    library's identity shape was seeded from) and adds the one kemory-only
+    field, ``team_ids``. Inherited from s9n-auth: ``user_id``, ``agent_id``,
+    ``agent_name``, ``scopes``, ``roles``, ``org_id``, ``auth_method``,
+    ``acting_user_id``.
+
+    ``user_id`` and ``auth_method`` are re-declared as required to preserve
+    kemory's stricter construction contract (the base makes user_id optional
+    and auth_method default to "unknown"); every kemory auth path sets both.
+
+    Multi-tenant fields (org_id, team_ids, roles) are populated by the auth
+    middleware (see backend/core/auth.py and backend/core/tenancy.py); they
+    default to empty so single-tenant code paths keep working while
+    TENANT_ENFORCEMENT='off'.
+
+    Source priority for org_id:
+      keycloak path → token claim (settings.tenant_org_claim)
+      api_key path  → AgentRegistry.org_id (WS-5, never from headers)
+      jwt    path   → token claim "org_id" (HS256 internal agents)
     """
 
     user_id: uuid.UUID
-    agent_id: uuid.UUID | None = None
-    agent_name: str = ""
-    scopes: list[str] = []
     auth_method: str  # "jwt", "api_key", or "keycloak"
 
-    # ── Multi-tenancy (WS-2) ──────────────────────────────────────
-    # Source priority:
-    #   keycloak path → token claim (settings.tenant_org_claim)
-    #   api_key path  → AgentRegistry.org_id (WS-5, never from headers)
-    #   jwt    path   → token claim "org_id" (HS256 internal agents)
-    # When TENANT_ENFORCEMENT='enforce', tokens missing this value cause
-    # 401 missing_org_claim. While 'off' or 'shadow', empty string is OK.
-    org_id: str = ""
     # Resolved server-side from TeamMember rows by team_resolver (WS-4).
-    # Not present on token; recomputed per-request with a 60s cache.
+    # Not present on any token; recomputed per-request with a 60s cache.
     team_ids: list[str] = []
-    # Mirror of `scopes` but specifically the role-shaped subset (e.g.
-    # "org_admin", "team_owner"). Kept separate so role checks don't have
-    # to know about scope-string conventions.
-    roles: list[str] = []
-    # When set, the request was made by an MCP bridge process holding an
-    # API key for a different user but acting on behalf of this user (WS-6).
-    # Audit emits both identities so accountability is preserved.
-    acting_user_id: uuid.UUID | None = None
 
 
 class TokenPayload(BaseModel):
@@ -216,60 +255,50 @@ def decode_access_token(token: str) -> AuthContext | None:
 
 
 def _prehash_key(key: str) -> str:
-    """
-    Pre-hash a key with SHA-256 before bcrypt to handle the 72-byte limit.
-    bcrypt silently truncates at 72 bytes, so we hash first for security.
+    """Legacy: kemory's pre-bcrypt SHA-256 hex pre-hash.
+
+    Kept only so the migration test can construct a hash exactly the way the
+    pre-s9n-auth code did, proving the new path verifies real DB rows. Production
+    no longer calls this — hashing/verification go through the ApiKeyHasher,
+    whose ``allow_legacy_bcrypt`` recognises this exact scheme.
     """
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 def _compute_key_prefix(plaintext_key: str) -> str:
-    """Compute a 16-char hex prefix from SHA-256 of the plaintext key for fast DB lookup."""
+    """16-char hex prefix from SHA-256 of the key, for O(1) DB lookup.
+
+    Identical to ``s9n_auth.lookup_prefix`` (sha256(key)[:16]) — so existing
+    rows resolve under the new hasher with no prefix backfill.
+    """
     return hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()[:16]
 
 
 def generate_api_key() -> tuple[str, str, str]:
     """
-    Generate a new API key, its bcrypt hash, and a lookup prefix.
+    Mint a new API key, its HMAC-SHA256 hash, and a lookup prefix.
 
     Returns:
         Tuple of (plaintext_key, hashed_key, key_prefix)
-        The plaintext key is shown to the user ONCE and never stored.
-    Uses SHA-256 pre-hash before bcrypt to handle the 72-byte limit.
+        The plaintext key (``kemory_<random>``) is shown ONCE and never stored;
+        only ``hashed_key`` (``hmac-sha256:<kid>:<hex>``) and ``key_prefix``
+        are persisted.
     """
-    # P1 #9: new keys carry the `kemory_` identification prefix. Existing
-    # `s9nmv_…` (and `kora_…`) keys remain valid because the prefix is
-    # identification-only — the server stores api_key_prefix as the first
-    # 16 hex chars of SHA-256(plaintext), not the human-readable prefix.
-    raw_key = secrets.token_urlsafe(24)
-    plaintext_key = f"kemory_{raw_key}"
-    # bcrypt.hashpw produces the same $2b$... wire format passlib was
-    # producing — existing DB hashes verify unchanged.
-    hashed_key = bcrypt.hashpw(
-        _prehash_key(plaintext_key).encode("utf-8"),
-        bcrypt.gensalt(rounds=_BCRYPT_ROUNDS),
-    ).decode("utf-8")
-    key_prefix = _compute_key_prefix(plaintext_key)
-    return plaintext_key, hashed_key, key_prefix
+    # s9n-auth mints `kemory_<token_urlsafe(24)>` and returns the HMAC hash +
+    # sha256(raw)[:16] prefix — same prefix scheme kemory already used.
+    return _get_hasher().generate("kemory")
 
 
 def verify_api_key(plaintext_key: str, hashed_key: str) -> bool:
-    """Verify a plaintext API key against its bcrypt hash.
+    """Verify a plaintext API key against its stored hash.
 
-    Returns False on any error (invalid hash format, empty key, etc.) to
-    avoid leaking timing/error info to a probe. Reads the same $2b$...
-    wire format as the passlib-era hashes — no migration needed.
+    Delegates to the ApiKeyHasher, which transparently handles both the current
+    HMAC-SHA256 hashes and legacy bcrypt hashes. Returns False on empty inputs
+    or a malformed hash (no timing/error leak to a probe).
     """
     if not plaintext_key or not hashed_key:
         return False
-    try:
-        return bcrypt.checkpw(
-            _prehash_key(plaintext_key).encode("utf-8"),
-            hashed_key.encode("utf-8"),
-        )
-    except (ValueError, TypeError):
-        # Malformed hash string — treat as non-match.
-        return False
+    return _get_hasher().verify(plaintext_key, hashed_key).matched
 
 
 def _cache_key(api_key: str) -> str:
@@ -354,60 +383,75 @@ async def authenticate_api_key(
                     if not agent_keys:
                         _auth_cache_by_agent.pop(str(ctx.agent_id), None)
 
-    # 2. Try prefix-based O(1) lookup. The PR #17 SQLAlchemy tenant filter
-    # would otherwise zero-out this SELECT — auth runs BEFORE the tenant
-    # scope is established (chicken-and-egg: we look up the agent in
-    # order to learn its org_id), so bypass the filter for the auth
-    # query specifically.
+    # 2. Prefix-based O(1) lookup + verify, via the shared ApiKeyHasher. The
+    # PR #17 SQLAlchemy tenant filter would otherwise zero-out these SELECTs —
+    # auth runs BEFORE the tenant scope is established (we look up the agent
+    # precisely to learn its org_id), so bypass the filter for the auth queries.
     from backend.core.tenancy import bypass_tenant_filter
 
-    prefix = _compute_key_prefix(api_key)
-    with bypass_tenant_filter():
-        result = await db.execute(
-            select(AgentRegistry).where(
-                AgentRegistry.api_key_prefix == prefix,
-                AgentRegistry.status == "active",
-            )
-        )
-        agent = result.scalar_one_or_none()
+    hasher = _get_hasher()
 
-    if agent and verify_api_key(api_key, agent.api_key_hash):
-        ctx = _build_auth_context(agent)
-        # P1 #8 lock-protected cache write (replaces direct dict assignment
-        # to fix the thundering-herd-on-rotation concurrency bug).
-        await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
-        # Defer last_active_at to a short-lived session — under bulk parallel
-        # writes (e.g. 16-worker LME ingest) holding this update inside the
-        # request transaction pins the agent row until commit and exhausts
-        # the connection pool. Same contention reasoning as
-        # gatekeeper._increment_agent_stats.
-        await _bg_touch_last_active(agent.agent_id)
-        return ctx
-
-    # 3. Fallback: scan all active agents (for legacy keys without prefix).
-    # Same tenant-filter bypass reasoning as the prefix path above.
-    if agent is None:
+    async def _fetch_active_by_prefix(prefix: str) -> AgentRegistry | None:
         with bypass_tenant_filter():
             result = await db.execute(
                 select(AgentRegistry).where(
+                    AgentRegistry.api_key_prefix == prefix,
                     AgentRegistry.status == "active",
-                    AgentRegistry.api_key_prefix.is_(None),
                 )
             )
-            agents = result.scalars().all()
-        for agent in agents:
-            if verify_api_key(api_key, agent.api_key_hash):
-                # Backfill the prefix for next time. This is a one-shot
-                # write per agent (only matters on the first request after
-                # the prefix column was added), so it's fine to keep it
-                # in the request transaction. last_active_at is deferred.
-                agent.api_key_prefix = prefix
-                await db.flush()
-                await _bg_touch_last_active(agent.agent_id)
+            return result.scalar_one_or_none()
 
-                ctx = _build_auth_context(agent)
-                await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
-                return ctx
+    async def _on_rehash(agent: AgentRegistry, new_hash: str) -> None:
+        # Verify-then-upgrade: a key that verified under a legacy bcrypt hash
+        # (or a retired pepper) gets its stored hash rewritten to the active
+        # HMAC scheme. One-shot per key; never blocks the auth result.
+        agent.api_key_hash = new_hash
+        with bypass_tenant_filter():
+            await db.flush()
+
+    ctx = await hasher.authenticate(
+        api_key,
+        fetch_active_by_prefix=_fetch_active_by_prefix,
+        build_context=_build_auth_context,
+        on_rehash=_on_rehash,
+    )
+    if ctx is not None:
+        # P1 #8 lock-protected cache write (avoids the thundering-herd-on-
+        # rotation concurrency bug a plain dict assignment had).
+        await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
+        # Defer last_active_at to a short-lived session — under bulk parallel
+        # writes (e.g. 16-worker LME ingest) holding this update inside the
+        # request transaction pins the agent row until commit and exhausts the
+        # connection pool. Same reasoning as gatekeeper._increment_agent_stats.
+        await _bg_touch_last_active(ctx.agent_id)
+        return ctx
+
+    # 3. Fallback for legacy keys written before the prefix column existed
+    # (api_key_prefix IS NULL) — the prefix lookup above can't find them. Scan
+    # active null-prefix agents, verify via the hasher (which handles legacy
+    # bcrypt), then backfill the prefix and upgrade the hash to HMAC.
+    with bypass_tenant_filter():
+        result = await db.execute(
+            select(AgentRegistry).where(
+                AgentRegistry.status == "active",
+                AgentRegistry.api_key_prefix.is_(None),
+            )
+        )
+        agents = result.scalars().all()
+    for agent in agents:
+        res = hasher.verify(api_key, agent.api_key_hash)
+        if res.matched:
+            # One-shot writes per agent (first request after the prefix column
+            # landed), so it's fine to keep them in the request transaction.
+            agent.api_key_prefix = _compute_key_prefix(api_key)
+            if res.needs_upgrade:
+                agent.api_key_hash = hasher.hash(api_key)
+            await db.flush()
+            await _bg_touch_last_active(agent.agent_id)
+
+            ctx = _build_auth_context(agent)
+            await _cache_auth_context(ck, ctx, time.monotonic() + _AUTH_CACHE_TTL)
+            return ctx
 
     return None
 

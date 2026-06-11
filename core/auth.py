@@ -18,13 +18,15 @@ import uuid
 import structlog
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
+from jwt.exceptions import PyJWKClientError
+from s9n_auth.jwt_verify import JwtVerificationError, KeycloakVerifier
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
 from backend.core.database import get_db
 from backend.services.auth_service import (
     AuthContext,
+    _emit_auth_event,
     authenticate_api_key,
     decode_access_token,
 )
@@ -33,6 +35,29 @@ logger = structlog.get_logger(__name__)
 
 # Bearer token scheme (optional — allows both auth methods)
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# Lazily-built, process-wide Keycloak RS256 verifier (shared s9n-auth). Pinned
+# to RS256 (rejects alg:none / HS256 forgeries) with a Keycloak-style azp/aud
+# client allowlist. require_org is False — kemory runs its own 3-mode org-claim
+# policy (off/shadow/enforce) in _try_keycloak rather than the verifier's
+# fail-closed gate, so the shadow/off behaviours are preserved.
+_kc_verifier: KeycloakVerifier | None = None
+
+
+def _get_kc_verifier() -> KeycloakVerifier:
+    global _kc_verifier
+    if _kc_verifier is None:
+        client_ids = tuple(settings.keycloak_client_ids_list)
+        _kc_verifier = KeycloakVerifier(
+            issuer=settings.keycloak_issuer_url,
+            audience=settings.keycloak_client_ids_list,
+            jwks_uri=settings.keycloak_jwks_url,
+            allowed_azp=client_ids,
+            org_claim=settings.tenant_org_claim,
+            require_org=False,
+            on_event=_emit_auth_event,
+        )
+    return _kc_verifier
 
 
 async def _try_keycloak(token: str) -> AuthContext | None:
@@ -48,64 +73,68 @@ async def _try_keycloak(token: str) -> AuthContext | None:
     if not settings.keycloak_enabled:
         return None
 
-    from backend.core.keycloak_validator import keycloak_validator
-
     try:
-        payload = await keycloak_validator.validate_token(token)
-        if payload is None:
-            # Keycloak unreachable — fall through to HS256
-            return None
-
-        # Extract realm roles for scopes (legacy field, kept for compat with
-        # is_admin / require_admin etc.) plus client-specific roles for the
-        # WS-2 roles list (org_admin, team_owner, ...).
-        realm_access = payload.get("realm_access", {})
-        scopes = realm_access.get("roles", [])
-
-        client_id = settings.keycloak_client_id
-        resource_access = payload.get("resource_access", {})
-        client_roles = resource_access.get(client_id, {}).get("roles", [])
-        # Merge: any role from realm_access OR resource_access.kemory-api
-        # is fair game for role-checks. Keep both lists addressable.
-        roles = sorted({*scopes, *client_roles})
-
-        # WS-2: tenant claim extraction.
-        org_claim = payload.get(settings.tenant_org_claim)
-        if not org_claim:
-            mode = settings.tenant_enforcement
-            if mode == "enforce":
-                logger.warning(
-                    "keycloak.missing_org_claim.reject",
-                    sub=payload.get("sub"),
-                    azp=payload.get("azp"),
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="missing_org_claim",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            if mode == "shadow":
-                logger.warning(
-                    "kemory.tenancy.violation",
-                    kind="missing_org_claim",
-                    sub=payload.get("sub"),
-                    azp=payload.get("azp"),
-                    mode=mode,
-                )
-            org_claim = settings.tenant_legacy_sentinel
-
-        return AuthContext(
-            user_id=uuid.UUID(payload["sub"]),
-            agent_id=None,
-            agent_name=payload.get("preferred_username", payload.get("email", "")),
-            scopes=scopes,
-            roles=roles,
-            auth_method="keycloak",
-            org_id=org_claim,
-        )
-    except JWTError:
-        # Token looked like a Keycloak token (RS256) but was invalid
+        # Shared verifier does all crypto/claim hardening (RS256 pinning,
+        # signature, issuer, expiry, azp/aud allowlist) and hands back the
+        # validated claims; kemory maps them into its own identity shape below.
+        claims = _get_kc_verifier().verify_claims(token)
+    except JwtVerificationError as exc:
+        # Decision: JWKS unreachable (network outage or a key-rotation cache
+        # miss) is treated as "Keycloak down" → fall through to the HS256 path,
+        # preserving resilience. Any other failure (bad signature/alg/issuer/
+        # expiry/client) just isn't a token we accept here; return None so the
+        # HS256 path gets a chance and, failing that, the request 401s.
+        if isinstance(exc.__cause__, PyJWKClientError):
+            logger.warning("keycloak.jwks_unreachable.fallthrough", error=str(exc))
         return None
+
+    # Extract realm roles for scopes (kemory's admin/beta guards read .scopes)
+    # plus client-specific roles for the WS-2 roles list (org_admin, ...).
+    realm_access = claims.get("realm_access", {})
+    scopes = realm_access.get("roles", [])
+
+    client_id = settings.keycloak_client_id
+    resource_access = claims.get("resource_access", {})
+    client_roles = resource_access.get(client_id, {}).get("roles", [])
+    # Any role from realm_access OR resource_access.kemory-api is fair game for
+    # role checks. Keep both lists addressable.
+    roles = sorted({*scopes, *client_roles})
+
+    # WS-2: tenant claim 3-mode policy. The verifier is configured
+    # require_org=False, so kemory keeps full control of off/shadow/enforce.
+    org_claim = claims.get(settings.tenant_org_claim)
+    if not org_claim:
+        mode = settings.tenant_enforcement
+        if mode == "enforce":
+            logger.warning(
+                "keycloak.missing_org_claim.reject",
+                sub=claims.get("sub"),
+                azp=claims.get("azp"),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="missing_org_claim",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if mode == "shadow":
+            logger.warning(
+                "kemory.tenancy.violation",
+                kind="missing_org_claim",
+                sub=claims.get("sub"),
+                azp=claims.get("azp"),
+                mode=mode,
+            )
+        org_claim = settings.tenant_legacy_sentinel
+
+    return AuthContext(
+        user_id=uuid.UUID(claims["sub"]),
+        agent_id=None,
+        agent_name=claims.get("preferred_username", claims.get("email", "")),
+        scopes=scopes,
+        roles=roles,
+        auth_method="keycloak",
+        org_id=org_claim,
+    )
 
 
 async def get_auth_context(
