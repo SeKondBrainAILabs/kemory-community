@@ -160,6 +160,7 @@ def login(
     issuer: str,
     client_id: str,
     kemory_url: str,
+    env: str = "prod",
     open_browser: bool = True,
     output=print,
 ) -> Credentials:
@@ -192,6 +193,7 @@ def login(
         issuer=issuer,
         client_id=client_id,
         kemory_url=kemory_url,
+        env=env,
     )
     creds.save()
     return creds
@@ -219,9 +221,12 @@ def refresh(creds: Credentials) -> Credentials:
     return creds
 
 
-def get_valid_credentials(refresh_within: int = 60, *, force: bool = False) -> Credentials | None:
-    """Load credentials, refreshing if they're about to expire. Returns None
-    if no credentials exist (caller should prompt for `kemory login`).
+def get_valid_credentials(
+    env: str | None = None, refresh_within: int = 60, *, force: bool = False
+) -> Credentials | None:
+    """Load credentials for ``env`` (default: active env), refreshing if they're
+    about to expire. Returns None if no credentials exist (caller should prompt
+    for `kemory login`).
 
     Local-mode credentials (issuer=='local', stored by `kemory login --local`)
     are returned unchanged — the refresh endpoint doesn't exist for them.
@@ -231,7 +236,7 @@ def get_valid_credentials(refresh_within: int = 60, *, force: bool = False) -> C
     on every run without false-passing on a token that happens to still
     be valid for >60s.
     """
-    creds = Credentials.load()
+    creds = Credentials.load(env)
     if creds is None:
         return None
     # `kemory login --local` stores a synthetic credential with no real

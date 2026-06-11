@@ -36,6 +36,12 @@ _legacy_alias_warned = False
 
 server = Server("kemory")
 
+# Active environment for this bridge process. Set by ``serve(env)`` from the
+# ``kemory --env <env> mcp serve`` invocation the MCP host runs; credential
+# lookups below load ``credentials-<env>``. Defaults to the active env
+# (KEMORY_ENV or prod) when serve() isn't given one.
+_ENV: str | None = None
+
 
 def _resolve_url() -> str:
     """Resolve the kemory base URL.
@@ -47,7 +53,7 @@ def _resolve_url() -> str:
     """
     if env := os.environ.get("KEMORY_URL"):
         return env
-    creds = Credentials.load()
+    creds = Credentials.load(_ENV)
     if creds and creds.kemory_url:
         return creds.kemory_url
     return "http://localhost:8100"
@@ -80,7 +86,7 @@ def _build_headers() -> dict[str, str]:
     if api_key:
         headers["X-API-Key"] = api_key
         return headers
-    creds = get_valid_credentials()
+    creds = get_valid_credentials(_ENV)
     if creds:
         headers["Authorization"] = f"Bearer {creds.access_token}"
     return headers
@@ -206,8 +212,11 @@ async def _main() -> None:
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-def serve() -> None:
-    """Entry point invoked by ``kemory mcp serve``."""
+def serve(env: str | None = None) -> None:
+    """Entry point invoked by ``kemory mcp serve``. ``env`` selects which
+    ``credentials-<env>`` the bridge forwards (default: active env)."""
+    global _ENV
+    _ENV = env
     asyncio.run(_main())
 
 

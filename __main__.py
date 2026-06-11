@@ -33,23 +33,13 @@ from kemory_cli.auth import (
 from kemory_cli.auth import (
     login as run_login,
 )
-from kemory_cli.config import Credentials, credentials_path
-
-# ─── Defaults ──────────────────────────────────────────────────────────────
-
-DEFAULT_KEMORY_URL = os.environ.get("KEMORY_URL", "http://localhost:8100")
-DEFAULT_KEYCLOAK_ISSUER = os.environ.get(
-    "KEMORY_OIDC_ISSUER",
-    "http://localhost:8888/realms/s9n-mvp",
-)
-DEFAULT_CLIENT_ID = os.environ.get("KEMORY_CLI_CLIENT_ID", "kemory-cli")
-
+from kemory_cli.config import Credentials, credentials_path, env_profile, resolve_env
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
 def _require_creds(ctx: click.Context) -> Credentials:
-    creds = get_valid_credentials()
+    creds = get_valid_credentials(ctx.obj["env"])
     if creds is None:
         click.echo(click.style("✗ No valid credentials. Run `kemory login` first.", fg="red"), err=True)
         ctx.exit(1)
@@ -78,21 +68,29 @@ def _api_post(creds: Credentials, path: str, json_body: dict | None = None) -> h
 
 @click.group(invoke_without_command=False)
 @click.version_option(__version__, prog_name="kemory")
-def cli() -> None:
+@click.option(
+    "--env",
+    "env_opt",
+    default=None,
+    help="Target environment: 'prod' (default) or 'local'. SeKondBrain "
+    "engineers also have 'staging' in internal (non-public) builds. "
+    "Overrides the KEMORY_ENV variable. Each env keeps its own login, so "
+    "you can be connected to prod and staging at once.",
+)
+@click.pass_context
+def cli(ctx: click.Context, env_opt: str | None) -> None:
     """Kemory — multi-tenant memory for AI agents."""
+    try:
+        env = resolve_env(env_opt)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    ctx.obj = {"env": env, "profile": env_profile(env)}
 
 
 # ─── login / logout / whoami ──────────────────────────────────────────────
 
 
 @cli.command("login")
-@click.option(
-    "--kemory-url", default=DEFAULT_KEMORY_URL, show_default=True, help="Base URL of the kemory API."
-)
-@click.option(
-    "--issuer", default=DEFAULT_KEYCLOAK_ISSUER, show_default=True, help="Keycloak realm issuer URL."
-)
-@click.option("--client-id", default=DEFAULT_CLIENT_ID, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Print the URL but don't open it.")
 @click.option(
     "--local",
@@ -101,13 +99,23 @@ def cli() -> None:
     help="Skip OAuth and use a machine-local API key (dev mode). "
     "Reads KEMORY_API_KEY (or legacy S9NMV_API_KEY / "
     "KORA_API_KEY) from the env, or registers a new agent "
-    "against KEMORY_URL with a generated key.",
+    "against the env's kemory URL with a generated key.",
 )
-def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, local_mode: bool) -> None:
-    """Log in. Default is OAuth 2.0 device flow against Keycloak; --local
-    skips OAuth and stores a kemory API key at ~/.kemory/credentials so
-    self-hosted / dev-mode users can onboard without a Keycloak install.
+@click.pass_context
+def login_cmd(ctx: click.Context, no_browser: bool, local_mode: bool) -> None:
+    """Log in to the selected environment (``kemory --env <env> login``).
+
+    Default is OAuth 2.0 device flow against Keycloak; --local skips OAuth and
+    stores a kemory API key at ~/.kemory/credentials-<env> so self-hosted /
+    dev-mode users can onboard without a Keycloak install. The target URL,
+    issuer, and client come from the env profile (override per-key with
+    KEMORY_URL / KEMORY_OIDC_ISSUER / KEMORY_CLI_CLIENT_ID).
     """
+    env = ctx.obj["env"]
+    profile = ctx.obj["profile"]
+    kemory_url = profile["kemory_url"]
+    issuer = profile["issuer"]
+    client_id = profile["client_id"]
     if local_mode:
         # P1 #9: KEMORY_API_KEY is canonical; the older names still work
         # for one minor version while existing integrations migrate.
@@ -133,6 +141,7 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, lo
             issuer="local",
             client_id="local",
             kemory_url=kemory_url,
+            env=env,
         )
         creds.save()
         click.echo(
@@ -148,6 +157,7 @@ def login_cmd(kemory_url: str, issuer: str, client_id: str, no_browser: bool, lo
             issuer=issuer,
             client_id=client_id,
             kemory_url=kemory_url,
+            env=env,
             open_browser=not no_browser,
         )
     except DeviceFlowError as exc:
@@ -207,14 +217,15 @@ def telemetry_cmd(state: str) -> None:
 
 
 @cli.command("logout")
-def logout_cmd() -> None:
-    """Delete the cached credentials."""
-    p = credentials_path()
+@click.pass_context
+def logout_cmd(ctx: click.Context) -> None:
+    """Delete the cached credentials for the selected environment."""
+    p = credentials_path(ctx.obj["env"])
     if p.exists():
         p.unlink()
-        click.echo("✓ Removed ~/.kemory/credentials")
+        click.echo(f"✓ Removed {p}")
     else:
-        click.echo("(no credentials file present)")
+        click.echo(f"(no credentials file present for env '{ctx.obj['env']}')")
 
 
 @cli.command("whoami")
@@ -410,8 +421,13 @@ def _resolve_host_config(host: str) -> Path | None:
     return candidates[0]
 
 
-def _write_mcp_entry(config_path: Path, name: str) -> None:
-    """Idempotently merge a kemory MCP server entry into config_path."""
+def _write_mcp_entry(config_path: Path, name: str, env: str) -> None:
+    """Idempotently merge a kemory MCP server entry into config_path.
+
+    The entry pins the env (``kemory --env <env> mcp serve``) so the bridge
+    forwards the matching ``credentials-<env>`` — letting prod and staging
+    coexist as separate MCP servers in the same host config.
+    """
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text() or "{}")
@@ -423,7 +439,7 @@ def _write_mcp_entry(config_path: Path, name: str) -> None:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config = {}
     servers = config.setdefault("mcpServers", {})
-    servers[name] = {"command": "kemory", "args": ["mcp", "serve"], "env": {}}
+    servers[name] = {"command": "kemory", "args": ["--env", env, "mcp", "serve"], "env": {}}
     config_path.write_text(json.dumps(config, indent=2))
 
 
@@ -443,14 +459,24 @@ def _write_mcp_entry(config_path: Path, name: str) -> None:
     default=None,
     help="Override host detection — write directly to this path.",
 )
-@click.option("--name", default="kemory", show_default=True, help="Server name to register under mcpServers.")
-def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> None:
+@click.option(
+    "--name",
+    default=None,
+    help="Server name under mcpServers (default: the env's server name — "
+    "kemory for prod, kemory-staging for staging — so envs don't collide).",
+)
+@click.pass_context
+def mcp_install(
+    ctx: click.Context, hosts: tuple[str, ...], config_path: Path | None, name: str | None
+) -> None:
     """Write an MCP server entry into one or more MCP hosts. No API key
-    is stored in the config — the bridge reads ~/.kemory/credentials at
+    is stored in the config — the bridge reads ~/.kemory/credentials-<env> at
     runtime, so config files stay safe to commit / sync.
     """
+    env = ctx.obj["env"]
+    name = name or ctx.obj["profile"]["server_name"]
     if config_path is not None:
-        _write_mcp_entry(config_path, name)
+        _write_mcp_entry(config_path, name, env)
         click.echo(click.style(f"✓ Wrote MCP server entry '{name}' into {config_path}", fg="green"))
         return
 
@@ -466,7 +492,7 @@ def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> 
             skipped.append((host, "unknown host"))
             continue
         try:
-            _write_mcp_entry(path, name)
+            _write_mcp_entry(path, name, env)
             written.append((host, path))
         except click.ClickException as exc:
             skipped.append((host, str(exc)))
@@ -480,11 +506,12 @@ def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> 
 
 
 @mcp_grp.command("serve")
-def mcp_serve() -> None:
+@click.pass_context
+def mcp_serve(ctx: click.Context) -> None:
     """Run the kemory stdio MCP bridge. Invoked by the MCP host, not humans."""
     from kemory_cli.mcp_bridge import serve as run_bridge
 
-    run_bridge()
+    run_bridge(ctx.obj["env"])
 
 
 # ─── doctor ───────────────────────────────────────────────────────────────
@@ -498,8 +525,8 @@ def doctor_cmd(ctx: click.Context) -> None:
     Run this first when something feels wrong. Each line ends in PASS / FAIL
     / SKIP with a hint on what to do next. No personal data is printed.
     """
-    creds = Credentials.load()
-    kemory_url = (creds.kemory_url if creds else None) or DEFAULT_KEMORY_URL
+    creds = Credentials.load(ctx.obj["env"])
+    kemory_url = (creds.kemory_url if creds else None) or ctx.obj["profile"]["kemory_url"]
 
     def emit(label: str, ok: bool | None, detail: str = "") -> None:
         if ok is True:
@@ -543,7 +570,7 @@ def doctor_cmd(ctx: click.Context) -> None:
         fresh_creds = creds
     else:
         try:
-            refreshed = get_valid_credentials(force=True)
+            refreshed = get_valid_credentials(ctx.obj["env"], force=True)
             if refreshed is None:
                 emit(
                     "token refresh",
