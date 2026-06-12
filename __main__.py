@@ -406,6 +406,7 @@ def _host_config_paths() -> dict[str, list[Path]]:
         ],
         "cursor": [home / ".cursor" / "mcp.json"],
         "continue": [home / ".continue" / "config.json"],
+        "warp": [home / ".warp" / ".mcp.json"],
     }
 
 
@@ -448,7 +449,7 @@ def _write_mcp_entry(config_path: Path, name: str, env: str) -> None:
     "--host",
     "hosts",
     multiple=True,
-    type=click.Choice(["claude-code", "claude-desktop", "cursor", "continue", "all"]),
+    type=click.Choice(["claude-code", "claude-desktop", "cursor", "continue", "warp", "all"]),
     default=("claude-code",),
     help="MCP host(s) to configure. Pass --host all to wire every supported host on this machine.",
 )
@@ -482,7 +483,7 @@ def mcp_install(
 
     targets = list(hosts)
     if "all" in targets:
-        targets = ["claude-code", "claude-desktop", "cursor", "continue"]
+        targets = ["claude-code", "claude-desktop", "cursor", "continue", "warp"]
 
     written: list[tuple[str, Path]] = []
     skipped: list[tuple[str, str]] = []
@@ -502,7 +503,14 @@ def mcp_install(
     for host, reason in skipped:
         click.echo(click.style(f"✗ {host:<15} {reason}", fg="yellow"))
     if written:
-        click.echo("\nRestart the affected MCP host(s) to pick up the change.")
+        written_hosts = {host for host, _ in written}
+        notes: list[str] = []
+        # Warp watches .mcp.json and reloads on save; the others need a restart.
+        if written_hosts - {"warp"}:
+            notes.append("Restart the affected MCP host(s) to pick up the change.")
+        if "warp" in written_hosts:
+            notes.append("Warp auto-detects .mcp.json on save — no restart needed.")
+        click.echo("\n" + "\n".join(notes))
 
 
 @mcp_grp.command("serve")
