@@ -28,6 +28,16 @@ const aiClientHint: Partial<Record<ConnectorId, string>> = {
   'custom-mcp': 'Custom MCP Client',
 }
 
+// MCP hosts the `kemory` CLI can configure via `kemory mcp install <host>`.
+// These connectors get the recommended CLI flow; the rest fall back to the
+// pair-claim prompt only. (CLI hosts: claude-code, claude-desktop, cursor,
+// continue — Continue has no connector tile here.)
+const cliHostFor: Partial<Record<ConnectorId, string>> = {
+  'claude-code': 'claude-code',
+  'claude-desktop': 'claude-desktop',
+  cursor: 'cursor',
+}
+
 const titles: Record<ConnectorId, string> = {
   'claude-code': 'Connect Claude Code',
   'claude-desktop': 'Connect Claude Desktop',
@@ -62,7 +72,7 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
           </div>
           <div className="overflow-y-auto px-6 py-5">
             {clientHint ? (
-              <QuickConnectContent clientHint={clientHint} embedded />
+              <QuickConnectContent clientHint={clientHint} cliHost={cliHostFor[connectorId]} embedded />
             ) : connectorId === 'custom-agent' ? (
               <AgentWizard onClose={onClose} />
             ) : connectorId === 'cognition-os' ? (

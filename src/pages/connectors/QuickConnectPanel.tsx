@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Loader2, RefreshCw, Zap } from 'lucide-react'
+import { Check, Copy, Loader2, RefreshCw, Terminal, Zap } from 'lucide-react'
 import { startPair, getPairStatus } from '@/api/pair'
 import type { PairStartResponse, PairStatusResponse } from '@/api/pair'
 
@@ -55,13 +55,33 @@ interface QuickConnectContentProps {
   clientHint?: string
   /** Hide the outer card chrome (used inside a wizard dialog). */
   embedded?: boolean
+  /**
+   * When set, show the recommended `kemory` CLI flow for this MCP host
+   * (the value is the `kemory mcp install <host>` argument, e.g. "claude-code").
+   * Only the CLI-supported hosts pass this; others fall back to pair-claim only.
+   */
+  cliHost?: string
+}
+
+/** The kemory CLI install + connect commands for a given MCP host. */
+function cliCommands(host: string): string {
+  return [
+    '# 1. Install the kemory CLI (macOS / Linux):',
+    'brew install sekondbrainailabs/s9n/kemory',
+    '',
+    '# 2. Sign in (opens your browser — no API key to paste):',
+    'kemory login',
+    '',
+    `# 3. Register the MCP server for ${host}:`,
+    `kemory mcp install ${host}`,
+  ].join('\n')
 }
 
 /**
  * The shared pair‑claim UX: generate link → show prompt → poll for claim.
  * Used both as the standalone Connectors panel and inside per‑client modals.
  */
-export function QuickConnectContent({ clientHint, embedded = false }: QuickConnectContentProps) {
+export function QuickConnectContent({ clientHint, embedded = false, cliHost }: QuickConnectContentProps) {
   const [pair, setPair] = useState<PairStartResponse | null>(null)
   const [status, setStatus] = useState<PairStatusResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -112,6 +132,35 @@ export function QuickConnectContent({ clientHint, embedded = false }: QuickConne
 
   return (
     <>
+      {cliHost && (
+        <div className="mb-5 rounded-lg border border-brand-primary/30 bg-brand-primary/5 p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <Terminal size={14} className="text-brand-primary" />
+            <span className="text-xs font-semibold text-content-primary">
+              Recommended — the kemory CLI
+            </span>
+          </div>
+          <p className="mb-3 text-xs text-content-secondary">
+            Browser sign-in (no API key to paste), and it writes the MCP server entry for you.
+          </p>
+          <div className="relative">
+            <pre className="overflow-auto rounded-lg bg-gray-900 p-3 pr-16 text-[11px] leading-relaxed text-gray-100">
+              {cliCommands(cliHost)}
+            </pre>
+            <div className="absolute right-2 top-2">
+              <CopyButton value={cliCommands(cliHost)} label="Copy" />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-content-tertiary">
+            Then restart {clientHint ?? 'your client'}. Run{' '}
+            <code className="rounded bg-surface-secondary px-1 font-mono">kemory doctor</code> to verify.
+          </p>
+          <p className="mt-3 border-t border-border pt-3 text-xs font-medium text-content-secondary">
+            Or — connect without installing anything (paste a prompt into the AI):
+          </p>
+        </div>
+      )}
+
       {!embedded && (
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
