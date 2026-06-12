@@ -1,0 +1,19 @@
+name: release
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard until backend is seeded
+        run: |
+          if [ ! -d "backend" ]; then
+            echo "STOP: backend not seeded; release workflow is a no-op."
+            exit 1
+          fi
+      # TODO: setup-python, install pyinstaller, build binary,
+      # upload to GH Release, npm publish --access public.
+      - run: echo "TODO: implement once backend lands"

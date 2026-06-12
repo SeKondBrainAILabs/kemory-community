@@ -1,0 +1,33 @@
+name: sync-from-main
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # Monday 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions: { contents: write, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, ref: dev-sync }
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Subtree pull (TODO until adapter refactor lands in agent_memory_vault)
+        run: |
+          echo "TODO: enable this when the following exist in agent_memory_vault:"
+          echo "  - backend/adapters/{vector_store,blob_store,identity_provider,telemetry}/"
+          echo "  - backend/plugins/cognition/{community,enterprise}/"
+          exit 0
+          # When ready, uncomment:
+          # git remote add upstream https://github.com/SeKondBrainAILabs/agent_memory_vault.git || true
+          # git fetch upstream main
+          # git subtree pull --prefix=backend upstream main --squash -m "chore(sync): backend from agent_memory_vault@main"
+          # (repeat for memory_vault/, dashboard/, kemory_cli/)
+      - name: Open PR to main
+        if: success()
+        run: |
+          # When sync runs for real, open a PR. For now this is a no-op.
+          echo "no-op until sync is enabled"

@@ -1,0 +1,20 @@
+name: dco
+on: [pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check for Signed-off-by
+        run: |
+          MISSING=$(git log --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+            --pretty=format:"%H %s" --grep="Signed-off-by" --invert-grep | head -20)
+          if [ -n "$MISSING" ]; then
+            echo "::error::These commits are missing Signed-off-by:"
+            echo "$MISSING"
+            echo "Run: git rebase -i and add -s to each commit, or follow https://github.com/SeKondBrainAILabs/kemory-community/blob/main/CONTRIBUTING.md#dco-sign-off-required"
+            exit 1
+          fi
+          echo "All commits signed off"

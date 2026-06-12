@@ -1,0 +1,43 @@
+# Node
+node_modules/
+dist/
+build/
+.npm/
+.yarn/
+.pnp.*
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local config
+.env
+.env.local
+.env.*.local
+
+# Packaging artifacts (downloaded, not source)
+packaging/pglite/*.wasm
+bin/kemory-community-*
+
+# Build outputs
+dashboard/dist/
+*.spec.local

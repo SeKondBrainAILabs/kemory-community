@@ -1,0 +1,9 @@
+name: Question
+description: For questions, please use Discussions instead.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please ask in [Discussions](https://github.com/SeKondBrainAILabs/kemory-community/discussions/categories/q-a) instead of opening an Issue.
+        Issues are for bugs and feature requests. Questions get faster answers in Discussions.
