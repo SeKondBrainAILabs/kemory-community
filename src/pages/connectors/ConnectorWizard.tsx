@@ -25,17 +25,19 @@ const aiClientHint: Partial<Record<ConnectorId, string>> = {
   codex: 'ChatGPT / Codex CLI',
   'gemini-cli': 'Gemini CLI',
   ollama: 'Ollama',
+  warp: 'Warp',
   'custom-mcp': 'Custom MCP Client',
 }
 
 // MCP hosts the `kemory` CLI can configure via `kemory mcp install <host>`.
 // These connectors get the recommended CLI flow; the rest fall back to the
 // pair-claim prompt only. (CLI hosts: claude-code, claude-desktop, cursor,
-// continue — Continue has no connector tile here.)
+// continue, warp — Continue has no connector tile here.)
 const cliHostFor: Partial<Record<ConnectorId, string>> = {
   'claude-code': 'claude-code',
   'claude-desktop': 'claude-desktop',
   cursor: 'cursor',
+  warp: 'warp',
 }
 
 const titles: Record<ConnectorId, string> = {
@@ -47,6 +49,7 @@ const titles: Record<ConnectorId, string> = {
   codex: 'Connect ChatGPT / Codex CLI',
   'gemini-cli': 'Connect Gemini CLI',
   ollama: 'Connect Ollama',
+  warp: 'Connect Warp',
   'custom-mcp': 'Connect a Custom MCP Client',
   'custom-agent': 'Register Custom Agent',
   'cognition-os': 'Configure Cognition OS Bridge',

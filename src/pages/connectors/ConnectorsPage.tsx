@@ -22,6 +22,7 @@ import {
   Sparkles,
   Cpu,
   Puzzle,
+  Zap,
 } from 'lucide-react'
 import { ConnectorWizard } from './ConnectorWizard'
 import { QuickConnectPanel } from './QuickConnectPanel'
@@ -35,6 +36,7 @@ export type ConnectorId =
   | 'codex'
   | 'gemini-cli'
   | 'ollama'
+  | 'warp'
   | 'custom-mcp'
   | 'custom-agent'
   | 'cognition-os'
@@ -113,6 +115,14 @@ const connectors: ConnectorDef[] = [
     category: 'MCP Clients',
     icon: Cpu,
     matchAgent: 'ollama-agent',
+  },
+  {
+    id: 'warp',
+    name: 'Warp',
+    description: 'Agentic terminal — MCP memory via the kemory CLI (prod + staging)',
+    category: 'MCP Clients',
+    icon: Zap,
+    matchAgent: 'warp-agent',
   },
   {
     id: 'custom-mcp',
