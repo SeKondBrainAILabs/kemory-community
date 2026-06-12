@@ -1,0 +1,62 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: kemory-community version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS arm64
+        - macOS x64
+        - Linux x64
+        - Linux arm64
+        - Windows x64
+        - other
+    validations:
+      required: true
+  - type: dropdown
+    id: db
+    attributes:
+      label: Database backend
+      options:
+        - PGlite (default)
+        - real Postgres
+    validations:
+      required: true
+  - type: input
+    id: groq_model
+    attributes:
+      label: Groq model
+      placeholder: "llama-3.3-70b-versatile"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps. Include the exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      render: shell
+  - type: textarea
+    id: doctor
+    attributes:
+      label: kemory-community doctor output
+      render: shell
+      description: Paste output of `kemory-community doctor`.

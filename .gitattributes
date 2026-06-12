@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.wasm linguist-vendored
+packaging/pyinstaller/* linguist-vendored
+dashboard/dist/* linguist-vendored
+*.lock linguist-generated
+*.png binary
+*.jpg binary

@@ -1,0 +1,44 @@
+{
+  "name": "kemory-community",
+  "version": "0.0.1-pre.0",
+  "description": "Local-first, OSS memory for AI agents. Same wire protocol as hosted Kemory.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SeKondBrainAILabs/kemory-community.git"
+  },
+  "homepage": "https://community.kemory.s9n.ai",
+  "bugs": {
+    "url": "https://github.com/SeKondBrainAILabs/kemory-community/issues"
+  },
+  "keywords": [
+    "kemory",
+    "memory",
+    "ai",
+    "agents",
+    "llm",
+    "mcp",
+    "groq",
+    "vector",
+    "rag",
+    "local-first"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "kemory-community": "bin/kemory-community.js"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.js",
+    "prepublishOnly": "node scripts/verify-package.js"
+  },
+  "files": [
+    "bin/",
+    "postinstall.js",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ]
+}
