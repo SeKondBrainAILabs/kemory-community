@@ -1,14 +1,5 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      python-deps:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -18,16 +9,19 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  - package-ecosystem: "npm"
-    directory: "/dashboard"
-    schedule:
-      interval: "weekly"
-    groups:
-      dashboard-deps:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+
+# Enable after the backend and dashboard subtree import lands:
+#
+# - package-ecosystem: "pip"
+#   directory: "/"
+#   schedule:
+#     interval: "weekly"
+#
+# - package-ecosystem: "npm"
+#   directory: "/dashboard"
+#   schedule:
+#     interval: "weekly"
