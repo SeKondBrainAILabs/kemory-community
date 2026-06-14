@@ -40,6 +40,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 
@@ -85,9 +86,60 @@ class Event:
     duration_ms: int
 
 
+class _CliNoOpTelemetry:
+    def track(
+        self,
+        event: str,
+        properties: dict,
+        *,
+        user_id: UUID | None = None,
+        org_id: UUID | None = None,
+    ) -> None:
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
+class _CliHttpTelemetry:
+    def __init__(self, endpoint_url: str) -> None:
+        self._endpoint_url = endpoint_url
+
+    def track(
+        self,
+        event: str,
+        properties: dict,
+        *,
+        user_id: UUID | None = None,
+        org_id: UUID | None = None,
+    ) -> None:
+        payload = {"event": event, "properties": properties}
+        try:
+            httpx.post(self._endpoint_url, json=payload, timeout=2.0)
+        except Exception:
+            pass  # never block on telemetry — it's never the user's problem
+
+    def flush(self) -> None:
+        return None
+
+
+def _create_cli_telemetry(endpoint_url: str):
+    try:
+        from backend.adapters.telemetry import create_telemetry
+
+        return create_telemetry(endpoint_url=endpoint_url)
+    except ImportError:
+        if os.environ.get("KMV_TELEMETRY", "").strip().lower() == "noop":
+            return _CliNoOpTelemetry()
+        return _CliHttpTelemetry(endpoint_url)
+
+
 def report(event: Event, kemory_url: str = "") -> None:
     """Best-effort telemetry emit. Never raises. Never blocks for >2s."""
     if not _enabled():
+        return
+    url = (kemory_url or os.environ.get("KEMORY_URL", "")).rstrip("/")
+    if not url:
         return
     payload = {
         "install_id": _telemetry_path().read_text().strip(),
@@ -99,10 +151,4 @@ def report(event: Event, kemory_url: str = "") -> None:
         "duration_ms": event.duration_ms,
         "ts": int(time.time()),
     }
-    url = (kemory_url or os.environ.get("KEMORY_URL", "")).rstrip("/")
-    if not url:
-        return
-    try:
-        httpx.post(f"{url}/api/v1/telemetry", json=payload, timeout=2.0)
-    except Exception:
-        pass  # never block on telemetry — it's never the user's problem
+    _create_cli_telemetry(f"{url}/api/v1/telemetry").track("cli.command", payload)
