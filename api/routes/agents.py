@@ -117,6 +117,7 @@ async def get_agent_endpoint(
 async def approve_agent_endpoint(
     agent_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """Approve a pending agent, transitioning it to 'active' status."""
@@ -134,6 +135,7 @@ async def approve_agent_endpoint(
 async def suspend_agent_endpoint(
     agent_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """Suspend an active agent."""
@@ -151,6 +153,7 @@ async def suspend_agent_endpoint(
 async def revoke_agent_endpoint(
     agent_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently revoke an agent. This action is irreversible."""
@@ -168,6 +171,7 @@ async def revoke_agent_endpoint(
 async def delete_agent_endpoint(
     agent_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """Hard-delete a revoked agent record. Only revoked agents can be deleted."""
@@ -184,6 +188,7 @@ async def delete_agent_endpoint(
 async def generate_token_endpoint(
     agent_id: uuid.UUID,
     auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
     db: AsyncSession = Depends(get_db),
 ):
     """
