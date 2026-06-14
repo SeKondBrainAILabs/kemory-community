@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     debug: bool = False
 
+    # ─── Identity Provider ────────────────────────────────────────
+    # Hosted/default: Keycloak RS256 + internal HS256 fallback + DB-backed
+    # agent API keys. Community: static single-user API-key identity.
+    kmv_identity: str = "keycloak"
+    kemory_local_api_key: str = ""
+    kemory_community_config: str = ""
+
     # ─── CORS ─────────────────────────────────────────────────────
     # P1 #6: stays a CSV string (matches env-var shape) but is validated
     # at model_post_init — invalid entries (missing scheme, etc.) fail

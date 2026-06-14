@@ -18,124 +18,24 @@ import uuid
 import structlog
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt.exceptions import PyJWKClientError
-from s9n_auth.jwt_verify import JwtVerificationError, KeycloakVerifier
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.adapters.identity_provider import get_identity_provider
+from backend.adapters.identity_provider.keycloak_idp import KeycloakIDP, _get_kc_verifier
 from backend.config.settings import settings
 from backend.core.active_org import resolve_active_org
 from backend.core.database import get_db
-from backend.services.auth_service import (
-    AuthContext,
-    _emit_auth_event,
-    authenticate_api_key,
-    decode_access_token,
-)
+from backend.services.auth_service import AuthContext
 
 logger = structlog.get_logger(__name__)
 
 # Bearer token scheme (optional — allows both auth methods)
 bearer_scheme = HTTPBearer(auto_error=False)
 
-# Lazily-built, process-wide Keycloak RS256 verifier (shared s9n-auth). Pinned
-# to RS256 (rejects alg:none / HS256 forgeries) with a Keycloak-style azp/aud
-# client allowlist. require_org is False — kemory runs its own 3-mode org-claim
-# policy (off/shadow/enforce) in _try_keycloak rather than the verifier's
-# fail-closed gate, so the shadow/off behaviours are preserved.
-_kc_verifier: KeycloakVerifier | None = None
-
-
-def _get_kc_verifier() -> KeycloakVerifier:
-    global _kc_verifier
-    if _kc_verifier is None:
-        client_ids = tuple(settings.keycloak_client_ids_list)
-        _kc_verifier = KeycloakVerifier(
-            issuer=settings.keycloak_issuer_url,
-            audience=settings.keycloak_client_ids_list,
-            jwks_uri=settings.keycloak_jwks_url,
-            allowed_azp=client_ids,
-            org_claim=settings.tenant_org_claim,
-            require_org=False,
-            on_event=_emit_auth_event,
-        )
-    return _kc_verifier
-
 
 async def _try_keycloak(token: str) -> AuthContext | None:
-    """Attempt Keycloak RS256 validation. Returns None if Keycloak is disabled or unreachable.
-
-    WS-2: extracts the tenant claim (settings.tenant_org_claim, default
-    "org_id") into AuthContext.org_id. Behaviour when the claim is missing
-    is gated on settings.tenant_enforcement:
-      * "off"     — accept token, set org_id = legacy sentinel (current default)
-      * "shadow"  — accept token, log a violation, set org_id = sentinel
-      * "enforce" — raise 401 missing_org_claim (caller must catch HTTPException)
-    """
-    if not settings.keycloak_enabled:
-        return None
-
-    try:
-        # Shared verifier does all crypto/claim hardening (RS256 pinning,
-        # signature, issuer, expiry, azp/aud allowlist) and hands back the
-        # validated claims; kemory maps them into its own identity shape below.
-        claims = _get_kc_verifier().verify_claims(token)
-    except JwtVerificationError as exc:
-        # Decision: JWKS unreachable (network outage or a key-rotation cache
-        # miss) is treated as "Keycloak down" → fall through to the HS256 path,
-        # preserving resilience. Any other failure (bad signature/alg/issuer/
-        # expiry/client) just isn't a token we accept here; return None so the
-        # HS256 path gets a chance and, failing that, the request 401s.
-        if isinstance(exc.__cause__, PyJWKClientError):
-            logger.warning("keycloak.jwks_unreachable.fallthrough", error=str(exc))
-        return None
-
-    # Extract realm roles for scopes (kemory's admin/beta guards read .scopes)
-    # plus client-specific roles for the WS-2 roles list (org_admin, ...).
-    realm_access = claims.get("realm_access", {})
-    scopes = realm_access.get("roles", [])
-
-    client_id = settings.keycloak_client_id
-    resource_access = claims.get("resource_access", {})
-    client_roles = resource_access.get(client_id, {}).get("roles", [])
-    # Any role from realm_access OR resource_access.kemory-api is fair game for
-    # role checks. Keep both lists addressable.
-    roles = sorted({*scopes, *client_roles})
-
-    # WS-2: tenant claim 3-mode policy. The verifier is configured
-    # require_org=False, so kemory keeps full control of off/shadow/enforce.
-    org_claim = claims.get(settings.tenant_org_claim)
-    if not org_claim:
-        mode = settings.tenant_enforcement
-        if mode == "enforce":
-            logger.warning(
-                "keycloak.missing_org_claim.reject",
-                sub=claims.get("sub"),
-                azp=claims.get("azp"),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="missing_org_claim",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if mode == "shadow":
-            logger.warning(
-                "kemory.tenancy.violation",
-                kind="missing_org_claim",
-                sub=claims.get("sub"),
-                azp=claims.get("azp"),
-                mode=mode,
-            )
-        org_claim = settings.tenant_legacy_sentinel
-
-    return AuthContext(
-        user_id=uuid.UUID(claims["sub"]),
-        agent_id=None,
-        agent_name=claims.get("preferred_username", claims.get("email", "")),
-        scopes=scopes,
-        roles=roles,
-        auth_method="keycloak",
-        org_id=org_claim,
-    )
+    """Compatibility wrapper for tests that pin the hosted Keycloak mapping."""
+    return await KeycloakIDP(verifier_factory=_get_kc_verifier).verify_keycloak_token(token)
 
 
 async def get_auth_context(
@@ -160,18 +60,14 @@ async def get_auth_context(
     settled. Header on the Keycloak / HS256 paths is silently ignored.
     """
     auth: AuthContext | None = None
+    identity_provider = get_identity_provider()
     if credentials and credentials.credentials:
         token = credentials.credentials
-
-        # Try Keycloak RS256 first (if enabled)
-        auth = await _try_keycloak(token)
-        if auth is None:
-            # Fall back to internal HS256 JWT
-            auth = decode_access_token(token)
+        auth = await identity_provider.verify_bearer(token)
 
     # Try API key
     if auth is None and x_api_key:
-        auth = await authenticate_api_key(x_api_key, db)
+        auth = await identity_provider.verify_api_key(x_api_key, db)
 
     if auth is None:
         return None

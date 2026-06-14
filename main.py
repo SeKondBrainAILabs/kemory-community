@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.adapters.blob_store import get_blob_backend_name
 from backend.api.routes.agents import router as agents_router
@@ -30,6 +31,8 @@ from backend.api.routes.permissions import gatekeeper_router, permissions_router
 from backend.api.routes.security import router as security_router
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
 from backend.api.routes.user import router as user_router  # KMV-CTX-01: user context
+from backend.adapters.identity_provider import configure_identity_provider
+from backend.adapters.identity_provider.local_single_user import JWTRequiresHostedKemory
 from backend.config.settings import settings
 from backend.core.body_size_limit import body_size_limit_middleware
 from backend.core.database import close_db, init_db
@@ -53,9 +56,12 @@ async def lifespan(app: FastAPI):
         version=settings.app_version,
         environment=settings.environment,
         blob_backend=get_blob_backend_name(),
+        identity_provider=settings.kmv_identity,
     )
 
     # ─── Startup ──────────────────────────────────────────────────
+    configure_identity_provider(settings.kmv_identity)
+
     try:
         # Initialize database (create tables in dev mode)
         await init_db()
@@ -91,6 +97,11 @@ app = FastAPI(
     redoc_url="/redoc" if settings.environment == "development" else None,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(JWTRequiresHostedKemory)
+async def jwt_requires_hosted_kemory_handler(_request, exc: JWTRequiresHostedKemory):
+    return JSONResponse(status_code=exc.status_code, content=exc.body)
 
 # ─── Middleware ───────────────────────────────────────────────────
 # CORS — wildcard allow_origins with allow_credentials=False is the
