@@ -18,17 +18,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
+from uuid import UUID
 
+from backend.adapters.vector_store import VectorStore, create_vector_store, resolve_vector_backend
+from backend.adapters.vector_store.weaviate_backend import WeaviateBackend
 from kemory.models.episode import EpisodeCreate, EpisodeRecord
 from kemory.storage.base import StorageBackend, escape_like
 
 logger = logging.getLogger(__name__)
 
 _WEAVIATE_COLLECTION = "S9nmvEpisode"
+_PLATFORM_VECTOR_NAMESPACE = "episodes"
+_PLATFORM_VECTOR_USER_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
 class PlatformStorageBackend(StorageBackend):
@@ -64,18 +70,22 @@ class PlatformStorageBackend(StorageBackend):
         falkordb_url: str = "redis://localhost:6379",
         falkordb_graph: str = "kemory_memory",
         weaviate_url: str = "http://localhost:8080",
+        vector_backend: str | None = None,
+        vector_store: VectorStore | None = None,
         encoder_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
         self._postgres_uri = postgres_uri
         self._falkordb_url = falkordb_url
         self._falkordb_graph = falkordb_graph
         self._weaviate_url = weaviate_url
+        self._vector_backend = resolve_vector_backend(vector_backend or os.environ.get("KMV_VECTOR_BACKEND"))
         self._encoder_fn = encoder_fn
 
         # Set during initialise()
         self._pg_engine: Any = None
         self._falkordb_conn: Any = None  # falkordb.Graph instance
         self._weaviate_client: Any = None
+        self._vector_store: VectorStore | None = vector_store
         self._initialised = False
         self._closed = False
 
@@ -121,32 +131,18 @@ class PlatformStorageBackend(StorageBackend):
                 "falkordb package is not installed. Install it with: pip install falkordb"
             )  # pragma: no cover
 
-        # ── Weaviate ──────────────────────────────────────────────────
-        try:
-            import weaviate as _weaviate
-
-            def _connect_weaviate() -> Any:
-                parsed = urlparse(self._weaviate_url)
-                host = parsed.hostname or "localhost"
-                port = parsed.port or 8080
-                secure = parsed.scheme == "https"
-                return _weaviate.connect_to_custom(
-                    http_host=host,
-                    http_port=port,
-                    http_secure=secure,
-                    grpc_host=host,
-                    grpc_port=50051,
-                    grpc_secure=secure,
-                    skip_init_checks=True,
-                )
-
-            self._weaviate_client = await asyncio.to_thread(_connect_weaviate)
-            await asyncio.to_thread(self._ensure_weaviate_collection)
-            logger.info("PlatformStorageBackend: Weaviate client connected.")
-        except ImportError:  # pragma: no cover
-            raise RuntimeError(
-                "weaviate-client package is not installed. Install it with: pip install weaviate-client"
-            )  # pragma: no cover
+        # ── Vector Store ──────────────────────────────────────────────
+        self._vector_store = self._vector_store or create_vector_store(
+            self._vector_backend,
+            postgres_engine=self._pg_engine,
+            weaviate_url=self._weaviate_url,
+        )
+        initialise = getattr(self._vector_store, "initialise", None)
+        if initialise is not None:
+            await initialise()
+        if isinstance(self._vector_store, WeaviateBackend):
+            self._weaviate_client = self._vector_store.client
+        logger.info("PlatformStorageBackend: vector store connected (%s).", self._vector_backend)
 
         self._initialised = True
 
@@ -188,23 +184,9 @@ class PlatformStorageBackend(StorageBackend):
 
     def _ensure_weaviate_collection(self) -> None:
         """Create the S9nmvEpisode Weaviate collection if it does not exist."""
-        try:
-            from weaviate.classes.config import Configure, DataType, Property
-
-            existing = list(self._weaviate_client.collections.list_all().keys())
-            if _WEAVIATE_COLLECTION not in existing:
-                self._weaviate_client.collections.create(
-                    name=_WEAVIATE_COLLECTION,
-                    vectorizer_config=Configure.Vectorizer.none(),
-                    properties=[
-                        Property(name="episode_id", data_type=DataType.TEXT),
-                        Property(name="org_id", data_type=DataType.TEXT),
-                        Property(name="content", data_type=DataType.TEXT),
-                    ],
-                )
-                logger.info("Weaviate collection %s created.", _WEAVIATE_COLLECTION)
-        except Exception as exc:
-            logger.warning("Could not ensure Weaviate collection: %s", exc)
+        vector_store = self._active_vector_store()
+        if isinstance(vector_store, WeaviateBackend):
+            vector_store.ensure_collection()
 
     async def close(self) -> None:
         """Release PostgreSQL engine and Weaviate client."""
@@ -212,9 +194,12 @@ class PlatformStorageBackend(StorageBackend):
             return
         if self._pg_engine is not None:
             await self._pg_engine.dispose()
-        if self._weaviate_client is not None:
+        vector_store = self._active_vector_store()
+        if vector_store is not None:
             try:
-                await asyncio.to_thread(self._weaviate_client.close)
+                close = getattr(vector_store, "close", None)
+                if close is not None:
+                    await close()
             except Exception:
                 pass
         self._closed = True
@@ -239,6 +224,14 @@ class PlatformStorageBackend(StorageBackend):
             return encode
         except Exception:
             return None
+
+    def _active_vector_store(self) -> VectorStore | None:
+        if self._vector_store is None and self._weaviate_client is not None:
+            self._vector_store = WeaviateBackend(
+                weaviate_url=self._weaviate_url,
+                client=self._weaviate_client,
+            )
+        return self._vector_store
 
     # ------------------------------------------------------------------
     # Episode CRUD (PostgreSQL)
@@ -284,29 +277,26 @@ class PlatformStorageBackend(StorageBackend):
                 },
             )
 
-        # Weaviate write — best-effort; failure does NOT roll back PostgreSQL
+        # Vector-store write — best-effort; failure does NOT roll back PostgreSQL.
         encoder = self._get_encoder()
-        if encoder is not None and self._weaviate_client is not None:
+        vector_store = self._active_vector_store()
+        if encoder is not None and vector_store is not None:
             try:
                 vector = encoder(content)
-                episode_id = record.id
-                org_id = record.org_id or ""
-
-                def _insert() -> None:
-                    col = self._weaviate_client.collections.get(_WEAVIATE_COLLECTION)
-                    col.data.insert(
-                        properties={
-                            "episode_id": episode_id,
-                            "org_id": org_id,
-                            "content": content,
-                        },
-                        vector=vector,
-                        uuid=episode_id,
-                    )
-
-                await asyncio.to_thread(_insert)
+                await vector_store.upsert(
+                    memory_id=UUID(record.id),
+                    namespace=_PLATFORM_VECTOR_NAMESPACE,
+                    user_id=_PLATFORM_VECTOR_USER_ID,
+                    org_id=record.org_id or "",
+                    embedding=vector,
+                    metadata={
+                        "episode_id": record.id,
+                        "org_id": record.org_id or "",
+                        "content": content,
+                    },
+                )
             except Exception as exc:
-                logger.warning("Weaviate insert failed for episode %s: %s", record.id, exc)
+                logger.warning("Vector-store insert failed for episode %s: %s", record.id, exc)
 
         logger.debug("PlatformStorageBackend: added episode %s", record.id)
         return record.id
@@ -421,46 +411,38 @@ class PlatformStorageBackend(StorageBackend):
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """
-        Semantic similarity search via Weaviate near-vector query.
+        Semantic similarity search via the configured VectorStore.
 
-        Degrades to ILIKE text search if the encoder or Weaviate client is
-        unavailable, or if the Weaviate query fails.
+        Degrades to ILIKE text search if the encoder or vector store is
+        unavailable, or if the vector query fails.
         """
         self._assert_initialised()
         encoder = self._get_encoder()
+        vector_store = self._active_vector_store()
 
-        if encoder is None or self._weaviate_client is None:
+        if encoder is None or vector_store is None:
             return await self.search_episodes(content, limit=limit, org_id=org_id)
 
         try:
-            from weaviate.classes.query import Filter as WvFilter
-            from weaviate.classes.query import MetadataQuery
-
             vector = encoder(content)
-            wv_filter = WvFilter.by_property("org_id").equal(org_id) if org_id else None
-            meta_query = MetadataQuery(distance=True)
-
-            def _search() -> list[Any]:
-                col = self._weaviate_client.collections.get(_WEAVIATE_COLLECTION)
-                result = col.query.near_vector(
-                    near_vector=vector,
-                    limit=limit,
-                    return_metadata=meta_query,
-                    filters=wv_filter,
-                )
-                return result.objects
-
-            objects = await asyncio.to_thread(_search)
+            hits = await vector_store.search(
+                namespace=_PLATFORM_VECTOR_NAMESPACE,
+                user_id=_PLATFORM_VECTOR_USER_ID,
+                org_id=org_id or "",
+                query_embedding=vector,
+                limit=limit,
+            )
         except Exception as exc:
-            logger.warning("Weaviate search failed: %s — falling back to text search", exc)
+            logger.warning("Vector-store search failed: %s — falling back to text search", exc)
             return await self.search_episodes(content, limit=limit, org_id=org_id)
 
-        if not objects:
+        if not hits:
             return []
 
-        ids = [obj.properties.get("episode_id", str(obj.uuid)) for obj in objects]
-        distances = {
-            obj.properties.get("episode_id", str(obj.uuid)): obj.metadata.distance for obj in objects
+        ids = [str(hit.metadata.get("episode_id") or hit.metadata.get("memory_id") or hit.memory_id) for hit in hits]
+        scores = {
+            str(hit.metadata.get("episode_id") or hit.metadata.get("memory_id") or hit.memory_id): hit.score
+            for hit in hits
         }
 
         # Fetch full metadata from PostgreSQL
@@ -480,7 +462,7 @@ class PlatformStorageBackend(StorageBackend):
         for eid in ids:
             row = rows_by_id.get(eid)
             if row:
-                row["similarity_score"] = 1.0 - (distances.get(eid) or 0.0)
+                row["similarity_score"] = scores.get(eid, 0.0)
                 out.append(row)
         return out
 
@@ -667,7 +649,7 @@ class PlatformStorageBackend(StorageBackend):
         """Return health status for PostgreSQL, FalkorDB, and Weaviate."""
         pg_ok = False
         falkordb_ok = False
-        weaviate_ok = False
+        vector_ok = False
 
         if self._pg_engine is not None:
             try:
@@ -686,19 +668,19 @@ class PlatformStorageBackend(StorageBackend):
             except Exception:
                 pass
 
-        if self._weaviate_client is not None:
+        vector_store = self._active_vector_store()
+        if vector_store is not None:
             try:
-                ok = await asyncio.to_thread(self._weaviate_client.is_ready)
-                weaviate_ok = bool(ok)
+                vector_ok = bool(await vector_store.healthcheck())
             except Exception:
                 pass
 
-        all_ok = pg_ok and falkordb_ok and weaviate_ok
+        all_ok = pg_ok and falkordb_ok and vector_ok
         return {
             "status": "ok" if all_ok else "degraded",
             "backend": "PlatformStorageBackend",
             "mode": self.MODE,
             "postgres": "ok" if pg_ok else "error",
             "falkordb": "ok" if falkordb_ok else "error",
-            "weaviate": "ok" if weaviate_ok else "error",
+            "weaviate": "ok" if vector_ok else "error",
         }

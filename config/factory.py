@@ -104,14 +104,17 @@ class BackendFactory:
         from kemory.storage.platform import PlatformStorageBackend
 
         settings = PlatformSettings()
+        vector_backend = os.environ.get("KMV_VECTOR_BACKEND", settings.vector_backend)
         logger.info(
-            "BackendFactory: creating PlatformStorageBackend (postgres=%s, falkordb=%s)",
+            "BackendFactory: creating PlatformStorageBackend (postgres=%s, falkordb=%s, vector=%s)",
             settings.postgres_uri,
             settings.falkordb_url,
+            vector_backend,
         )
         return PlatformStorageBackend(
             postgres_uri=settings.postgres_uri,
             falkordb_url=settings.falkordb_url,
             falkordb_graph=settings.falkordb_graph,
             weaviate_url=settings.weaviate_url,
+            vector_backend=vector_backend,
         )

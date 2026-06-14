@@ -75,3 +75,6 @@ class PlatformSettings(BaseSettings):
 
     weaviate_url: str = "http://localhost:8080"
     """Weaviate HTTP endpoint."""
+
+    vector_backend: str = "weaviate"
+    """Vector-store backend: 'weaviate' (hosted default) or 'pgvector'."""
