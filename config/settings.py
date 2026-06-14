@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # ─── Weaviate ─────────────────────────────────────────────────
     weaviate_url: str = "http://localhost:8080"
 
+    # ─── Vector Store ─────────────────────────────────────────────
+    # Hosted default remains Weaviate. Community edition can run with
+    # KMV_VECTOR_BACKEND=pgvector.
+    kmv_vector_backend: str = "weaviate"
+
     # ─── JWT Authentication (internal HS256 for agents) ─────────
     # SECURITY: fail-closed in non-development environments. The previous
     # default ("dev-secret-change-in-production") meant a misconfigured env

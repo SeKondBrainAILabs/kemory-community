@@ -16,6 +16,7 @@ from backend.models.audit import AuditLog
 from backend.models.consent import ConsentRequest
 from backend.models.memory import Memory
 from backend.models.memory_event import MemoryEvent
+from backend.models.memory_vector import MemoryVector
 from backend.models.namespace_policy import NamespacePolicy
 from backend.models.permission import PermissionRule
 from backend.models.session_summary import SessionSummary
@@ -32,6 +33,7 @@ __all__ = [
     "ConsentRequest",
     "Memory",
     "MemoryEvent",
+    "MemoryVector",
     "NamespacePolicy",
     "SessionSummary",
     "Team",

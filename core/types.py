@@ -16,7 +16,7 @@ Usage in models:
 import json
 import uuid
 
-from sqlalchemy import String, Text, TypeDecorator
+from sqlalchemy import LargeBinary, String, Text, TypeDecorator
 from sqlalchemy.types import CHAR
 
 
@@ -112,3 +112,29 @@ class IPAddress(TypeDecorator):
         if value is None:
             return value
         return str(value)
+
+
+class VectorEmbedding(TypeDecorator):
+    """
+    Platform-independent vector column.
+
+    PostgreSQL uses pgvector's native Vector type. SQLite/PGlite-friendly
+    local paths use a BLOB column; adapter code serialises values explicitly.
+    """
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def __init__(self, dimension: int = 384, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dimension = dimension
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            try:
+                from pgvector.sqlalchemy import Vector
+
+                return dialect.type_descriptor(Vector(self.dimension))
+            except ImportError:
+                return dialect.type_descriptor(Text())
+        return dialect.type_descriptor(LargeBinary())
