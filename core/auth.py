@@ -273,6 +273,21 @@ async def require_auth(
         }
     )
 
+    # ADR-012 Phase 2 — fail-closed for M3 denies. When the resolver denies a
+    # human caller (non-member of the requested org, or core_backend
+    # unreachable) it returns an empty org. Reject here so the denial covers
+    # EVERY route, including the many that depend only on require_auth and never
+    # reach get_tenant_scope's enforce check (e.g. the write path that stamps
+    # org_id=auth.org_id). Scoped to m3 + keycloak so legacy mode and agents
+    # are byte-for-byte unchanged.
+    if settings.active_org_mode == "m3" and auth.auth_method == "keycloak" and not auth.org_id:
+        logger.warning("auth.m3_no_active_org.reject", user_id=str(auth.user_id))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="no_active_org",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Seed the tenant ContextVars from the resolved auth so the per-session
     # SQL filter has something non-empty to match against. Falls back to
     # the legacy sentinel for tokens minted before the multi-tenant
