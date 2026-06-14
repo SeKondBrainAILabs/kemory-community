@@ -87,7 +87,10 @@ class MemberResponse(BaseModel):
 
 
 def _require_org_admin(scope: TenantScope) -> None:
-    if not scope.has_role("org_admin"):
+    # ADR-012 Phase 2: org-admin is now the *active-org* membership role
+    # (org_role admin|owner) when resolved (m3), falling back to the global
+    # Keycloak org_admin realm role in legacy mode. See TenantScope.is_org_admin.
+    if not scope.is_org_admin():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="org_admin role required",
@@ -112,7 +115,7 @@ async def _require_team_owner_or_admin(
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-    if scope.has_role("org_admin"):
+    if scope.is_org_admin():
         return team
 
     # Owner check.

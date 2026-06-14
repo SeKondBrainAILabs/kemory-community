@@ -137,6 +137,28 @@ class TenantScope:
                 detail=f"requires org role '{minimum}' or higher",
             )
 
+    def is_org_admin(self) -> bool:
+        """True if the caller is an admin (or owner) of the active org.
+
+        Bridges the two role systems during the ADR-012 migration so a route
+        gate works correctly in both modes:
+
+          * **m3** (``org_role`` populated) — *authoritative*: the per-org
+            membership role must be ``admin`` or ``owner``. A stale global
+            ``org_admin`` realm role does NOT grant access here.
+          * **legacy** (``org_role`` is None) — fall back to the global
+            Keycloak ``org_admin`` realm role, kemory's pre-ADR-012 admin
+            signal. This keeps legacy behavior byte-for-byte identical.
+
+        Unlike ``has_org_role`` (permissive when None), this is **not**
+        permissive when None — it defers to the real legacy check — so
+        replacing an existing ``has_role('org_admin')`` gate with this is
+        safe and introduces no regression.
+        """
+        if self.org_role is not None:
+            return self.has_org_role("admin")
+        return self.has_role("org_admin")
+
 
 # ─── Context variables ─────────────────────────────────────────────────────
 # These thread the active tenant context through async call stacks without
