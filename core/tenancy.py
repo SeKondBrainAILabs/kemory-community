@@ -71,6 +71,16 @@ logger = structlog.get_logger(__name__)
 # ─── Public types ──────────────────────────────────────────────────────────
 
 
+# ADR-012 Phase 2: the active-org membership role hierarchy. Higher rank ⇒ more
+# privilege. This is the per-org role from core_backend membership
+# (owner/admin/member), NOT the global Keycloak realm/client roles in
+# ``TenantScope.roles`` — the two are deliberately distinct (ADR-012: org_role
+# must reflect the active org, not global realm roles). An unknown role string
+# ranks 0 (denied by any gate). ``None`` means "no role information resolved
+# yet" and is handled permissively by the gate (see ``has_org_role``).
+ORG_ROLE_RANK: dict[str, int] = {"member": 1, "admin": 2, "owner": 3}
+
+
 @dataclass(frozen=True)
 class TenantScope:
     """Resolved per-request tenant context.
@@ -84,6 +94,11 @@ class TenantScope:
     team_ids: tuple[str, ...]
     roles: tuple[str, ...]
     user_id: str  # str form for use in raw SQL bind params
+    # ADR-012 Phase 2: caller's role in the active org + the org's type, as
+    # resolved by the active-org seam. None ⇒ no role/type information (the
+    # legacy mirror path); write gates treat None permissively.
+    org_role: str | None = None  # owner | admin | member | None
+    org_type: str | None = None  # personal | organisation | family | None
 
     @property
     def is_legacy(self) -> bool:
@@ -92,6 +107,35 @@ class TenantScope:
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
+
+    def has_org_role(self, minimum: str) -> bool:
+        """True if the caller's *active-org* role meets ``minimum``.
+
+        ADR-012 Phase 2 (S2). Distinct from ``has_role`` — that checks the
+        global Keycloak roles list; this checks the per-org membership role
+        (``org_role``: owner > admin > member).
+
+        ``org_role is None`` ⇒ **permissive** (returns True): no role
+        information has been resolved yet (the legacy mirror path, pre-spike),
+        so the gate must not change behavior. Once a resolution mechanism
+        (M2/M3) populates ``org_role``, the gate becomes live automatically.
+        An unknown role string ranks 0 and fails any gate.
+        """
+        if self.org_role is None:
+            return True
+        return ORG_ROLE_RANK.get(self.org_role, 0) >= ORG_ROLE_RANK[minimum]
+
+    def require_org_role(self, minimum: str) -> None:
+        """Raise 403 unless the active-org role meets ``minimum``.
+
+        Inert while ``org_role`` is None (see ``has_org_role``), so wiring this
+        onto a write route today is a no-op and introduces no regression.
+        """
+        if not self.has_org_role(minimum):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"requires org role '{minimum}' or higher",
+            )
 
 
 # ─── Context variables ─────────────────────────────────────────────────────
@@ -103,6 +147,12 @@ _current_org_id: contextvars.ContextVar[str] = contextvars.ContextVar("kemory_cu
 _current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("kemory_current_user_id", default="")
 _current_team_ids: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "kemory_current_team_ids", default=()
+)
+# ADR-012 Phase 2: the caller's role in the active org. Threaded as a
+# ContextVar so the write-gate (S2) can read it without taking a TenantScope.
+# None ⇒ no role information (legacy path) ⇒ gates are permissive.
+_current_org_role: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "kemory_current_org_role", default=None
 )
 _bypass_filter: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "kemory_bypass_tenant_filter", default=False
@@ -120,6 +170,11 @@ def current_user_id() -> str:
 
 def current_team_ids() -> tuple[str, ...]:
     return _current_team_ids.get()
+
+
+def current_org_role() -> str | None:
+    """Return the caller's role in the active org, or None when unknown."""
+    return _current_org_role.get()
 
 
 @contextmanager
@@ -198,10 +253,16 @@ async def get_tenant_scope(
         team_ids=team_ids,
         roles=tuple(auth.roles),
         user_id=str(auth.user_id),
+        # ADR-012 Phase 2: carry the active-org role/type resolved upstream
+        # by require_auth (the active-org seam). None until a resolution
+        # mechanism (M2/M3) populates them.
+        org_role=auth.org_role,
+        org_type=auth.org_type,
     )
     _current_org_id.set(scope.org_id)
     _current_user_id.set(scope.user_id)
     _current_team_ids.set(scope.team_ids)
+    _current_org_role.set(scope.org_role)
     # WS-8: stash org on request.state so the metrics middleware can label
     # by org after call_next. request.state (ASGI scope) survives the
     # BaseHTTPMiddleware boundary; the ContextVar above does not.

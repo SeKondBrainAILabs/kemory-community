@@ -16,13 +16,14 @@ Usage in routes:
 import uuid
 
 import structlog
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import PyJWKClientError
 from s9n_auth.jwt_verify import JwtVerificationError, KeycloakVerifier
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
+from backend.core.active_org import resolve_active_org
 from backend.core.database import get_db
 from backend.services.auth_service import (
     AuthContext,
@@ -230,7 +231,9 @@ async def get_auth_context(
 
 
 async def require_auth(
+    request: Request,
     auth: AuthContext | None = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
 ) -> AuthContext:
     """Require authentication — raises 401 if no valid auth is provided.
 
@@ -253,14 +256,32 @@ async def require_auth(
             detail="Authentication required. Provide a Bearer token or X-API-Key header.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Seed the tenant ContextVars from auth so the per-session SQL
-    # filter has something non-empty to match against. Falls back to
+
+    # ADR-012 Phase 2 — active-org resolution seam. This is the single point
+    # where kemory decides which org the request is authorized against. Today
+    # it is identity (returns the org already on the token); the M2/M3 body
+    # (post-spike) is the only thing that changes. Overwriting auth here means
+    # every downstream consumer — the write path (org_id=auth.org_id), the
+    # ContextVar seeding below, and get_tenant_scope (which depends on this
+    # function) — inherits the resolved org with no further plumbing.
+    resolved = await resolve_active_org(auth, request, db)
+    auth = auth.model_copy(
+        update={
+            "org_id": resolved.org_id,
+            "org_role": resolved.org_role,
+            "org_type": resolved.org_type,
+        }
+    )
+
+    # Seed the tenant ContextVars from the resolved auth so the per-session
+    # SQL filter has something non-empty to match against. Falls back to
     # the legacy sentinel for tokens minted before the multi-tenant
     # rollout. Lazy-import to avoid an auth → tenancy → settings cycle.
     try:
         from backend.config.settings import settings as _settings
         from backend.core.tenancy import (
             _current_org_id,
+            _current_org_role,
             _current_team_ids,
             _current_user_id,
         )
@@ -269,6 +290,7 @@ async def require_auth(
         _current_org_id.set(org_id)
         _current_user_id.set(str(auth.user_id))
         _current_team_ids.set(())
+        _current_org_role.set(auth.org_role)
     except Exception:
         # Tenancy module unavailable — proceed without the ContextVar.
         pass

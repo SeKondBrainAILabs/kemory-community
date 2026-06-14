@@ -160,6 +160,15 @@ class AuthContext(_S9nAuthContext):
     # Not present on any token; recomputed per-request with a 60s cache.
     team_ids: list[str] = []
 
+    # ADR-012 Phase 2: the caller's role + the org's type for the *active*
+    # org, populated by the active-org resolution seam (backend/core/auth.py
+    # ::require_auth → backend/core/active_org.py). Both default to None —
+    # "no role/type information" — which write gates treat permissively, so
+    # single-tenant code paths are unchanged until a resolution mechanism
+    # (M2/M3) populates them.
+    org_role: str | None = None  # owner | admin | member | None
+    org_type: str | None = None  # personal | organisation | family | None
+
 
 class TokenPayload(BaseModel):
     """JWT token payload structure."""
