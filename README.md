@@ -17,12 +17,12 @@ See [PROJECT_PLAN.md](PROJECT_PLAN.md) for what's coming.
 Two commands to a working memory service for your AI agents:
 
 ```bash
-npx kemory-community@latest init   # prompts for Groq key
-npx kemory-community@latest up     # boots API + dashboard
+npx kemory-community@latest init --runtime docker
+npx kemory-community@latest up
 ```
 
-Local API at `http://localhost:8100`, dashboard at
-`http://localhost:5173`. Same REST + MCP wire protocol as hosted
+Local Docker API at `http://127.0.0.1:8111`, dashboard at
+`http://127.0.0.1:5175`. Same REST + MCP wire protocol as hosted
 Kemory, so memories are portable.
 
 ## What ships in v0.1

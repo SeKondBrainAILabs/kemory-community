@@ -31,10 +31,12 @@
   },
   "scripts": {
     "postinstall": "node postinstall.js",
+    "test": "node scripts/test-cli.js",
     "prepublishOnly": "node scripts/verify-package.js"
   },
   "files": [
     "bin/",
+    "docs/",
     "postinstall.js",
     "scripts/",
     "README.md",
