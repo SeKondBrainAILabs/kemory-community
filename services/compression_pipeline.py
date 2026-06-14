@@ -43,7 +43,6 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.database import _get_session_factory
 from backend.models.memory import Memory
 
 logger = structlog.get_logger(__name__)
@@ -186,28 +185,11 @@ async def _run_compression(
                       (threshold=3, requires near-duplicate cluster)
     """
     try:
-        async with _get_session_factory()() as db:
-            await _promote_to_l2(db, memory_id)
-            await db.commit()
+        from backend.plugins.cognition import PipelineContext, get_pipeline_stages
 
-        async with _get_session_factory()() as db:
-            await _maybe_summarize_l3(db, user_id, namespace, trigger_memory_id=memory_id)
-            await db.commit()
-
-        # Session-level L3 only runs if this memory has a session_id.
-        async with _get_session_factory()() as db:
-            await _maybe_summarize_session_l3(db, user_id, memory_id, namespace)
-            await db.commit()
-
-        async with _get_session_factory()() as db:
-            await _maybe_synthesize_l3_1(db, user_id, namespace)
-            await db.commit()
-
-        # Stage 5: after synthesis is fresh, compare this namespace's summary
-        # against other namespace summaries to detect merge candidates.
-        async with _get_session_factory()() as db:
-            await _check_namespace_content_similarity(user_id, namespace, db)
-            await db.commit()
+        context = PipelineContext(user_id=user_id, memory_id=memory_id, namespace=namespace)
+        for stage in get_pipeline_stages():
+            await stage.run(context)
 
     except Exception as exc:
         logger.warning(

@@ -5,6 +5,7 @@ FastAPI application with lifecycle management for all service connections.
 Follows the spec architecture: S9N Memory Vault API Gateway is the single entry point.
 """
 
+import os
 from contextlib import asynccontextmanager
 
 import structlog
@@ -13,6 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.adapters.blob_store import get_blob_backend_name
+from backend.adapters.identity_provider import configure_identity_provider
+from backend.adapters.identity_provider.local_single_user import JWTRequiresHostedKemory
+from backend.adapters.telemetry import configure_telemetry, get_telemetry, resolve_telemetry_backend
 from backend.api.routes.agents import router as agents_router
 from backend.api.routes.ai_chats import router as ai_chats_router  # chats-v1
 from backend.api.routes.artifacts import local_fs_router  # v3.35.0 project files
@@ -31,8 +35,6 @@ from backend.api.routes.permissions import gatekeeper_router, permissions_router
 from backend.api.routes.security import router as security_router
 from backend.api.routes.teams import router as teams_router  # WS-9: team admin
 from backend.api.routes.user import router as user_router  # KMV-CTX-01: user context
-from backend.adapters.identity_provider import configure_identity_provider
-from backend.adapters.identity_provider.local_single_user import JWTRequiresHostedKemory
 from backend.config.settings import settings
 from backend.core.body_size_limit import body_size_limit_middleware
 from backend.core.database import close_db, init_db
@@ -57,10 +59,12 @@ async def lifespan(app: FastAPI):
         environment=settings.environment,
         blob_backend=get_blob_backend_name(),
         identity_provider=settings.kmv_identity,
+        telemetry=resolve_telemetry_backend(os.environ.get("KMV_TELEMETRY", "posthog")),
     )
 
     # ─── Startup ──────────────────────────────────────────────────
     configure_identity_provider(settings.kmv_identity)
+    configure_telemetry(os.environ.get("KMV_TELEMETRY", "posthog"))
 
     try:
         # Initialize database (create tables in dev mode)
@@ -84,6 +88,7 @@ async def lifespan(app: FastAPI):
 
     # ─── Shutdown ─────────────────────────────────────────────────
     logger.info("kora.shutdown")
+    get_telemetry().flush()
     await close_db()
     await close_redis()
 
