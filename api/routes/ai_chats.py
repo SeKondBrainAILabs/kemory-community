@@ -493,7 +493,12 @@ async def stream_artifact_blob_endpoint(
         )
 
     try:
-        result = get_artifact(meta.get("storage_bucket"), meta["storage_key"])
+        result = get_artifact(
+            meta.get("storage_bucket"),
+            meta["storage_key"],
+            user_id=row.user_id,
+            org_id=row.org_id,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=502,

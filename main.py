@@ -11,9 +11,11 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.adapters.blob_store import get_blob_backend_name
 from backend.api.routes.agents import router as agents_router
 from backend.api.routes.ai_chats import router as ai_chats_router  # chats-v1
-from backend.api.routes.artifacts import router as artifacts_router  # v3.35.0 project files
+from backend.api.routes.artifacts import local_fs_router  # v3.35.0 project files
+from backend.api.routes.artifacts import router as artifacts_router
 from backend.api.routes.audit import router as audit_router
 from backend.api.routes.chat_mappings import router as chat_mappings_router  # chats-v1
 from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI):
         service=settings.app_name,
         version=settings.app_version,
         environment=settings.environment,
+        blob_backend=get_blob_backend_name(),
     )
 
     # ─── Startup ──────────────────────────────────────────────────
@@ -166,3 +169,4 @@ app.include_router(chat_mappings_router)
 app.include_router(extension_keys_router)
 # ── v3.35.0: namespace / memory level project files ───────────────
 app.include_router(artifacts_router)
+app.include_router(local_fs_router)

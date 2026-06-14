@@ -314,7 +314,7 @@ async def delete_artifact_row(
         storage_key = storage_bucket = None
     if storage_key:
         try:
-            delete_artifact(bucket=storage_bucket, key=storage_key)
+            delete_artifact(bucket=storage_bucket, key=storage_key, user_id=row.user_id, org_id=row.org_id)
         except Exception as exc:
             logger.warning(
                 "artifact_service.storage_delete_failed",

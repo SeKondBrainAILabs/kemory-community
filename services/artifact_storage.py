@@ -67,6 +67,13 @@ from typing import IO
 
 import structlog
 
+from backend.adapters.blob_store import (
+    LocalFSBlobStore,
+    MinioBlobStore,
+    get_blob_backend_name,
+    get_blob_store,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -142,6 +149,9 @@ def verify_signed_token(chat_id: str, artifact_id: str, expires_at: int, sig: st
 def build_signed_blob_url(
     chat_id: str | uuid.UUID,
     artifact_id: str | uuid.UUID,
+    storage_key: str | None = None,
+    user_id: str | uuid.UUID | None = None,
+    org_id: str | uuid.UUID | None = None,
     ttl_seconds: int | None = None,
 ) -> str:
     """Return a relative API URL the dashboard / browser can use directly.
@@ -157,6 +167,13 @@ def build_signed_blob_url(
     chat_id = str(chat_id)
     artifact_id = str(artifact_id)
     ttl = ttl_seconds if ttl_seconds is not None else SIGNED_URL_TTL_SECONDS
+    if get_blob_backend_name() == "local_fs" and storage_key and user_id is not None and org_id is not None:
+        return get_blob_store().signed_url(
+            key=storage_key,
+            ttl_seconds=ttl,
+            user_id=_stable_uuid(user_id),
+            org_id=_stable_uuid(org_id),
+        )
     exp = int(time.time()) + ttl
     sig = make_signed_token(chat_id, artifact_id, exp)
     return f"/api/v1/chats/{chat_id}/artifacts/{artifact_id}/blob?exp={exp}&sig={sig}"
@@ -181,6 +198,9 @@ def verify_artifact_sig(artifact_id: str, expires_at: int, sig: str) -> bool:
 
 def build_artifact_blob_url(
     artifact_id: str | uuid.UUID,
+    storage_key: str | None = None,
+    user_id: str | uuid.UUID | None = None,
+    org_id: str | uuid.UUID | None = None,
     ttl_seconds: int | None = None,
 ) -> str:
     """Return a signed relative URL for ``GET /api/v1/artifacts/{id}/blob``.
@@ -192,9 +212,43 @@ def build_artifact_blob_url(
     """
     artifact_id = str(artifact_id)
     ttl = ttl_seconds if ttl_seconds is not None else SIGNED_URL_TTL_SECONDS
+    if get_blob_backend_name() == "local_fs" and storage_key and user_id is not None and org_id is not None:
+        return get_blob_store().signed_url(
+            key=storage_key,
+            ttl_seconds=ttl,
+            user_id=_stable_uuid(user_id),
+            org_id=_stable_uuid(org_id),
+        )
     exp = int(time.time()) + ttl
     sig = _make_artifact_sig(artifact_id, exp)
     return f"/api/v1/artifacts/{artifact_id}/blob?exp={exp}&sig={sig}"
+
+
+def build_blob_url_for_row(
+    *,
+    storage_key: str,
+    user_id: str | uuid.UUID,
+    org_id: str | uuid.UUID,
+    artifact_id: str | uuid.UUID,
+    chat_id: str | uuid.UUID | None,
+    ttl_seconds: int | None = None,
+) -> str:
+    if chat_id:
+        return build_signed_blob_url(
+            chat_id,
+            artifact_id,
+            storage_key=storage_key,
+            user_id=user_id,
+            org_id=org_id,
+            ttl_seconds=ttl_seconds,
+        )
+    return build_artifact_blob_url(
+        artifact_id,
+        storage_key=storage_key,
+        user_id=user_id,
+        org_id=org_id,
+        ttl_seconds=ttl_seconds,
+    )
 
 
 # ─── Data classes ────────────────────────────────────────────────────
@@ -315,21 +369,35 @@ def put_artifact(
     ``KEMORY_ARTIFACT_BACKEND=core_backend``; otherwise writes directly
     to minio.
     """
-    if ARTIFACT_BACKEND == "core_backend":
+    if ARTIFACT_BACKEND == "core_backend" and get_blob_backend_name() == "minio":
         return _put_via_core_backend(
             data=data,
             filename=filename,
             mimetype=mimetype,
         )
-    return _put_via_minio(
-        org_id=org_id,
-        user_id=user_id,
-        chat_id=chat_id,
-        artifact_id=artifact_id,
-        data=data,
-        filename=filename,
-        mimetype=mimetype,
-        bucket=bucket,
+    key = storage_key_for(org_id, user_id, chat_id, artifact_id, filename)
+    if not mimetype:
+        guess, _ = mimetypes.guess_type(filename or "")
+        mimetype = guess or "application/octet-stream"
+    store = get_blob_store()
+    if isinstance(store, LocalFSBlobStore):
+        result = store.put_bytes(
+            key=key,
+            data=data,
+            content_type=mimetype,
+            user_id=_stable_uuid(user_id),
+            org_id=_stable_uuid(org_id),
+        )
+    elif isinstance(store, MinioBlobStore):
+        result = store.put_bytes(key=key, data=data, content_type=mimetype)
+    else:
+        raise RuntimeError(f"Unsupported blob store: {type(store).__name__}")
+    return PutResult(
+        bucket=result.bucket if bucket is None else bucket,
+        key=result.key,
+        size_bytes=result.size_bytes,
+        mimetype=result.content_type,
+        sha256=result.sha256,
     )
 
 
@@ -461,7 +529,13 @@ def _put_via_core_backend(
 # ─── Read path ──────────────────────────────────────────────────────
 
 
-def get_artifact(bucket: str | None, key: str) -> GetResult:
+def get_artifact(
+    bucket: str | None,
+    key: str,
+    *,
+    user_id: str | uuid.UUID | None = None,
+    org_id: str | uuid.UUID | None = None,
+) -> GetResult:
     """Open a streaming read against the stored object.
 
     Dispatches to Core_Backend's ``GET /storage/files/{id}/download``
@@ -471,6 +545,27 @@ def get_artifact(bucket: str | None, key: str) -> GetResult:
     """
     if _is_core_backend_key(key):
         return _get_via_core_backend(key, bucket)
+    store = get_blob_store()
+    if isinstance(store, LocalFSBlobStore):
+        if user_id is None or org_id is None:
+            raise PermissionError("LocalFS blob reads require user_id and org_id.")
+        result = store.get_stream(key=key, user_id=_stable_uuid(user_id), org_id=_stable_uuid(org_id))
+        return GetResult(
+            bucket=result.bucket,
+            key=result.key,
+            size_bytes=result.size_bytes,
+            mimetype=result.content_type,
+            stream=result.stream,
+        )
+    if isinstance(store, MinioBlobStore):
+        result = store.get_stream(key=key, bucket=bucket)
+        return GetResult(
+            bucket=result.bucket,
+            key=result.key,
+            size_bytes=result.size_bytes,
+            mimetype=result.content_type,
+            stream=result.stream,
+        )
     return _get_via_minio(bucket, key)
 
 
@@ -543,7 +638,13 @@ def _get_via_core_backend(key: str, bucket: str | None) -> GetResult:
 # ─── Delete path ────────────────────────────────────────────────────
 
 
-def delete_artifact(bucket: str | None, key: str) -> None:
+def delete_artifact(
+    bucket: str | None,
+    key: str,
+    *,
+    user_id: str | uuid.UUID | None = None,
+    org_id: str | uuid.UUID | None = None,
+) -> None:
     """Delete or soft-delete a stored artifact.
 
     * For ``cb:``-prefixed keys: calls ``DELETE /storage/files/{id}``
@@ -557,8 +658,42 @@ def delete_artifact(bucket: str | None, key: str) -> None:
     """
     if _is_core_backend_key(key):
         _delete_via_core_backend(key)
+    elif get_blob_backend_name() == "local_fs":
+        if user_id is None or org_id is None:
+            logger.warning("artifact_storage.local_fs_delete_missing_owner", key=key)
+            return
+        store = get_blob_store()
+        if isinstance(store, LocalFSBlobStore):
+            store.delete_key(key=key, user_id=_stable_uuid(user_id), org_id=_stable_uuid(org_id))
     else:
-        _delete_via_minio(bucket, key)
+        store = get_blob_store()
+        if isinstance(store, MinioBlobStore):
+            store.delete_key(key=key, bucket=bucket)
+        else:
+            _delete_via_minio(bucket, key)
+
+
+def get_artifact_from_local_fs_token(token: str) -> GetResult:
+    store = get_blob_store()
+    if not isinstance(store, LocalFSBlobStore):
+        raise RuntimeError("LocalFS token endpoint is only available when KMV_BLOB_BACKEND=local_fs.")
+    result = store.stream_from_token(token)
+    return GetResult(
+        bucket=result.bucket,
+        key=result.key,
+        size_bytes=result.size_bytes,
+        mimetype=result.content_type,
+        stream=result.stream,
+    )
+
+
+def _stable_uuid(value: str | uuid.UUID) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
 
 
 def _delete_via_minio(bucket: str | None, key: str) -> None:

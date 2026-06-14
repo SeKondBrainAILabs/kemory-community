@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -40,6 +41,57 @@ from backend.services.artifact_service import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"])
+local_fs_router = APIRouter(tags=["artifacts"])
+
+
+def _stream_result(result, *, cache_seconds: int | None = None, filename: str | None = None) -> StreamingResponse:
+    response_headers = {}
+    if cache_seconds is not None:
+        response_headers["Cache-Control"] = f"private, max-age={max(0, cache_seconds)}"
+    if filename:
+        response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
+
+    def _iter():
+        try:
+            if hasattr(result.stream, "stream"):
+                for chunk in result.stream.stream(amt=64 * 1024):
+                    yield chunk
+                try:
+                    result.stream.release_conn()
+                except Exception:
+                    pass
+            else:
+                while True:
+                    chunk = result.stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            result.stream.close()
+
+    return StreamingResponse(
+        _iter(),
+        media_type=result.mimetype or "application/octet-stream",
+        headers=response_headers,
+    )
+
+
+@local_fs_router.get(
+    "/artifacts/{token}",
+    summary="Stream a LocalFS artifact by signed token",
+)
+async def stream_local_fs_artifact_token_endpoint(token: str):
+    from backend.services.artifact_storage import get_artifact_from_local_fs_token
+
+    try:
+        result = get_artifact_from_local_fs_token(token)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="invalid_or_expired_signature") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _stream_result(result)
 
 # ─── Upload — generic ───────────────────────────────────────────────
 
@@ -204,7 +256,8 @@ async def stream_artifact_blob_endpoint(
     if row is None:
         raise HTTPException(status_code=404, detail="Artifact not found.")
 
-    meta = row.artifact_metadata or {}
+    raw_meta = cast(Any, row.artifact_metadata) or {}
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
     if not isinstance(meta, dict) or not meta.get("storage_key"):
         raise HTTPException(
             status_code=404,
@@ -212,45 +265,22 @@ async def stream_artifact_blob_endpoint(
         )
 
     try:
-        result = get_artifact(meta.get("storage_bucket"), meta["storage_key"])
+        result = get_artifact(
+            meta.get("storage_bucket"),
+            meta["storage_key"],
+            user_id=str(row.user_id),
+            org_id=str(row.org_id),
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Object storage read failed: {exc}",
         ) from exc
 
-    response_headers = {
-        "Cache-Control": f"private, max-age={max(0, exp - int(time.time()))}",
-    }
     filename = meta.get("filename") if isinstance(meta, dict) else None
-    if filename:
-        response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
-
-    def _iter():
-        try:
-            # minio responses expose .stream(amt=); BytesIO (core_backend) uses .read(n).
-            if hasattr(result.stream, "stream"):
-                for chunk in result.stream.stream(amt=64 * 1024):
-                    yield chunk
-                try:
-                    result.stream.release_conn()
-                except Exception:
-                    pass
-            else:
-                while True:
-                    chunk = result.stream.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-        finally:
-            result.stream.close()
-
-    media_type = result.mimetype or meta.get("mimetype") or "application/octet-stream"
-    return StreamingResponse(
-        _iter(),
-        media_type=media_type,
-        headers=response_headers,
-    )
+    if not result.mimetype and isinstance(meta, dict):
+        result.mimetype = meta.get("mimetype")
+    return _stream_result(result, cache_seconds=exp - int(time.time()), filename=filename)
 
 
 # ─── Delete ─────────────────────────────────────────────────────────

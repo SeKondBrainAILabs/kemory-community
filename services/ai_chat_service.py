@@ -1196,14 +1196,15 @@ def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
     content_url = a.content_url
     if storage_key and not content_url:
         try:
-            if a.chat_id:
-                from backend.services.artifact_storage import build_signed_blob_url
+            from backend.services.artifact_storage import build_blob_url_for_row
 
-                content_url = build_signed_blob_url(a.chat_id, a.artifact_id)
-            else:
-                from backend.services.artifact_storage import build_artifact_blob_url
-
-                content_url = build_artifact_blob_url(a.artifact_id)
+            content_url = build_blob_url_for_row(
+                storage_key=storage_key,
+                user_id=a.user_id,
+                org_id=a.org_id,
+                artifact_id=a.artifact_id,
+                chat_id=a.chat_id,
+            )
         except Exception as exc:
             logger.debug("ai_chat_service.signed_url_failed", reason=str(exc))
 
