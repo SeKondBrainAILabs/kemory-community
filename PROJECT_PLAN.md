@@ -53,6 +53,10 @@ Not included (stays in hosted Kemory):
 npm package's `postinstall` downloads the right platform binary from
 GitHub Releases.
 
+The npm CLI supports `init --runtime docker|local`. Docker is the default
+runtime for local setup and QA. The reserved local Docker ports are API `8111`,
+dashboard `5175`, and optional Postgres/pgvector `5434`.
+
 **v0.1 platforms:** macOS arm64 only. Windows x64 + Linux x64 in v0.2.
 
 ## Timeline target

@@ -33,6 +33,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.kemory-community/
 
 # Packaging artifacts (downloaded, not source)
 packaging/pglite/*.wasm
