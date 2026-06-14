@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
+from backend.services.auth_service import clear_auth_cache_for_agent
 from backend.services.extension_key_service import (
     ExtensionKeyInfo,
     ExtensionKeyMintRequest,
@@ -86,7 +87,11 @@ async def revoke_key_endpoint(
     """Soft-revoke: flips ``status='revoked'`` and wipes the auth cache
     so the old key stops working immediately on the next request."""
     try:
-        await revoke_extension_key(key_id, auth.user_id, db)
+        agent_id = await revoke_extension_key(key_id, auth.user_id, db)
+        # Commit revocation before clearing the in-process auth cache. If a
+        # follow-up request repopulates the cache, it must see the revoked row.
+        await db.commit()
+        await clear_auth_cache_for_agent(agent_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

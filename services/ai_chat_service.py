@@ -39,7 +39,7 @@ from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.ai_chat import (
@@ -560,7 +560,7 @@ async def _persist_turns(
             # Replace artifacts on the turn — simpler and matches the
             # source-of-truth semantic the extension expects (the latest
             # push of a turn replaces any prior artifact list for it).
-            await _replace_artifacts_for_turn(existing, turn.artifacts, db)
+            await _replace_artifacts_for_turn(chat, existing, turn.artifacts, db)
             continue
 
         new_turn = AIChatTurn(
@@ -581,19 +581,23 @@ async def _persist_turns(
         await db.flush()
         if turn.artifacts:
             for art in turn.artifacts:
-                _attach_artifact(new_turn, art, db)
+                _attach_artifact(chat, new_turn, art, db)
         inserted += 1
 
     return inserted
 
 
-def _attach_artifact(turn: AIChatTurn, art: ArtifactUpsert, db: AsyncSession) -> None:
+def _attach_artifact(chat: AIChat, turn: AIChatTurn, art: ArtifactUpsert, db: AsyncSession) -> None:
     db.add(
         AIChatArtifact(
             turn_id=turn.turn_id,
             chat_id=turn.chat_id,
             user_id=turn.user_id,
             org_id=turn.org_id,
+            namespace=chat.namespace,
+            source_project_id=chat.source_project_id,
+            source_project_name=chat.source_project_name,
+            source_platform=chat.platform,
             artifact_type=art.artifact_type,
             language=art.language,
             content=art.content,
@@ -605,6 +609,7 @@ def _attach_artifact(turn: AIChatTurn, art: ArtifactUpsert, db: AsyncSession) ->
 
 
 async def _replace_artifacts_for_turn(
+    chat: AIChat,
     turn: AIChatTurn,
     artifacts: list[ArtifactUpsert],
     db: AsyncSession,
@@ -619,7 +624,21 @@ async def _replace_artifacts_for_turn(
     for row in existing:
         await db.delete(row)
     for art in artifacts:
-        _attach_artifact(turn, art, db)
+        _attach_artifact(chat, turn, art, db)
+
+
+async def _sync_chat_artifact_namespace(chat: AIChat, db: AsyncSession) -> None:
+    """Keep denormalized artifact namespace/provenance aligned with its chat."""
+    await db.execute(
+        update(AIChatArtifact)
+        .where(AIChatArtifact.chat_id == chat.chat_id)
+        .values(
+            namespace=chat.namespace,
+            source_project_id=chat.source_project_id,
+            source_project_name=chat.source_project_name,
+            source_platform=chat.platform,
+        )
+    )
 
 
 # ─── Public service API ────────────────────────────────────────────
@@ -760,6 +779,7 @@ async def upsert_chat(
         existing.installation_id = installation_id
 
     await _persist_turns(existing, payload.turns, db)
+    await _sync_chat_artifact_namespace(existing, db)
     await db.flush()
     turn_count = await _count_turns(existing.chat_id, db)
     # Fire auto-classify again on every content-changing update — the
@@ -838,6 +858,7 @@ async def move_chat(
     chat.namespace = resolved
     chat.requested_namespace = None
     chat.updated_at = datetime.now(UTC)
+    await _sync_chat_artifact_namespace(chat, db)
     await db.flush()
 
     turn_count = await _count_turns(chat.chat_id, db)

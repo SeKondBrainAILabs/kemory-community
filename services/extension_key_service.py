@@ -247,11 +247,11 @@ async def revoke_extension_key(
     key_id: uuid.UUID,
     user_id: uuid.UUID,
     db: AsyncSession,
-) -> None:
+) -> uuid.UUID:
     row = await _get_extension_for_user(key_id, user_id, db)
     row.status = "revoked"
     await db.flush()
-    await clear_auth_cache_for_agent(row.agent_id)
+    return row.agent_id
 
 
 # ─── Internal helpers ──────────────────────────────────────────────
