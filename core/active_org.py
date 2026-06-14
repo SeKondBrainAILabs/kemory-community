@@ -47,11 +47,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import structlog
+
+from backend.config.settings import settings
+
 if TYPE_CHECKING:
     from fastapi import Request
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from backend.services.auth_service import AuthContext
+
+logger = structlog.get_logger(__name__)
+
+# Header carrying the caller-requested active org (M3). It is an *input*, never
+# trusted — every request validates it against membership — so an unsigned
+# header is acceptable here (token-contract §4a).
+_ACTIVE_ORG_HEADER = "X-Organization-ID"
 
 
 @dataclass(frozen=True)
@@ -75,8 +86,51 @@ async def resolve_active_org(
 ) -> ResolvedActiveOrg:
     """Resolve the active org + role for this request.
 
-    Today: identity — the org the auth path already put on the token. The
-    M2 (claims) / M3 (cached membership resolve) bodies replace this return
-    when the Phase 0 spike decides; that is the only line that changes.
+    ``active_org_mode`` (settings) selects the mechanism:
+
+    * ``legacy`` (default) — identity: the org the auth path already put on the
+      token (ADR-004 mirror claim). No behavior change.
+    * ``m3`` — resolve-at-resource (spike-ratified for the internal plane).
+      For human (keycloak) callers, the active org is the validated
+      ``X-Organization-ID`` header (else the token org), and the role is
+      resolved against core_backend membership via a cached client. Fails
+      CLOSED (empty org → downstream 401) on a non-member or a resolution
+      failure. Agents (api_key/jwt) always keep their token-bound org — they
+      aren't org-switchable members.
     """
-    return ResolvedActiveOrg(org_id=auth.org_id or "")
+    if settings.active_org_mode != "m3":
+        return ResolvedActiveOrg(org_id=auth.org_id or "")
+
+    # M3 applies only to human callers. Agents authenticate with a key/HS256
+    # token whose org is bound at issue (AgentRegistry / token claim) and have
+    # no Keycloak membership to resolve.
+    if auth.auth_method != "keycloak":
+        return ResolvedActiveOrg(org_id=auth.org_id or "")
+
+    # Active org = requested header (validated below), else the token's org
+    # (the caller's primary / last-active). Empty → nothing to resolve → 401.
+    requested = request.headers.get(_ACTIVE_ORG_HEADER) or (auth.org_id or "")
+    if not requested or requested == settings.tenant_legacy_sentinel:
+        return ResolvedActiveOrg(org_id="")
+
+    sub = str(auth.user_id)
+    from backend.services.org_role_resolver import OrgResolveError, resolve_org_role
+
+    try:
+        membership = await resolve_org_role(sub, requested)
+    except OrgResolveError as exc:
+        # Fail closed — never grant a stale/blank scope when the resolver is
+        # down (token-contract §7).
+        logger.warning("active_org.resolve_failed_fail_closed", sub=sub, org_id=requested, error=str(exc))
+        return ResolvedActiveOrg(org_id="")
+
+    if membership.org_role is None:
+        # Not a member of the requested org → deny (no leakage).
+        logger.info("active_org.non_member_denied", sub=sub, org_id=requested)
+        return ResolvedActiveOrg(org_id="")
+
+    return ResolvedActiveOrg(
+        org_id=requested,
+        org_role=membership.org_role,
+        org_type=membership.org_type,
+    )

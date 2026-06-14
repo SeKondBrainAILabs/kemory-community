@@ -119,6 +119,30 @@ class Settings(BaseSettings):
     tenant_org_claim: str = "org_id"
     tenant_legacy_sentinel: str = "legacy"
 
+    # ── ADR-012 Phase 2 — active-org resolution (S3) ──────────────────────
+    # How the active org + role for a request is resolved (the active-org seam,
+    # backend/core/active_org.py). Ratified by the Phase 0 spike:
+    #   "legacy" — identity: use the org already on the token (ADR-004 mirror
+    #              claim). Default → no behavior change.
+    #   "m3"     — resolve-at-resource: for human (keycloak) callers, validate
+    #              the active org (X-Organization-ID header, else the token org)
+    #              + role against core_backend membership on every request,
+    #              behind a short-TTL cache. Agents (api_key/jwt) always keep
+    #              their token-bound org. This is the reversible cutover flag
+    #              (token-contract §6 Phase 2): flip back to "legacy" to fall
+    #              back to v1 behavior.
+    active_org_mode: str = "legacy"
+
+    # Base URL of core_backend's internal API (no-auth, IP-restricted to the
+    # internal network) hosting GET /auth/internal/user-org-role, used by the
+    # M3 resolver. In-cluster default; override per env.
+    core_backend_internal_url: str = "http://core-backend:8001"
+
+    # Per-request resolve timeout. On timeout/transport error the resolver
+    # fails CLOSED (no org → downstream 401) rather than granting a stale or
+    # blank scope (token-contract §7).
+    active_org_resolve_timeout_s: float = 3.0
+
     # WS-5 / ADR-005 Phase A: agent self-service for cloud connectors.
     #
     # When true, agents registered via POST /api/v1/agents land in status
