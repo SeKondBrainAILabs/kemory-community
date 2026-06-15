@@ -1,0 +1,41 @@
+name: Community Config
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  community-config:
+    name: pgvector + local_fs + local_single_user + noop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose config
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: "1"
+          DOCKER_BUILDKIT: "1"
+        run: docker compose -f docker-compose.community.yml config >/dev/null
+
+      - name: Shellcheck community verifier
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck scripts/test_community_config.sh
+          else
+            echo "shellcheck not found; skipping shell lint"
+          fi
+
+      - name: Run community config tripwire
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: "1"
+          DOCKER_BUILDKIT: "1"
+        run: ./scripts/test_community_config.sh

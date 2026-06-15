@@ -5,16 +5,17 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const VERSION = '0.0.1-pre.0';
+const VERSION = '0.1.0';
 const DEFAULTS = {
   runtime: 'docker',
   apiPort: 8111,
   dashboardPort: 5175,
   postgresPort: 5434,
-  apiContainerPort: 8100,
+  apiContainerPort: 8000,
   dashboardContainerPort: 5173,
   postgresContainerPort: 5432,
-  image: 'ghcr.io/sekondbrainailabs/kemory-community:0.1.0',
+  apiImage: 'ghcr.io/sekondbrainailabs/kemory-community-api:0.1.0',
+  dashboardImage: 'ghcr.io/sekondbrainailabs/kemory-community-dashboard:0.1.0',
   dataDir: path.join(os.homedir(), '.kemory-community'),
 };
 
@@ -35,6 +36,10 @@ Default local Docker ports:
   API        http://127.0.0.1:${DEFAULTS.apiPort}
   Dashboard  http://127.0.0.1:${DEFAULTS.dashboardPort}
   Postgres   127.0.0.1:${DEFAULTS.postgresPort}
+
+Image overrides:
+  --image <api-image>              API image; dashboard defaults to <api-image>-dashboard
+  --dashboard-image <image>        Dashboard image
 `;
   (exitCode === 0 ? console.log : console.error)(text.trimStart());
   process.exit(exitCode);
@@ -102,7 +107,8 @@ function configFromArgs(args) {
     apiContainerPort: DEFAULTS.apiContainerPort,
     dashboardContainerPort: DEFAULTS.dashboardContainerPort,
     postgresContainerPort: DEFAULTS.postgresContainerPort,
-    image: args.image || DEFAULTS.image,
+    apiImage: args['api-image'] || args.image || DEFAULTS.apiImage,
+    dashboardImage: args['dashboard-image'] || (args.image ? `${args.image}-dashboard` : DEFAULTS.dashboardImage),
     dataDir: path.resolve(args['data-dir'] || DEFAULTS.dataDir),
     apiKey: args['api-key'] || `kc_${crypto.randomBytes(24).toString('base64url')}`,
   };
@@ -111,30 +117,44 @@ function configFromArgs(args) {
 function dockerCompose(config) {
   return `services:
   kemory-api:
-    image: \${KEMORY_COMMUNITY_IMAGE:-${config.image}}
-    command: ["serve", "--host", "0.0.0.0", "--port", "${config.apiContainerPort}"]
+    image: \${KEMORY_COMMUNITY_IMAGE:-${config.apiImage}}
     environment:
+      API_KEY_PEPPER: community-local-api-key-pepper-32-bytes
+      API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
+      CORS_ORIGINS: http://localhost:${config.dashboardPort}
+      DATABASE_URL: postgresql+asyncpg://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
+      DATABASE_URL_SYNC: postgresql://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
+      JWT_SECRET_KEY: kemory-community-local-jwt-secret-32-bytes
+      KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
       KMV_VECTOR_BACKEND: pgvector
       KMV_BLOB_BACKEND: local_fs
+      KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
       KMV_IDENTITY: local_single_user
       KMV_TELEMETRY: noop
       KMV_COGNITION_ENTERPRISE: "false"
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
-      DATABASE_URL: postgresql://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
-      KEMORY_ARTIFACT_DIR: /data/artifacts
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: community-local-blob-signing-key-32-bytes
+      KEMORY_RUN_MIGRATIONS: "true"
+      MEMORY_VAULT_MODE: platform
+      REDIS_URL: redis://redis:6379/0
+      TENANT_ENFORCEMENT: "off"
+      WORKERS: "1"
     ports:
       - "${config.apiPort}:${config.apiContainerPort}"
     volumes:
-      - kemory_data:/data
+      - kemory_data:/app/.community
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
   dashboard:
-    image: \${KEMORY_COMMUNITY_DASHBOARD_IMAGE:-${config.image}-dashboard}
+    image: \${KEMORY_COMMUNITY_DASHBOARD_IMAGE:-${config.dashboardImage}}
     environment:
       API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
-      KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
+      API_KEY: \${KEMORY_LOCAL_API_KEY}
+      SKIP_AUTH: "true"
     ports:
       - "${config.dashboardPort}:${config.dashboardContainerPort}"
     depends_on:
@@ -156,6 +176,15 @@ function dockerCompose(config) {
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   kemory_data:
   pg_data:
@@ -164,8 +193,8 @@ volumes:
 
 function envFile(config) {
   return `KEMORY_LOCAL_API_KEY=${config.apiKey}
-KEMORY_COMMUNITY_IMAGE=${config.image}
-KEMORY_COMMUNITY_DASHBOARD_IMAGE=${config.image}-dashboard
+KEMORY_COMMUNITY_IMAGE=${config.apiImage}
+KEMORY_COMMUNITY_DASHBOARD_IMAGE=${config.dashboardImage}
 `;
 }
 
@@ -182,6 +211,10 @@ function jsonConfig(config) {
         api: config.apiPort,
         dashboard: config.dashboardPort,
         postgres: config.postgresPort,
+      },
+      images: {
+        api: config.apiImage,
+        dashboard: config.dashboardImage,
       },
       dataDir: config.dataDir,
     },

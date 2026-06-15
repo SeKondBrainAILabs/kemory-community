@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: kora_vault
+      POSTGRES_USER: kora
+      POSTGRES_PASSWORD: kora_secret
+    ports:
+      - "5434:5432"
+    volumes:
+      - community_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kora -d kora_vault"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_EMBEDDINGS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      API_KEY_PEPPER: community-ci-api-key-pepper-32-bytes
+      API_PUBLIC_URL: http://api:8000
+      CORS_ORIGINS: http://localhost:5175
+      DATABASE_URL: postgresql+asyncpg://kora:kora_secret@postgres:5432/kora_vault
+      DATABASE_URL_SYNC: postgresql://kora:kora_secret@postgres:5432/kora_vault
+      ENVIRONMENT: development
+      JWT_SECRET_KEY: agent-memory-vault-jwt-secret-2026
+      KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: community-ci-local-blob-signing-key-32-bytes
+      KEMORY_RUN_MIGRATIONS: "false"
+      KMV_BLOB_BACKEND: local_fs
+      KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
+      KMV_COGNITION_ENTERPRISE: "false"
+      KMV_IDENTITY: local_single_user
+      KMV_TELEMETRY: noop
+      KMV_VECTOR_BACKEND: pgvector
+      LOG_LEVEL: INFO
+      MEMORY_VAULT_MODE: platform
+      REDIS_URL: redis://redis:6379/0
+      TENANT_ENFORCEMENT: "off"
+      WORKERS: "1"
+    expose:
+      - "8000"
+    ports:
+      - "8111:8000"
+    volumes:
+      - community_api_data:/app/.community
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
+      API_PUBLIC_URL: http://127.0.0.1:8111
+      SKIP_AUTH: "true"
+    ports:
+      - "5175:5173"
+
+volumes:
+  community_api_data:
+  community_pgdata:

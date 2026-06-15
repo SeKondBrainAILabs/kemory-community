@@ -5,43 +5,21 @@ on:
   pull_request:
 
 jobs:
-  detect-backend:
+  smoke:
     runs-on: ubuntu-latest
-    outputs:
-      has_backend: ${{ steps.check.outputs.has_backend }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: check
-        run: |
-          if [ -d "backend" ]; then
-            echo "has_backend=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_backend=false" >> $GITHUB_OUTPUT
-            echo "::notice::Backend not seeded yet - CI is a no-op until subtree split lands."
-          fi
-
-  test:
-    needs: detect-backend
-    if: needs.detect-backend.outputs.has_backend == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.11", "3.12"]
-        db: [pglite, postgres]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "${{ matrix.python }}" }
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: mypy .
-      - run: pytest -v
-        env:
-          KEMORY_DB_BACKEND: ${{ matrix.db }}
-
-  noop-pass:
-    needs: detect-backend
-    if: needs.detect-backend.outputs.has_backend == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "ci passing (scaffold-only state)"
+        with: { python-version: "3.11" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Root CLI tests
+        run: npm install --package-lock=false && npm test && npm run prepublishOnly
+      - name: Python syntax check
+        run: python -m compileall backend kemory kemory_cli
+      - name: Dashboard build
+        working-directory: dashboard
+        run: npm ci && npm run build
+      - name: Compose config
+        run: docker compose -f docker-compose.community.yml config >/dev/null

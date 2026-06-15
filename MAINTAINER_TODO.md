@@ -78,14 +78,11 @@ Settings -> Pages:
 
 ```bash
 npm login
-npm org create kemory   # reserves @kemory/* scope for later
-npm publish --access public --tag pre   # publishes 0.0.1-pre.0 with the `pre` dist-tag
+npm publish --access public
 ```
 
-The `pre` dist-tag means `npm i kemory-community` (no tag) returns
-"no matching version" until v0.1.0 ships. Users explicitly opt into
-the placeholder via `@pre`. This reserves the name without confusing
-early adopters.
+The v0.1 package is the Docker setup CLI. The tag release workflow builds
+and pushes the API/dashboard images to GHCR before publishing npm.
 
 ## 7. Privacy policy (also needed for Chrome extension Web Store)
 
@@ -94,9 +91,15 @@ before configuring GitHub Pages or submitting any extension review.
 
 ## 8. Once the adapter refactor in `agent_memory_vault` lands
 
-- Enable the real subtree pull in `.github/workflows/sync-from-main.yml`
-  (uncomment the marked block).
-- Update `.github/workflows/release.yml` with the real PyInstaller
-  build + npm publish steps.
-- Update branch protection's `required_status_checks` from
-  `["ci / noop-pass"]` to the real check name once CI matrix is live.
+- [x] Import community-safe backend, `kemory`, `kemory_cli`, and dashboard
+  subtrees from `agent_memory_vault` after the adapter refactor landed.
+- [x] Add a Docker community-config verifier for `pgvector`, `local_fs`,
+  `local_single_user`, and `noop` telemetry.
+- [x] Wire npm `kemory-community init --runtime docker` / `up` to the
+  community port registry (`8111`, `5175`, `5434`).
+- [x] Add canonical `kemory_*` MCP tool aliases while retaining `s9nmem_*`
+  and `kora_*` compatibility.
+- [x] Update `.github/workflows/release.yml` with Docker image publishing
+  plus npm publish steps.
+- [ ] Update branch protection's `required_status_checks` from
+  `["ci / noop-pass"]` to `["ci / smoke", "Community Config / pgvector + local_fs + local_single_user + noop"]`.

@@ -1,0 +1,187 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-brand-primary: #6366f1;
+  --color-brand-secondary: #8b5cf6;
+  --color-accent-blue: #3b82f6;
+
+  /* Pulse / Kora signature palette */
+  --color-pulse-blue: #0598fa;
+  --color-pulse-magenta: #f64dfe;
+  --color-pulse-yellow: #fdcb02;
+
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-bg-tertiary: #f1f3f5;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-border: #e5e7eb;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+
+  /* Pulse / two-rail layout */
+  --rail-width: 56px;
+  --sidebar-width: 240px;
+  --sidebar-width-legacy: 280px;
+  --sidebar-collapsed: 80px;
+  --header-height: 64px;
+}
+
+html,
+body {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+body {
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pulse animated gradient background                                          */
+/* Matches Core_Kora globals.css palette + Figma Kanvas 02_OB_Home gradient.   */
+/* -------------------------------------------------------------------------- */
+.pulse-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      236.88deg,
+      rgba(255, 255, 255, 0) 1.3%,
+      rgba(255, 255, 255, 0) 25.6%,
+      rgba(255, 255, 255, 0) 50.1%,
+      rgba(255, 255, 255, 0) 74%,
+      rgba(253, 203, 2, 0.16) 98.7%
+    ),
+    linear-gradient(
+      143.64deg,
+      rgba(255, 255, 255, 0) 12.1%,
+      rgba(255, 255, 255, 0) 31%,
+      rgba(255, 255, 255, 0) 50.1%,
+      rgba(255, 255, 255, 0) 68.7%,
+      rgba(246, 77, 254, 0.18) 87.9%
+    ),
+    linear-gradient(
+      203.71deg,
+      rgba(255, 255, 255, 0) 13.1%,
+      rgba(255, 255, 255, 0) 31.6%,
+      rgba(255, 255, 255, 0) 50.1%,
+      rgba(255, 255, 255, 0.1) 68.2%,
+      rgba(5, 152, 250, 0.16) 86.9%
+    ),
+    #ffffff;
+}
+
+.pulse-bg::before,
+.pulse-bg::after {
+  content: '';
+  position: absolute;
+  inset: -15%;
+  pointer-events: none;
+  filter: blur(100px);
+  will-change: transform, opacity;
+}
+
+/* Drifting color blobs — yellow + magenta */
+.pulse-bg::before {
+  background:
+    radial-gradient(
+      48% 40% at 18% 88%,
+      rgba(253, 203, 2, 0.32) 0%,
+      rgba(253, 203, 2, 0) 100%
+    ),
+    radial-gradient(
+      52% 44% at 88% 18%,
+      rgba(246, 77, 254, 0.28) 0%,
+      rgba(246, 77, 254, 0) 100%
+    );
+  animation: pulse-drift 28s ease-in-out infinite;
+}
+
+/* Drifting color blob — blue + soft magenta */
+.pulse-bg::after {
+  background:
+    radial-gradient(
+      56% 48% at 82% 78%,
+      rgba(5, 152, 250, 0.28) 0%,
+      rgba(5, 152, 250, 0) 100%
+    ),
+    radial-gradient(
+      44% 40% at 12% 22%,
+      rgba(246, 77, 254, 0.22) 0%,
+      rgba(246, 77, 254, 0) 100%
+    );
+  animation: pulse-drift-alt 36s ease-in-out infinite;
+}
+
+@keyframes pulse-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.9;
+  }
+  33% {
+    transform: translate3d(3%, -2%, 0) scale(1.08);
+    opacity: 1;
+  }
+  66% {
+    transform: translate3d(-2%, 3%, 0) scale(1.04);
+    opacity: 0.95;
+  }
+}
+
+@keyframes pulse-drift-alt {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.02);
+    opacity: 0.95;
+  }
+  40% {
+    transform: translate3d(-3%, 2%, 0) scale(1.08);
+    opacity: 1;
+  }
+  75% {
+    transform: translate3d(2%, -3%, 0) scale(1.05);
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-bg::before,
+  .pulse-bg::after {
+    animation: none;
+  }
+}
+
+/* Subtle white veil + blur so foreground content reads cleanly */
+.pulse-bg-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+}
+
+@layer components {
+  .skeleton {
+    @apply animate-pulse-slow rounded-md bg-surface-tertiary;
+  }
+}

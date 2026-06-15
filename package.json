@@ -1,6 +1,6 @@
 {
   "name": "kemory-community",
-  "version": "0.0.1-pre.0",
+  "version": "0.1.0",
   "description": "Local-first, OSS memory for AI agents. Same wire protocol as hosted Kemory.",
   "license": "Apache-2.0",
   "repository": {
