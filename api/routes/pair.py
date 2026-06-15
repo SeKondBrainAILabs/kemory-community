@@ -114,6 +114,28 @@ def _slug(name: str) -> str:
     return s or "agent"
 
 
+# Client names that identify the Kora Chrome Extension claiming a pair code.
+# When `client_name` slugifies to one of these, the resulting agent row is
+# tagged ``agent_kind='extension'`` so the dashboard's Devices tab surfaces
+# the install alongside keys minted via ``/api/v1/extension/keys`` — and the
+# extension itself only needs ``api_key`` from the response (MCP setup/brief
+# fields stay populated for API compatibility but are ignored client-side).
+_KORA_EXTENSION_CLIENT_SLUGS: frozenset[str] = frozenset(
+    {
+        "kora-chrome-extension",
+        "kora-extension",
+        "kanvas",
+        "kanvas-chrome",
+        "kanvas-chrome-extension",
+    }
+)
+
+
+def _is_kora_extension_client(client_name: str) -> bool:
+    """True when ``client_name`` identifies the Kora Chrome Extension."""
+    return _slug(client_name) in _KORA_EXTENSION_CLIENT_SLUGS
+
+
 # ─── Routes ────────────────────────────────────────────────────────
 
 
@@ -201,6 +223,7 @@ async def pair_claim_endpoint(
 
     user_uuid = _uuid.UUID(record.user_id)
 
+    is_extension = _is_kora_extension_client(request.client_name)
     try:
         registration = await register_agent(
             user_uuid,
@@ -223,6 +246,9 @@ async def pair_claim_endpoint(
             # presented it. Skip the AUTO_APPROVE_AGENTS gate so the returned
             # api_key is immediately usable instead of 401ing on every MCP call.
             auto_activate=True,
+            # Tag Chrome-extension claims so the install lands under the
+            # Devices tab (same kind as /api/v1/extension/keys mints).
+            agent_kind="extension" if is_extension else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))

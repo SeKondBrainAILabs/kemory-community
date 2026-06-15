@@ -101,6 +101,7 @@ async def register_agent(
     db: AsyncSession,
     org_id: str = "",
     auto_activate: bool = False,
+    agent_kind: str | None = None,
 ) -> AgentRegistrationResponse:
     """
     Register a new agent for a user.
@@ -189,7 +190,7 @@ async def register_agent(
         else "Agent registered. API key shown once — store it securely. Agent requires approval before use."
     )
 
-    agent = AgentRegistry(
+    agent_kwargs: dict = dict(
         user_id=user_id,
         org_id=org_id,
         agent_name=request.agent_name,
@@ -200,6 +201,9 @@ async def register_agent(
         callback_url=request.callback_url,
         status=initial_status,
     )
+    if agent_kind is not None:
+        agent_kwargs["agent_kind"] = agent_kind
+    agent = AgentRegistry(**agent_kwargs)
     db.add(agent)
     await db.flush()
 
