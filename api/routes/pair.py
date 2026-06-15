@@ -33,6 +33,7 @@ from backend.services.agent_service import (
     register_agent,
 )
 from backend.services.brief_service import BRIEF_VERSION, render_brief
+from backend.services.gatekeeper_service import PermissionRuleCreate, create_rule
 from backend.services.mcp_setup_service import build_setup
 from backend.services.pair_service import (
     PAIR_TTL_SECONDS,
@@ -252,6 +253,29 @@ async def pair_claim_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    # Seed the gatekeeper allow rules matching the agent's declared scopes.
+    # The gatekeeper is DEFAULT-DENY for registered agents, so without this the
+    # quick‑connect agent authenticates but every store_memory/recall is denied
+    # ("no matching rule") — the AI connects but can't actually use kemory.
+    # Rules are scoped to THIS agent (least privilege); tenancy already isolates
+    # by org_id + user_id, and namespace_filter=None covers the owner's
+    # namespaces (shared, user:*, agent:*). priority 60 sits above the implicit
+    # default‑deny. memory:delete is still auto‑granted per‑namespace on first
+    # write (memory_service), so we don't grant it broadly here.
+    for _scope in ("memory:read", "memory:write"):
+        await create_rule(
+            user_id=user_uuid,
+            request=PermissionRuleCreate(
+                agent_id=str(registration.agent_id),
+                scope=_scope,
+                action="allow",
+                priority=60,
+                namespace_filter=None,
+            ),
+            db=db,
+            org_id=record.org_id,
+        )
 
     # Render brief BEFORE marking the pair claimed. If brief rendering
     # ever fails (e.g. the prompts/ asset is missing from the image), we
