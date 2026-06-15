@@ -40,9 +40,21 @@ jobs:
         with:
           node-version: "20"
           registry-url: https://registry.npmjs.org
+      - id: npm-token
+        name: Check npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "${NODE_AUTH_TOKEN}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::NPM_TOKEN is not configured; skipping npm publish. Publish manually after npm login."
+          fi
       - run: npm install --package-lock=false
       - run: npm test
       - run: npm run prepublishOnly
-      - run: npm publish --access public
+      - if: steps.npm-token.outputs.available == 'true'
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
