@@ -30,6 +30,4 @@ class MemoryVector(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    __table_args__ = (
-        Index("idx_memory_vectors_org_user_namespace", "org_id", "user_id", "namespace"),
-    )
+    __table_args__ = (Index("idx_memory_vectors_org_user_namespace", "org_id", "user_id", "namespace"),)

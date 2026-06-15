@@ -158,7 +158,9 @@ class MinioBlobStore(BlobStore):
         user_id: UUID,
         org_id: UUID,
     ) -> str:
-        return self._get_client().presigned_get_object(self.bucket, key, expires=timedelta(seconds=ttl_seconds))
+        return self._get_client().presigned_get_object(
+            self.bucket, key, expires=timedelta(seconds=ttl_seconds)
+        )
 
 
 async def _coerce_bytes(body: bytes | AsyncIterator[bytes]) -> bytes:

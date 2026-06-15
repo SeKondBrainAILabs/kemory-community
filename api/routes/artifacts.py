@@ -44,7 +44,9 @@ router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 local_fs_router = APIRouter(tags=["artifacts"])
 
 
-def _stream_result(result, *, cache_seconds: int | None = None, filename: str | None = None) -> StreamingResponse:
+def _stream_result(
+    result, *, cache_seconds: int | None = None, filename: str | None = None
+) -> StreamingResponse:
     response_headers = {}
     if cache_seconds is not None:
         response_headers["Cache-Control"] = f"private, max-age={max(0, cache_seconds)}"
@@ -92,6 +94,7 @@ async def stream_local_fs_artifact_token_endpoint(token: str):
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _stream_result(result)
+
 
 # ─── Upload — generic ───────────────────────────────────────────────
 

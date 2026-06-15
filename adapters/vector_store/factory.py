@@ -25,9 +25,7 @@ def resolve_vector_backend(value: str | None = None) -> str:
 
     resolved = value.strip().lower()
     if resolved not in VALID_VECTOR_BACKENDS:
-        raise ValueError(
-            f"Invalid KMV_VECTOR_BACKEND: {value!r}. Must be one of: {VALID_VECTOR_BACKENDS}"
-        )
+        raise ValueError(f"Invalid KMV_VECTOR_BACKEND: {value!r}. Must be one of: {VALID_VECTOR_BACKENDS}")
     return resolved
 
 

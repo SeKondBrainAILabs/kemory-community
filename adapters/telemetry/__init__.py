@@ -19,9 +19,7 @@ def resolve_telemetry_backend(value: str | None = None) -> str:
         value = os.environ.get("KMV_TELEMETRY", "posthog")
     resolved = value.strip().lower() or "posthog"
     if resolved not in VALID_TELEMETRY_BACKENDS:
-        raise ValueError(
-            f"Invalid KMV_TELEMETRY: {value!r}. Must be one of: {VALID_TELEMETRY_BACKENDS}"
-        )
+        raise ValueError(f"Invalid KMV_TELEMETRY: {value!r}. Must be one of: {VALID_TELEMETRY_BACKENDS}")
     return resolved
 
 

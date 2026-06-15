@@ -108,6 +108,7 @@ app = FastAPI(
 async def jwt_requires_hosted_kemory_handler(_request, exc: JWTRequiresHostedKemory):
     return JSONResponse(status_code=exc.status_code, content=exc.body)
 
+
 # ─── Middleware ───────────────────────────────────────────────────
 # CORS — wildcard allow_origins with allow_credentials=False is the
 # correct shape for kemory because every authenticated client speaks

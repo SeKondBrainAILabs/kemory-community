@@ -36,7 +36,9 @@ class LocalFSBlobStore(BlobStore):
     ) -> None:
         self.root = Path(root or _env("KMV_BLOB_LOCAL_ROOT", "~/.kemory-community/artifacts")).expanduser()
         self.signing_key = signing_key or os.environ.get("KEMORY_LOCAL_BLOB_SIGNING_KEY", "").strip()
-        self.public_base_url = (public_base_url or _env("API_PUBLIC_URL", "http://localhost:8100")).rstrip("/")
+        self.public_base_url = (public_base_url or _env("API_PUBLIC_URL", "http://localhost:8100")).rstrip(
+            "/"
+        )
         self.max_file_bytes = (max_file_mb or int(_env("KMV_BLOB_MAX_FILE_MB", "100"))) * 1024 * 1024
         self.max_total_bytes = (max_total_gb or int(_env("KMV_BLOB_MAX_TOTAL_GB", "5"))) * 1024 * 1024 * 1024
         self.root.mkdir(parents=True, exist_ok=True)
