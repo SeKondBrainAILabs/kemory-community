@@ -132,35 +132,6 @@ export function QuickConnectContent({ clientHint, embedded = false, cliHost }: Q
 
   return (
     <>
-      {cliHost && (
-        <div className="mb-5 rounded-lg border border-brand-primary/30 bg-brand-primary/5 p-4">
-          <div className="mb-1 flex items-center gap-2">
-            <Terminal size={14} className="text-brand-primary" />
-            <span className="text-xs font-semibold text-content-primary">
-              Recommended — the kemory CLI
-            </span>
-          </div>
-          <p className="mb-3 text-xs text-content-secondary">
-            Browser sign-in (no API key to paste), and it writes the MCP server entry for you.
-          </p>
-          <div className="relative">
-            <pre className="overflow-auto rounded-lg bg-gray-900 p-3 pr-16 text-[11px] leading-relaxed text-gray-100">
-              {cliCommands(cliHost)}
-            </pre>
-            <div className="absolute right-2 top-2">
-              <CopyButton value={cliCommands(cliHost)} label="Copy" />
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-content-tertiary">
-            Then restart {clientHint ?? 'your client'}. Run{' '}
-            <code className="rounded bg-surface-secondary px-1 font-mono">kemory doctor</code> to verify.
-          </p>
-          <p className="mt-3 border-t border-border pt-3 text-xs font-medium text-content-secondary">
-            Or — connect without installing anything (paste a prompt into the AI):
-          </p>
-        </div>
-      )}
-
       {!embedded && (
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -268,6 +239,30 @@ export function QuickConnectContent({ clientHint, embedded = false, cliHost }: Q
             </div>
           )}
         </div>
+      )}
+
+      {cliHost && (
+        <details className="mt-5 rounded-lg border border-border bg-surface-secondary/40 px-4 py-3">
+          <summary className="flex cursor-pointer items-center gap-2 text-xs font-medium text-content-secondary">
+            <Terminal size={13} className="text-content-tertiary" />
+            Advanced — install the kemory CLI instead
+          </summary>
+          <p className="mb-3 mt-2 text-xs text-content-tertiary">
+            Optional. If you’d rather sign in with the browser and have the MCP entry written for
+            you, install the CLI and run:
+          </p>
+          <div className="relative">
+            <pre className="overflow-auto rounded-lg bg-gray-900 p-3 pr-16 text-[11px] leading-relaxed text-gray-100">
+              {cliCommands(cliHost)}
+            </pre>
+            <div className="absolute right-2 top-2">
+              <CopyButton value={cliCommands(cliHost)} label="Copy" />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-content-tertiary">
+            Then restart {clientHint ?? 'your client'}; <code className="rounded bg-surface-secondary px-1 font-mono">kemory doctor</code> verifies it.
+          </p>
+        </details>
       )}
     </>
   )
