@@ -439,7 +439,10 @@ class PlatformStorageBackend(StorageBackend):
         if not hits:
             return []
 
-        ids = [str(hit.metadata.get("episode_id") or hit.metadata.get("memory_id") or hit.memory_id) for hit in hits]
+        ids = [
+            str(hit.metadata.get("episode_id") or hit.metadata.get("memory_id") or hit.memory_id)
+            for hit in hits
+        ]
         scores = {
             str(hit.metadata.get("episode_id") or hit.metadata.get("memory_id") or hit.memory_id): hit.score
             for hit in hits
