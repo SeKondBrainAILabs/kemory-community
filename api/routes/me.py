@@ -41,10 +41,19 @@ class MeTeam(BaseModel):
 class MeResponse(BaseModel):
     user_id: str
     email: str
-    org_id: str
+    org_id: str  # the ACTIVE org for this request (ADR-012)
     org_name: str
+    org_role: str | None = None  # caller's role in the active org (m3); None in legacy
+    org_type: str | None = None  # personal | organisation | family | None
     teams: list[MeTeam]
     roles: list[str]
+
+
+class MeOrg(BaseModel):
+    org_id: str
+    name: str
+    role: str
+    active: bool  # True for the caller's current active org
 
 
 @router.get(
@@ -102,6 +111,9 @@ async def get_me(
         # Org name is not stored anywhere yet — best-effort: use org_id.
         # When an Org table lands (post-MVP), populate properly.
         org_name=scope.org_id,
+        # ADR-012: the active-org role/type resolved by the seam (m3); None in legacy.
+        org_role=scope.org_role,
+        org_type=scope.org_type,
         teams=teams,
         roles=list(scope.roles),
     )
@@ -115,3 +127,55 @@ async def get_me(
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "private, max-age=60"
     return payload
+
+
+@router.get(
+    "/me/orgs",
+    response_model=list[MeOrg],
+    summary="Organisations the caller can switch between (ADR-012)",
+)
+async def get_my_orgs(
+    authorization: str | None = Header(default=None),
+    auth: AuthContext = Depends(require_auth),
+    scope: TenantScope = TenantScopeDep,
+):
+    """List the caller's org memberships, powering the CLI/dashboard org
+    switcher. core_backend owns membership, so we forward the caller's bearer
+    token to its ``/auth/me/memberships`` and normalise the result. The org
+    matching the current active scope is flagged ``active``.
+
+    Agents (api_key/jwt) have no Keycloak membership graph — they return just
+    their single bound org.
+    """
+    import httpx
+
+    from backend.config.settings import settings
+
+    if auth.auth_method != "keycloak" or not authorization:
+        # Agents / non-keycloak callers: only their bound org.
+        return [MeOrg(org_id=scope.org_id, name=scope.org_id, role=scope.org_role or "member", active=True)]
+
+    url = settings.core_backend_internal_url.rstrip("/") + "/auth/me/memberships"
+    try:
+        async with httpx.AsyncClient(timeout=settings.active_org_resolve_timeout_s) as client:
+            resp = await client.get(url, headers={"Authorization": authorization})
+        resp.raise_for_status()
+        rows = resp.json()
+    except (httpx.HTTPError, ValueError):
+        # Best-effort: if core_backend is unreachable, at least return the
+        # active org so the caller isn't left blind.
+        return [MeOrg(org_id=scope.org_id, name=scope.org_id, role=scope.org_role or "member", active=True)]
+
+    orgs: list[MeOrg] = []
+    for r in rows if isinstance(rows, list) else []:
+        if r.get("is_active") is False:
+            continue
+        oid = str(r.get("org_id") or "")
+        if not oid:
+            continue
+        org_obj = r.get("organization") or {}
+        name = r.get("org_name") or r.get("name") or org_obj.get("name") or oid
+        orgs.append(
+            MeOrg(org_id=oid, name=name, role=r.get("role") or "member", active=(oid == scope.org_id))
+        )
+    return orgs
