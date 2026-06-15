@@ -43,6 +43,17 @@ if grep -R --line-number -E '\b(namespace_merge|suggest_merge)\b' backend/plugin
   exit 1
 fi
 
+echo "Running enterprise-symbol grep guard (outside their adapter)"
+ENTERPRISE_SYMBOLS='minio|weaviate|keycloak|posthog'
+LEAKS=$(grep -RnE "^(from|import)\s+(${ENTERPRISE_SYMBOLS})\b" backend/ \
+  | grep -vE "^backend/adapters/(blob_store|vector_store|identity_provider|telemetry)/" \
+  || true)
+if [ -n "$LEAKS" ]; then
+  echo "Enterprise symbol imported outside its adapter:" >&2
+  echo "$LEAKS" >&2
+  exit 1
+fi
+
 echo "Building community API image"
 "${COMPOSE[@]}" build api
 

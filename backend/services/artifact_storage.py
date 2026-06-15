@@ -59,7 +59,6 @@ import hmac
 import io as _io
 import mimetypes
 import os
-import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -86,13 +85,6 @@ def _env(name: str, default: str) -> str:
 
 ARTIFACT_BACKEND = _env("KEMORY_ARTIFACT_BACKEND", "local_fs")
 
-# ── minio backend ──────────────────────────────────────────────────
-DEFAULT_BUCKET = _env("KEMORY_ARTIFACT_BUCKET", "kemory-chat-artifacts")
-S3_ENDPOINT = _env("KEMORY_ARTIFACT_S3_ENDPOINT", "minio:9000")
-S3_ACCESS_KEY = _env("KEMORY_ARTIFACT_S3_ACCESS_KEY", "minioadmin")
-# Defaults to the shared-infra dev secret. Override in prod via env.
-S3_SECRET_KEY = _env("KEMORY_ARTIFACT_S3_SECRET_KEY", "sharedinfra_minio_2026")
-S3_SECURE = _env("KEMORY_ARTIFACT_S3_SECURE", "false").lower() in {"true", "1", "yes"}
 SIGNED_URL_TTL_SECONDS = int(_env("KEMORY_ARTIFACT_SIGNED_URL_TTL", "3600"))
 
 # ── core_backend backend ───────────────────────────────────────────
@@ -278,41 +270,6 @@ class GetResult:
     stream: IO[bytes]
 
 
-# ─── Minio client (minio backend) ───────────────────────────────────
-
-
-_minio_client = None
-_minio_lock = threading.Lock()
-
-
-def _get_minio_client():
-    """Lazy singleton — defer import + connection until first use so the
-    rest of the app keeps booting when minio isn't reachable in dev."""
-    global _minio_client
-    if _minio_client is not None:
-        return _minio_client
-    with _minio_lock:
-        if _minio_client is not None:
-            return _minio_client
-        from minio import Minio
-
-        client = Minio(
-            S3_ENDPOINT,
-            access_key=S3_ACCESS_KEY,
-            secret_key=S3_SECRET_KEY,
-            secure=S3_SECURE,
-        )
-        # Idempotent bucket bootstrap for the direct minio path.
-        try:
-            if not client.bucket_exists(DEFAULT_BUCKET):
-                client.make_bucket(DEFAULT_BUCKET)
-                logger.info("artifact_storage.bucket_created", bucket=DEFAULT_BUCKET)
-        except Exception as exc:
-            logger.warning("artifact_storage.bucket_check_failed", bucket=DEFAULT_BUCKET, error=str(exc))
-        _minio_client = client
-        return _minio_client
-
-
 # ─── Storage-key helpers ────────────────────────────────────────────
 
 
@@ -364,11 +321,10 @@ def put_artifact(
 ) -> PutResult:
     """Upload bytes to object storage.
 
-    Routes to Core_Backend's ``/storage/upload`` endpoint when
-    ``KEMORY_ARTIFACT_BACKEND=core_backend``; otherwise writes directly
-    to minio.
+    Routes to Core_Backend's ``/storage/upload`` endpoint when configured;
+    otherwise writes through the community BlobStore adapter.
     """
-    if ARTIFACT_BACKEND == "core_backend" and get_blob_backend_name() == "minio":
+    if ARTIFACT_BACKEND == "core_backend":
         return _put_via_core_backend(
             data=data,
             filename=filename,
@@ -387,8 +343,6 @@ def put_artifact(
             user_id=_stable_uuid(user_id),
             org_id=_stable_uuid(org_id),
         )
-    elif store.__class__.__name__ == "MinioBlobStore":
-        result = store.put_bytes(key=key, data=data, content_type=mimetype)
     else:
         raise RuntimeError(f"Unsupported blob store: {type(store).__name__}")
     return PutResult(
@@ -397,44 +351,6 @@ def put_artifact(
         size_bytes=result.size_bytes,
         mimetype=result.content_type,
         sha256=result.sha256,
-    )
-
-
-def _put_via_minio(
-    org_id: str,
-    user_id: str | uuid.UUID,
-    chat_id: str | uuid.UUID,
-    artifact_id: str | uuid.UUID,
-    *,
-    data: bytes,
-    filename: str | None,
-    mimetype: str | None,
-    bucket: str | None,
-) -> PutResult:
-    """Direct minio upload (``minio`` backend)."""
-    bucket = bucket or DEFAULT_BUCKET
-    key = storage_key_for(org_id, user_id, chat_id, artifact_id, filename)
-
-    if not mimetype:
-        guess, _ = mimetypes.guess_type(filename or "")
-        mimetype = guess or "application/octet-stream"
-
-    client = _get_minio_client()
-    client.put_object(
-        bucket_name=bucket,
-        object_name=key,
-        data=_io.BytesIO(data),
-        length=len(data),
-        content_type=mimetype,
-    )
-
-    sha = hashlib.sha256(data).hexdigest()
-    return PutResult(
-        bucket=bucket,
-        key=key,
-        size_bytes=len(data),
-        mimetype=mimetype,
-        sha256=sha,
     )
 
 
@@ -537,10 +453,9 @@ def get_artifact(
 ) -> GetResult:
     """Open a streaming read against the stored object.
 
-    Dispatches to Core_Backend's ``GET /storage/files/{id}/download``
-    when ``key`` starts with ``cb:`` (i.e. was uploaded via the
-    core_backend backend).  Falls back to minio SDK for plain keys
-    (minio backend, or legacy artifacts uploaded before the switch).
+    Dispatches to Core_Backend's ``GET /storage/files/{id}/download`` when
+    ``key`` starts with ``cb:``; otherwise reads through the community
+    BlobStore adapter.
     """
     if _is_core_backend_key(key):
         return _get_via_core_backend(key, bucket)
@@ -556,36 +471,7 @@ def get_artifact(
             mimetype=result.content_type,
             stream=result.stream,
         )
-    if store.__class__.__name__ == "MinioBlobStore":
-        result = store.get_stream(key=key, bucket=bucket)
-        return GetResult(
-            bucket=result.bucket,
-            key=result.key,
-            size_bytes=result.size_bytes,
-            mimetype=result.content_type,
-            stream=result.stream,
-        )
-    return _get_via_minio(bucket, key)
-
-
-def _get_via_minio(bucket: str | None, key: str) -> GetResult:
-    effective_bucket = bucket or DEFAULT_BUCKET
-    client = _get_minio_client()
-    response = client.get_object(effective_bucket, key)
-    size = None
-    if response.headers and response.headers.get("Content-Length"):
-        try:
-            size = int(response.headers["Content-Length"])
-        except (TypeError, ValueError):
-            size = None
-    mimetype = response.headers.get("Content-Type") if response.headers else None
-    return GetResult(
-        bucket=effective_bucket,
-        key=key,
-        size_bytes=size,
-        mimetype=mimetype,
-        stream=response,
-    )
+    raise RuntimeError(f"Unsupported blob store: {type(store).__name__}")
 
 
 def _get_via_core_backend(key: str, bucket: str | None) -> GetResult:
@@ -650,7 +536,7 @@ def delete_artifact(
       on Core_Backend (soft-delete — DB record marked deleted; lifecycle
       policies on the bucket handle physical cleanup).
 
-    * For plain keys: removes the object directly from minio.
+    * For plain keys: removes the object through the community BlobStore.
 
     Both paths are best-effort — errors are logged but not re-raised so
     a failed delete never breaks chat soft-delete on the DB side.
@@ -666,10 +552,7 @@ def delete_artifact(
             store.delete_key(key=key, user_id=_stable_uuid(user_id), org_id=_stable_uuid(org_id))
     else:
         store = get_blob_store()
-        if store.__class__.__name__ == "MinioBlobStore":
-            store.delete_key(key=key, bucket=bucket)
-        else:
-            _delete_via_minio(bucket, key)
+        raise RuntimeError(f"Unsupported blob store: {type(store).__name__}")
 
 
 def get_artifact_from_local_fs_token(token: str) -> GetResult:
@@ -693,19 +576,6 @@ def _stable_uuid(value: str | uuid.UUID) -> uuid.UUID:
         return uuid.UUID(str(value))
     except ValueError:
         return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
-
-
-def _delete_via_minio(bucket: str | None, key: str) -> None:
-    effective_bucket = bucket or DEFAULT_BUCKET
-    try:
-        _get_minio_client().remove_object(effective_bucket, key)
-    except Exception as exc:
-        logger.warning(
-            "artifact_storage.minio_delete_failed",
-            bucket=effective_bucket,
-            key=key,
-            error=str(exc),
-        )
 
 
 def _delete_via_core_backend(key: str) -> None:

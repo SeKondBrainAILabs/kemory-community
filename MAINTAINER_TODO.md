@@ -103,3 +103,5 @@ before configuring GitHub Pages or submitting any extension review.
   plus npm publish steps.
 - [ ] Update branch protection's `required_status_checks` from
   `["ci / noop-pass"]` to `["ci / smoke", "Community Config / pgvector + local_fs + local_single_user + noop"]`.
+- Subtree pull post-processing: re-apply Gap-1 artifact MinIO strip until
+  upstream removes the path.
