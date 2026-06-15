@@ -21,7 +21,70 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.agent import AgentRegistry
+from backend.models.permission import PermissionRule
 from backend.services.auth_service import create_access_token, generate_api_key
+
+# Scopes auto-granted as `allow` rules when an agent is activated. Restricted
+# to the core memory read/write scopes so activation makes a memory agent
+# functional without silently granting an escalated scope (e.g. admin:*) that
+# a caller may have self-declared. memory:delete is already auto-granted
+# per-namespace on first write (see memory_service.create_memory).
+_AUTO_GRANT_SCOPES = {"memory:read", "memory:write"}
+
+
+async def seed_declared_scope_rules(
+    user_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    declared_scopes: list[dict] | None,
+    org_id: str,
+    db: AsyncSession,
+) -> int:
+    """Create `allow` permission rules from an agent's declared scopes.
+
+    Called whenever an agent transitions to `active` (auto-activate /
+    pair-claim / explicit approval). Without this, the gatekeeper has no
+    matching rule and default-denies every memory op, leaving the agent
+    active-but-inert — the bug behind the pair-claim quick-connect flow.
+
+    Idempotent: skips any (agent_id, scope) that already has an allow rule.
+    Only scopes in ``_AUTO_GRANT_SCOPES`` are seeded; anything else still
+    requires an explicit permission rule from the owning user.
+
+    Returns the number of rules created.
+    """
+    # Local import avoids a module-load cycle (gatekeeper_service imports
+    # models, not services, so this direction is safe at call time).
+    from backend.services.gatekeeper_service import PermissionRuleCreate, create_rule
+
+    existing = await db.execute(
+        select(PermissionRule.scope).where(
+            PermissionRule.user_id == user_id,
+            PermissionRule.agent_id == agent_id,
+            PermissionRule.action == "allow",
+        )
+    )
+    have = {row[0] for row in existing.all()}
+
+    created = 0
+    for decl in declared_scopes or []:
+        scope = decl.get("scope") if isinstance(decl, dict) else getattr(decl, "scope", None)
+        if scope in _AUTO_GRANT_SCOPES and scope not in have:
+            await create_rule(
+                user_id,
+                PermissionRuleCreate(
+                    agent_id=str(agent_id),
+                    scope=scope,
+                    action="allow",
+                    priority=100,
+                    namespace_filter=None,
+                ),
+                db,
+                org_id=org_id,
+            )
+            have.add(scope)
+            created += 1
+    return created
+
 
 # ─── Request/Response Schemas ─────────────────────────────────────
 
@@ -207,6 +270,13 @@ async def register_agent(
     db.add(agent)
     await db.flush()
 
+    # If the agent lands active immediately (AUTO_APPROVE_AGENTS or the
+    # pair-claim auto_activate override), seed allow rules from its declared
+    # scopes now — otherwise the gatekeeper default-denies every memory op and
+    # the agent is active-but-inert. Pending agents get this at approve time.
+    if initial_status == "active":
+        await seed_declared_scope_rules(user_id, agent.agent_id, agent.declared_scopes, org_id, db)
+
     return AgentRegistrationResponse(
         agent_id=str(agent.agent_id),
         agent_name=agent.agent_name,
@@ -232,6 +302,11 @@ async def approve_agent(
         raise ValueError(f"Agent is in '{agent.status}' status, not 'pending_approval'")
 
     agent.status = "active"
+    await db.flush()
+
+    # Approval is the user granting the agent its declared scopes — seed the
+    # allow rules so the now-active agent can actually read/write.
+    await seed_declared_scope_rules(user_id, agent.agent_id, agent.declared_scopes, agent.org_id, db)
     await db.flush()
     return _to_response(agent)
 
