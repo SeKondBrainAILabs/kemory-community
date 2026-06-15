@@ -154,21 +154,90 @@ async def init_db():
         # have to run a separate command.
         if os.environ.get("KEMORY_RUN_MIGRATIONS", "true").lower() not in {"true", "1", "yes"}:
             return
-        # PostgreSQL path — run Alembic migrations (S9N-3073)
+
+        # The Alembic chain has no table-creation baseline: the first revision
+        # that touches the memories table only ALTERs it, assuming a pre-Alembic
+        # create_all() schema that was never captured as a migration. So
+        # `alembic upgrade head` CANNOT bootstrap an empty database — it dies on
+        # the first ALTER against a non-existent table.
+        #
+        # Resolve this the standard create-for-new / migrate-for-existing way:
+        #   • fresh DB  → build the current schema from the ORM models
+        #                 (Base.metadata is the source of truth for head) and
+        #                 record head in alembic_version, so future releases'
+        #                 migrations apply cleanly.
+        #   • existing  → `alembic upgrade head` to apply pending migrations.
+        #
+        # Both `uvicorn --workers N` and multi-replica deploys call init_db()
+        # concurrently, so the fresh-bootstrap branch is serialized with a
+        # Postgres transaction-level advisory lock and the version row is written
+        # in the SAME transaction as create_all() — losers re-check under the
+        # lock, see the schema already exists, and fall through to a no-op
+        # upgrade. (Arbitrary, fixed lock key; unique to this bootstrap.)
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy import text as sa_text
+
+        _BOOTSTRAP_LOCK_KEY = 0x6B656D6F  # "kemo"
+
+        alembic_ini = os.path.normpath(
+            os.path.join(
+                os.path.dirname(  # backend/
+                    os.path.dirname(  # backend/core/
+                        os.path.abspath(__file__)
+                    )
+                ),
+                "..",
+                "alembic.ini",
+            )
+        )
+
+        def _is_fresh(sync_conn) -> bool:
+            insp = sa_inspect(sync_conn)
+            # Fresh == Alembic never ran here AND no core app table exists.
+            return not insp.has_table("alembic_version") and not insp.has_table("kemory_memories")
+
+        def _alembic_head() -> str:
+            from alembic.config import Config as _AlembicConfig
+            from alembic.script import ScriptDirectory
+
+            return ScriptDirectory.from_config(_AlembicConfig(alembic_ini)).get_current_head()
+
+        async with _get_engine().begin() as conn:
+            # Serialize bootstrap across workers/replicas; auto-released on commit.
+            await conn.execute(sa_text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=_BOOTSTRAP_LOCK_KEY))
+            fresh = await conn.run_sync(_is_fresh)
+            if fresh:
+                # pg_trgm backs the hybrid-search trigram index (migration 005);
+                # create it up front so the ORM schema is search-ready.
+                await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                await conn.run_sync(Base.metadata.create_all)
+                # Stamp head in the SAME transaction so a crash can't leave a
+                # schema with no version row (which would send the next start
+                # down the broken upgrade-from-base path).
+                head = _alembic_head()
+                await conn.execute(
+                    sa_text(
+                        "CREATE TABLE IF NOT EXISTS alembic_version "
+                        "(version_num VARCHAR(32) NOT NULL, "
+                        "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+                    )
+                )
+                await conn.execute(
+                    sa_text(
+                        "INSERT INTO alembic_version (version_num) VALUES (:v) ON CONFLICT DO NOTHING"
+                    ).bindparams(v=head)
+                )
+
+        if fresh:
+            # Schema built + stamped above; nothing more to do.
+            return
+
+        # Existing database — apply any pending migrations (S9N-3073).
         import subprocess
         import sys
 
-        alembic_ini = os.path.join(
-            os.path.dirname(  # backend/
-                os.path.dirname(  # backend/core/
-                    os.path.abspath(__file__)
-                )
-            ),
-            "..",
-            "alembic.ini",
-        )
         result = subprocess.run(
-            [sys.executable, "-m", "alembic", "-c", os.path.normpath(alembic_ini), "upgrade", "head"],
+            [sys.executable, "-m", "alembic", "-c", alembic_ini, "upgrade", "head"],
             capture_output=True,
             text=True,
         )
