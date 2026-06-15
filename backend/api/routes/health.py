@@ -108,7 +108,7 @@ async def readiness():
 @router.get("/health/deep")
 async def deep_health():
     """
-    Deep health check — verifies ALL dependencies including Neo4j and Weaviate.
+    Deep health check — verifies community dependencies.
     More expensive than readiness; used for monitoring dashboards, not orchestrator probes.
     """
     checks = {}
@@ -146,62 +146,6 @@ async def deep_health():
     except Exception as e:
         checks["redis"] = {"status": "unhealthy", "error": str(e)}
         all_healthy = False
-
-    # Check FalkorDB (Redis-based graph DB)
-    try:
-        import time
-
-        import redis.asyncio as aioredis
-
-        start = time.monotonic()
-        falkordb_url = _get_falkordb_url()
-        r = aioredis.from_url(falkordb_url, socket_connect_timeout=5)
-        await r.ping()
-        await r.aclose()
-        latency = round((time.monotonic() - start) * 1000, 2)
-        checks["falkordb"] = {"status": "healthy", "latency_ms": latency}
-    except Exception as e:
-        checks["falkordb"] = {"status": "unhealthy", "error": str(e)}
-        all_healthy = False
-
-    # Check Weaviate
-    try:
-        import time
-
-        import httpx
-
-        start = time.monotonic()
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.weaviate_url}/v1/.well-known/ready",
-                timeout=5.0,
-            )
-            resp.raise_for_status()
-        latency = round((time.monotonic() - start) * 1000, 2)
-        checks["weaviate"] = {"status": "healthy", "latency_ms": latency}
-    except Exception as e:
-        checks["weaviate"] = {"status": "unhealthy", "error": str(e)}
-        all_healthy = False
-
-    # Check Keycloak (only when enabled)
-    if settings.keycloak_enabled:
-        try:
-            import time
-
-            import httpx
-
-            start = time.monotonic()
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{settings.keycloak_url}/realms/{settings.keycloak_realm}/.well-known/openid-configuration",
-                    timeout=5.0,
-                )
-                resp.raise_for_status()
-            latency = round((time.monotonic() - start) * 1000, 2)
-            checks["keycloak"] = {"status": "healthy", "latency_ms": latency}
-        except Exception as e:
-            checks["keycloak"] = {"status": "unhealthy", "error": str(e)}
-            all_healthy = False
 
     status_code = 200 if all_healthy else 503
     from fastapi.responses import JSONResponse

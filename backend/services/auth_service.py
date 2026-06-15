@@ -14,17 +14,20 @@ Performance:
 - In-memory TTL cache avoids repeated bcrypt verification (~170ms/call)
 """
 
+from __future__ import annotations
+
 import hashlib
+import hmac
+import secrets
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import bcrypt
 import structlog
 from jose import JWTError, jwt
-from pydantic import BaseModel
-from s9n_auth import ApiKeyHasher
-from s9n_auth import AuthContext as _S9nAuthContext
-from s9n_auth.events import AuthEvent
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,19 +59,110 @@ async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
         pass
 
 
-# ─── API Key Hashing (s9n-auth ApiKeyHasher, HMAC-SHA256) ─────────
+# ─── API Key Hashing (HMAC-SHA256) ───────────────────────────────
 # API keys are high-entropy random tokens, so a slow password hash buys no
-# security — s9n-auth keys them with HMAC-SHA256 under a server-side pepper
+# security — keys are verified with HMAC-SHA256 under a server-side pepper
 # (deterministic, microsecond, constant-time). Stored as
 # `hmac-sha256:<kid>:<hex>`. Existing kemory bcrypt keys keep verifying via
 # allow_legacy_bcrypt and are transparently re-hashed to HMAC on next use
-# (verify-then-upgrade) — no forced re-issue. See ADR: kemory seeded s9n-auth.
+# (verify-then-upgrade) — no forced re-issue.
 _BCRYPT_ROUNDS = 12  # legacy: rounds kemory used; kept for the migration test
-_hasher: ApiKeyHasher | None = None
+_hasher: "ApiKeyHasher" | None = None
+
+
+@dataclass(frozen=True)
+class AuthEvent:
+    outcome: str
+    auth_method: str = "api_key"
+    org_id: str | None = None
+    agent_id: uuid.UUID | None = None
+    key_prefix: str | None = None
+    upgraded: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class VerifyResult:
+    matched: bool
+    needs_upgrade: bool = False
+
+
+class ApiKeyHasher:
+    """Small public-package API-key helper for Kemory Community."""
+
+    def __init__(self, pepper: str, *, allow_legacy_bcrypt: bool, on_event=None) -> None:
+        self._pepper = pepper.encode("utf-8")
+        self._allow_legacy_bcrypt = allow_legacy_bcrypt
+        self._on_event = on_event
+
+    @classmethod
+    def single(cls, pepper: str, *, allow_legacy_bcrypt: bool, on_event=None) -> "ApiKeyHasher":
+        return cls(pepper, allow_legacy_bcrypt=allow_legacy_bcrypt, on_event=on_event)
+
+    def generate(self, prefix: str) -> tuple[str, str, str]:
+        plaintext = f"{prefix}_{secrets.token_urlsafe(24)}"
+        return plaintext, self.hash(plaintext), _compute_key_prefix(plaintext)
+
+    def hash(self, plaintext_key: str) -> str:
+        digest = hmac.new(self._pepper, plaintext_key.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"hmac-sha256:v1:{digest}"
+
+    def verify(self, plaintext_key: str, hashed_key: str) -> VerifyResult:
+        if not plaintext_key or not hashed_key:
+            return VerifyResult(False)
+        if hashed_key.startswith("hmac-sha256:"):
+            return VerifyResult(hmac.compare_digest(self.hash(plaintext_key), hashed_key))
+        if self._allow_legacy_bcrypt:
+            try:
+                prehash = _prehash_key(plaintext_key).encode("utf-8")
+                matched = bcrypt.checkpw(prehash, hashed_key.encode("utf-8"))
+                return VerifyResult(matched, needs_upgrade=matched)
+            except Exception:
+                return VerifyResult(False)
+        return VerifyResult(False)
+
+    async def authenticate(
+        self,
+        plaintext_key: str,
+        *,
+        fetch_active_by_prefix,
+        build_context,
+        on_rehash,
+    ):
+        prefix = _compute_key_prefix(plaintext_key)
+        agent = await fetch_active_by_prefix(prefix)
+        if agent is None:
+            self._emit(AuthEvent(outcome="miss", key_prefix=prefix, reason="no_active_prefix_match"))
+            return None
+        result = self.verify(plaintext_key, agent.api_key_hash)
+        if not result.matched:
+            self._emit(AuthEvent(outcome="reject", agent_id=agent.agent_id, key_prefix=prefix))
+            return None
+        if result.needs_upgrade:
+            await on_rehash(agent, self.hash(plaintext_key))
+        ctx = build_context(agent)
+        self._emit(
+            AuthEvent(
+                outcome="accept",
+                agent_id=agent.agent_id,
+                org_id=str(getattr(agent, "org_id", "") or ""),
+                key_prefix=prefix,
+                upgraded=result.needs_upgrade,
+            )
+        )
+        return ctx
+
+    def _emit(self, event: AuthEvent) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(event)
+        except Exception:
+            return
 
 
 def _emit_auth_event(event: AuthEvent) -> None:
-    """Forward s9n-auth auth decisions to structlog for a unified audit trail.
+    """Forward auth decisions to structlog for a unified audit trail.
 
     Best-effort: the library swallows any exception raised here so telemetry
     can never fail an authentication.
@@ -129,14 +223,12 @@ import asyncio as _asyncio
 _auth_cache_lock = _asyncio.Lock()
 
 
-class AuthContext(_S9nAuthContext):
+class AuthContext(BaseModel):
     """Represents the authenticated identity for a request.
 
-    Subclasses the shared ``s9n_auth.AuthContext`` (kemory is the codebase that
-    library's identity shape was seeded from) and adds the one kemory-only
-    field, ``team_ids``. Inherited from s9n-auth: ``user_id``, ``agent_id``,
-    ``agent_name``, ``scopes``, ``roles``, ``org_id``, ``auth_method``,
-    ``acting_user_id``.
+    Represents the community request identity. The shape mirrors hosted Kemory:
+    ``user_id``, ``agent_id``, ``agent_name``, ``scopes``, ``roles``,
+    ``org_id``, ``auth_method``, and ``acting_user_id``.
 
     ``user_id`` and ``auth_method`` are re-declared as required to preserve
     kemory's stricter construction contract (the base makes user_id optional
@@ -155,10 +247,16 @@ class AuthContext(_S9nAuthContext):
 
     user_id: uuid.UUID
     auth_method: str  # "jwt", "api_key", or "keycloak"
+    agent_id: uuid.UUID | None = None
+    agent_name: str = ""
+    scopes: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    org_id: str | None = None
+    acting_user_id: uuid.UUID | None = None
 
     # Resolved server-side from TeamMember rows by team_resolver (WS-4).
     # Not present on any token; recomputed per-request with a 60s cache.
-    team_ids: list[str] = []
+    team_ids: list[str] = Field(default_factory=list)
 
     # ADR-012 Phase 2: the caller's role + the org's type for the *active*
     # org, populated by the active-org resolution seam (backend/core/auth.py
@@ -267,7 +365,7 @@ def _prehash_key(key: str) -> str:
     """Legacy: kemory's pre-bcrypt SHA-256 hex pre-hash.
 
     Kept only so the migration test can construct a hash exactly the way the
-    pre-s9n-auth code did, proving the new path verifies real DB rows. Production
+    pre-community code did, proving the new path verifies real DB rows. Production
     no longer calls this — hashing/verification go through the ApiKeyHasher,
     whose ``allow_legacy_bcrypt`` recognises this exact scheme.
     """
@@ -277,8 +375,8 @@ def _prehash_key(key: str) -> str:
 def _compute_key_prefix(plaintext_key: str) -> str:
     """16-char hex prefix from SHA-256 of the key, for O(1) DB lookup.
 
-    Identical to ``s9n_auth.lookup_prefix`` (sha256(key)[:16]) — so existing
-    rows resolve under the new hasher with no prefix backfill.
+    SHA-256 prefix used for O(1) lookup, so existing rows resolve with no
+    prefix backfill.
     """
     return hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()[:16]
 
@@ -293,8 +391,8 @@ def generate_api_key() -> tuple[str, str, str]:
         only ``hashed_key`` (``hmac-sha256:<kid>:<hex>``) and ``key_prefix``
         are persisted.
     """
-    # s9n-auth mints `kemory_<token_urlsafe(24)>` and returns the HMAC hash +
-    # sha256(raw)[:16] prefix — same prefix scheme kemory already used.
+    # Mint `kemory_<token_urlsafe(24)>` and return the HMAC hash plus the
+    # sha256(raw)[:16] prefix.
     return _get_hasher().generate("kemory")
 
 

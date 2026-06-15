@@ -21,17 +21,35 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config.settings import settings
 from backend.mcp.tools import consolidation, memory, meta, namespaces, skills
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 
 # ─── Aggregate ────────────────────────────────────────────────────────────
 
-TOOL_DEFINITIONS: list[MCPToolDefinition] = [
+_LEGACY_TOOL_DEFINITIONS: list[MCPToolDefinition] = [
     *memory.DEFINITIONS,
     *namespaces.DEFINITIONS,
     *consolidation.DEFINITIONS,
     *skills.DEFINITIONS,
     *meta.DEFINITIONS,
+]
+
+
+def _kemory_alias(tool: MCPToolDefinition) -> MCPToolDefinition | None:
+    if not tool.name.startswith("s9nmem_"):
+        return None
+    return tool.model_copy(
+        update={
+            "name": "kemory_" + tool.name.removeprefix("s9nmem_"),
+            "description": tool.description.replace("S9N Memory Vault", "Kemory"),
+        }
+    )
+
+
+TOOL_DEFINITIONS: list[MCPToolDefinition] = [
+    *[alias for tool in _LEGACY_TOOL_DEFINITIONS if (alias := _kemory_alias(tool)) is not None],
+    *_LEGACY_TOOL_DEFINITIONS,
 ]
 
 # Family handlers merge into a single dispatch dict. New tools added in any
@@ -44,6 +62,10 @@ HANDLERS: dict[str, object] = {
     **skills.HANDLERS,
     **meta.HANDLERS,
 }
+for _name, _handler in list(HANDLERS.items()):
+    if _name.startswith("s9nmem_"):
+        HANDLERS["kemory_" + _name.removeprefix("s9nmem_")] = _handler
+del _name, _handler
 
 
 # ─── WS-6: scope hint for LLMs ────────────────────────────────────────────
@@ -88,6 +110,8 @@ async def handle_tool_call(
     """
     if tool_name.startswith("kora_"):
         tool_name = "s9nmem_" + tool_name[5:]
+    if settings.kmv_identity == "local_single_user" and tool_name.startswith("s9nmem_"):
+        tool_name = "kemory_" + tool_name.removeprefix("s9nmem_")
 
     handler = HANDLERS.get(tool_name)
     if handler is None:

@@ -28,6 +28,11 @@ from backend.services.memory_service import (
     delete_memory,
     search_memories,
 )
+from backend.config.settings import settings
+
+
+def _skip_gatekeeper() -> bool:
+    return settings.kmv_identity == "local_single_user"
 
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
@@ -155,7 +160,14 @@ async def _handle_store_memory(args, user_id, agent_id, db):
     from backend.core.tenancy import current_org_id
 
     org_id = current_org_id() or None
-    memory = await create_memory(user_id, agent_id, request, db, org_id=org_id)
+    memory = await create_memory(
+        user_id,
+        agent_id,
+        request,
+        db,
+        org_id=org_id,
+        skip_gatekeeper=_skip_gatekeeper(),
+    )
     return MCPToolResult(
         content=[
             {
@@ -180,7 +192,7 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
         limit=args.get("limit", 20),
         offset=args.get("offset", 0),
     )
-    result = await search_memories(user_id, agent_id, request, db)
+    result = await search_memories(user_id, agent_id, request, db, skip_gatekeeper=_skip_gatekeeper())
 
     if not result.items:
         return MCPToolResult(
@@ -218,7 +230,7 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
 
 async def _handle_delete_memory(args, user_id, agent_id, db):
     memory_id = uuid.UUID(args["memory_id"])
-    await delete_memory(memory_id, user_id, agent_id, db)
+    await delete_memory(memory_id, user_id, agent_id, db, skip_gatekeeper=_skip_gatekeeper())
     return MCPToolResult(
         content=[{"type": "text", "text": f"Memory {args['memory_id']} deleted successfully."}],
     )
@@ -226,17 +238,18 @@ async def _handle_delete_memory(args, user_id, agent_id, db):
 
 async def _handle_find_similar(args, user_id, agent_id, db):
     namespace = args.get("namespace")
-    decision = await evaluate(
-        user_id,
-        EvaluationRequest(
-            agent_id=str(agent_id),
-            scope="memory:read",
-            namespace=namespace,
-        ),
-        db,
-    )
-    if not decision.allowed:
-        raise PermissionError(decision.reason)
+    if not _skip_gatekeeper():
+        decision = await evaluate(
+            user_id,
+            EvaluationRequest(
+                agent_id=str(agent_id),
+                scope="memory:read",
+                namespace=namespace,
+            ),
+            db,
+        )
+        if not decision.allowed:
+            raise PermissionError(decision.reason)
 
     request = MemorySearchRequest(
         query=args["content"],

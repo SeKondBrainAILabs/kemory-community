@@ -21,7 +21,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.identity_provider import get_identity_provider
-from backend.adapters.identity_provider.keycloak_idp import KeycloakIDP, _get_kc_verifier
 from backend.config.settings import settings
 from backend.core.active_org import resolve_active_org
 from backend.core.database import get_db
@@ -34,8 +33,8 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def _try_keycloak(token: str) -> AuthContext | None:
-    """Compatibility wrapper for tests that pin the hosted Keycloak mapping."""
-    return await KeycloakIDP(verifier_factory=_get_kc_verifier).verify_keycloak_token(token)
+    """Community edition does not verify hosted bearer tokens."""
+    return None
 
 
 async def get_auth_context(

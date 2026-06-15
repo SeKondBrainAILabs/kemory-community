@@ -5,10 +5,7 @@
 
 cat > /usr/share/nginx/html/config.json <<EOF
 {
-  "KEYCLOAK_URL": "${KEYCLOAK_PUBLIC_URL:-/auth}",
-  "KEYCLOAK_REALM": "${KEYCLOAK_REALM:-s9n-mvp}",
-  "KEYCLOAK_CLIENT_ID": "${KEYCLOAK_CLIENT_ID:-kemory-dashboard}",
-  "SKIP_AUTH": "${SKIP_AUTH:-true}",
+  "SKIP_AUTH": ${SKIP_AUTH:-true},
   "API_KEY": "${API_KEY:-}",
   "API_URL": "${API_PUBLIC_URL:-}"
 }

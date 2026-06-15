@@ -168,13 +168,7 @@ export function Sidebar() {
 
       {/* Footer: settings + feedback */}
       <div className="border-t border-black/[0.05] px-2 py-2">
-        <button
-          type="button"
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary"
-        >
-          <Settings size={16} />
-          <span>Settings</span>
-        </button>
+        <NavRow to="/settings" icon={Settings} label="Settings" />
         <button
           type="button"
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary"

@@ -208,8 +208,10 @@ async def init_db():
             fresh = await conn.run_sync(_is_fresh)
             if fresh:
                 # pg_trgm backs the hybrid-search trigram index (migration 005);
-                # create it up front so the ORM schema is search-ready.
+                # pgvector backs the community vector table (migration 017).
+                # Create both up front so the ORM schema is search-ready.
                 await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await conn.run_sync(Base.metadata.create_all)
                 # Stamp head in the SAME transaction so a crash can't leave a
                 # schema with no version row (which would send the next start

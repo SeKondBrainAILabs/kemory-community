@@ -1,9 +1,8 @@
 # Kemory Community Edition - Project Plan
 
-This is the build plan for v0.1 of `kemory-community`. The repo is
-currently in scaffolding phase; backend code lands via a `git subtree
-split` from `SeKondBrainAILabs/agent_memory_vault` once that repo's
-adapter refactor completes.
+This is the build plan for v0.1 of `kemory-community`. The community repo
+receives backend, SDK, CLI, and dashboard code by subtree split from
+`SeKondBrainAILabs/agent_memory_vault`.
 
 ## What ships in community
 
@@ -29,7 +28,7 @@ Not included (stays in hosted Kemory):
 - L5 cross-namespace merge detection (the one piece of cognition that's hosted-only)
 - Keycloak / OIDC / multi-tenant org isolation
 - FalkorDB knowledge graph (community uses `kemory_supersedes_edges` SQL table)
-- Weaviate (community uses PGlite + pgvector)
+- Weaviate (community uses Postgres + pgvector in Docker)
 - MinIO (community uses local filesystem)
 - Hosted telemetry
 - Teams, `team_members`, `visibility=team|org` evaluation (columns exist for portability; community ignores them)
@@ -38,9 +37,9 @@ Not included (stays in hosted Kemory):
 
 ## Architecture
 
-- **Backend:** Python 3.11 + FastAPI, shipped as a PyInstaller binary.
-- **Database default:** PGlite (embedded WASM Postgres + pgvector) at `~/.kemory-community/data/pgdata/`. Zero install.
-- **Database opt-in:** real Postgres via `kemory-community init --db postgres://...`.
+- **Backend:** Python 3.11 + FastAPI, shipped as a Docker image.
+- **Database default:** Postgres + pgvector in the Docker runtime.
+- **Database opt-in:** host Postgres via generated compose overrides.
 - **LLM:** Groq, user-supplied key. Default model `llama-3.3-70b-versatile`.
 - **Embeddings:** local `fastembed` with `BAAI/bge-small-en-v1.5`. Configurable to OpenAI/Voyage/Cohere.
 - **Auth:** single-user, X-API-Key only. No Keycloak, no JWT.
@@ -49,26 +48,27 @@ Not included (stays in hosted Kemory):
 
 ## Distribution
 
-`npm i -g kemory-community` (or `npx kemory-community@latest`). The
-npm package's `postinstall` downloads the right platform binary from
-GitHub Releases.
+`npm i -g kemory-community` (or `npx kemory-community@latest`). The npm
+package provides the setup CLI and pulls the published Docker images.
 
 The npm CLI supports `init --runtime docker|local`. Docker is the default
 runtime for local setup and QA. The reserved local Docker ports are API `8111`,
 dashboard `5175`, and optional Postgres/pgvector `5434`.
 
-**v0.1 platforms:** macOS arm64 only. Windows x64 + Linux x64 in v0.2.
+**v0.1 platforms:** Docker Desktop / Docker Engine on macOS, Linux, and
+Windows hosts. Host-local binaries are deferred until after the Docker-first
+release.
 
 ## Timeline target
 
 | Week | Focus |
 |------|-------|
 | 1 (in `agent_memory_vault`) | Adapter refactors land: `VectorStore`, `BlobStore`, `IdentityProvider`, `Telemetry`, cognition plugin layout, community-config CI tripwire. |
-| 2 (in this repo) | Receive subtree split, PGlite integration, dashboard de-Keycloak, npm packaging, macOS arm64 binary, Settings UI, export/import. Tag `v0.1.0`. |
+| 2 (in this repo) | Receive subtree split, Docker pgvector integration, dashboard de-Keycloak, npm packaging, Settings UI, export/import, and Docker image release wiring. Tag `v0.1.0`. |
 
 ## After v0.1
 
-v0.2 (next 2 weeks): Windows + Linux binaries, GH Pages docs site at
+v0.2 (next 2 weeks): Host-local runtime, GH Pages docs site at
 `community.kemory.s9n.ai`, artifact thumbnails, recall benchmarks vs
 Mem0/Letta/Zep, HN + Product Hunt launch.
 

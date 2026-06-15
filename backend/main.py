@@ -23,6 +23,7 @@ from backend.api.routes.artifacts import local_fs_router  # v3.35.0 project file
 from backend.api.routes.artifacts import router as artifacts_router
 from backend.api.routes.audit import router as audit_router
 from backend.api.routes.chat_mappings import router as chat_mappings_router  # chats-v1
+from backend.api.routes.community import router as community_router
 from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
 from backend.api.routes.enrichment import router as enrichment_router
 from backend.api.routes.extension_keys import router as extension_keys_router  # chats-v1
@@ -187,3 +188,4 @@ app.include_router(extension_keys_router)
 # ── v3.35.0: namespace / memory level project files ───────────────
 app.include_router(artifacts_router)
 app.include_router(local_fs_router)
+app.include_router(community_router)

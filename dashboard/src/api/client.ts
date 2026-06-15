@@ -6,13 +6,12 @@ const API_KEY_STORAGE_KEY = 's9nmv_api_key'
 /** Check skip-auth from runtime config.json (preferred) or build-time env. */
 function isSkipAuth(): boolean {
   const config = getConfig()
-  if (config?.SKIP_AUTH === 'true') return true
+  if (config?.SKIP_AUTH === true || config?.SKIP_AUTH === 'true') return true
   return import.meta.env.VITE_SKIP_AUTH === 'true'
 }
 
 /**
- * API key helpers — kept for agent-mode / dev fallback.
- * In production the dashboard uses Keycloak Bearer tokens.
+ * API key helpers for community local_single_user auth.
  */
 export function getApiKey(): string | null {
   return localStorage.getItem(API_KEY_STORAGE_KEY)
@@ -52,7 +51,7 @@ export const api = ky.create({
       (request) => {
         const rewritten = applyApiUrl(request)
 
-        // 1. Keycloak Bearer token (production)
+        // 1. Hosted Bearer token, disabled in community skip-auth mode.
         if (!isSkipAuth()) {
           const token = getToken()
           if (token) {
@@ -61,7 +60,7 @@ export const api = ky.create({
           }
         }
 
-        // 2. API key from localStorage or config.json (dev / agent mode)
+        // 2. API key from localStorage or config.json.
         const apiKey = getApiKey() || getConfig()?.API_KEY || ''
         if (apiKey) {
           rewritten.headers.set('X-API-Key', apiKey)

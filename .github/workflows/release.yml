@@ -3,17 +3,46 @@ on:
   push:
     tags: ["v*.*.*"]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  build-macos-arm64:
-    runs-on: macos-14
+  publish-docker:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Guard until backend is seeded
+      - name: Login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push images
         run: |
-          if [ ! -d "backend" ]; then
-            echo "STOP: backend not seeded; release workflow is a no-op."
-            exit 1
-          fi
-      # TODO: setup-python, install pyinstaller, build binary,
-      # upload to GH Release, npm publish --access public.
-      - run: echo "TODO: implement once backend lands"
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+
+          docker build -t "${REPO}-api:${VERSION}" -t "${REPO}-api:latest" .
+          docker build -t "${REPO}-dashboard:${VERSION}" -t "${REPO}-dashboard:latest" ./dashboard
+
+          docker push "${REPO}-api:${VERSION}"
+          docker push "${REPO}-api:latest"
+          docker push "${REPO}-dashboard:${VERSION}"
+          docker push "${REPO}-dashboard:latest"
+
+  publish-npm:
+    needs: publish-docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: https://registry.npmjs.org
+      - run: npm install --package-lock=false
+      - run: npm test
+      - run: npm run prepublishOnly
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

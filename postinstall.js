@@ -1,3 +1,2 @@
-// Scaffold release - no binary to download yet.
-console.log('kemory-community: scaffold release; no binary needed yet.');
+console.log('kemory-community: installed. Run `kemory-community init --runtime docker` to create a local setup.');
 process.exit(0);

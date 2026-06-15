@@ -69,7 +69,6 @@ import structlog
 
 from backend.adapters.blob_store import (
     LocalFSBlobStore,
-    MinioBlobStore,
     get_blob_backend_name,
     get_blob_store,
 )
@@ -85,7 +84,7 @@ def _env(name: str, default: str) -> str:
     return v if v else default
 
 
-ARTIFACT_BACKEND = _env("KEMORY_ARTIFACT_BACKEND", "minio")
+ARTIFACT_BACKEND = _env("KEMORY_ARTIFACT_BACKEND", "local_fs")
 
 # ── minio backend ──────────────────────────────────────────────────
 DEFAULT_BUCKET = _env("KEMORY_ARTIFACT_BUCKET", "kemory-chat-artifacts")
@@ -388,7 +387,7 @@ def put_artifact(
             user_id=_stable_uuid(user_id),
             org_id=_stable_uuid(org_id),
         )
-    elif isinstance(store, MinioBlobStore):
+    elif store.__class__.__name__ == "MinioBlobStore":
         result = store.put_bytes(key=key, data=data, content_type=mimetype)
     else:
         raise RuntimeError(f"Unsupported blob store: {type(store).__name__}")
@@ -557,7 +556,7 @@ def get_artifact(
             mimetype=result.content_type,
             stream=result.stream,
         )
-    if isinstance(store, MinioBlobStore):
+    if store.__class__.__name__ == "MinioBlobStore":
         result = store.get_stream(key=key, bucket=bucket)
         return GetResult(
             bucket=result.bucket,
@@ -667,7 +666,7 @@ def delete_artifact(
             store.delete_key(key=key, user_id=_stable_uuid(user_id), org_id=_stable_uuid(org_id))
     else:
         store = get_blob_store()
-        if isinstance(store, MinioBlobStore):
+        if store.__class__.__name__ == "MinioBlobStore":
             store.delete_key(key=key, bucket=bucket)
         else:
             _delete_via_minio(bucket, key)

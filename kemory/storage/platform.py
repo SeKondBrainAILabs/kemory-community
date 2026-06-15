@@ -26,7 +26,6 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from backend.adapters.vector_store import VectorStore, create_vector_store, resolve_vector_backend
-from backend.adapters.vector_store.weaviate_backend import WeaviateBackend
 from kemory.models.episode import EpisodeCreate, EpisodeRecord
 from kemory.storage.base import StorageBackend, escape_like
 
@@ -84,7 +83,6 @@ class PlatformStorageBackend(StorageBackend):
         # Set during initialise()
         self._pg_engine: Any = None
         self._falkordb_conn: Any = None  # falkordb.Graph instance
-        self._weaviate_client: Any = None
         self._vector_store: VectorStore | None = vector_store
         self._initialised = False
         self._closed = False
@@ -110,26 +108,9 @@ class PlatformStorageBackend(StorageBackend):
                 "sqlalchemy and asyncpg are not installed. Install them with: pip install sqlalchemy asyncpg"
             )  # pragma: no cover
 
-        # ── FalkorDB ──────────────────────────────────────────────────
-        try:
-            import falkordb as _falkordb
-
-            def _connect_falkordb() -> Any:
-                # falkordb client ignores the `url` kwarg for host/port resolution;
-                # parse the URL manually and pass host/port explicitly.
-                parsed = urlparse(self._falkordb_url)
-                host = parsed.hostname or "localhost"
-                port = parsed.port or 6379
-                password = parsed.password or None
-                db = _falkordb.FalkorDB(host=host, port=port, password=password)
-                return db.select_graph(self._falkordb_graph)
-
-            self._falkordb_conn = await asyncio.to_thread(_connect_falkordb)
-            logger.info("PlatformStorageBackend: FalkorDB graph connected.")
-        except ImportError:  # pragma: no cover
-            raise RuntimeError(
-                "falkordb package is not installed. Install it with: pip install falkordb"
-            )  # pragma: no cover
+        # Kemory Community does not ship a graph database. Graph APIs degrade
+        # to empty relationship results while metadata and vectors stay local.
+        self._falkordb_conn = None
 
         # ── Vector Store ──────────────────────────────────────────────
         self._vector_store = self._vector_store or create_vector_store(
@@ -140,8 +121,6 @@ class PlatformStorageBackend(StorageBackend):
         initialise = getattr(self._vector_store, "initialise", None)
         if initialise is not None:
             await initialise()
-        if isinstance(self._vector_store, WeaviateBackend):
-            self._weaviate_client = self._vector_store.client
         logger.info("PlatformStorageBackend: vector store connected (%s).", self._vector_backend)
 
         self._initialised = True
@@ -183,10 +162,8 @@ class PlatformStorageBackend(StorageBackend):
                     pass  # column already exists in some PostgreSQL versions
 
     def _ensure_weaviate_collection(self) -> None:
-        """Create the S9nmvEpisode Weaviate collection if it does not exist."""
-        vector_store = self._active_vector_store()
-        if isinstance(vector_store, WeaviateBackend):
-            vector_store.ensure_collection()
+        """Compatibility no-op; community edition uses pgvector."""
+        return None
 
     async def close(self) -> None:
         """Release PostgreSQL engine and Weaviate client."""
@@ -226,11 +203,6 @@ class PlatformStorageBackend(StorageBackend):
             return None
 
     def _active_vector_store(self) -> VectorStore | None:
-        if self._vector_store is None and self._weaviate_client is not None:
-            self._vector_store = WeaviateBackend(
-                weaviate_url=self._weaviate_url,
-                client=self._weaviate_client,
-            )
         return self._vector_store
 
     # ------------------------------------------------------------------
@@ -649,7 +621,7 @@ class PlatformStorageBackend(StorageBackend):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> dict[str, Any]:
-        """Return health status for PostgreSQL, FalkorDB, and Weaviate."""
+        """Return health status for PostgreSQL and pgvector."""
         pg_ok = False
         falkordb_ok = False
         vector_ok = False
@@ -678,12 +650,12 @@ class PlatformStorageBackend(StorageBackend):
             except Exception:
                 pass
 
-        all_ok = pg_ok and falkordb_ok and vector_ok
+        all_ok = pg_ok and vector_ok
         return {
             "status": "ok" if all_ok else "degraded",
             "backend": "PlatformStorageBackend",
             "mode": self.MODE,
             "postgres": "ok" if pg_ok else "error",
-            "falkordb": "ok" if falkordb_ok else "error",
-            "weaviate": "ok" if vector_ok else "error",
+            "graph": "disabled",
+            "vector": "ok" if vector_ok else "error",
         }

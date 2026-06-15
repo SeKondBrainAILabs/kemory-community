@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import pkgutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -33,9 +32,6 @@ _STAGE_MODULE_ORDER = {
         "supersedes_graph",
         "quality_scorer",
     ],
-    "backend.plugins.cognition.enterprise": [
-        "namespace_merge",
-    ],
 }
 
 
@@ -58,19 +54,12 @@ def _ordered_stage_modules(package_name: str, package: ModuleType) -> list[str]:
     ]
 
 
-def _enterprise_enabled() -> bool:
-    raw = os.environ.get("KMV_COGNITION_ENTERPRISE", "true").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
-
-
 def load_pipeline_stages() -> list[PipelineStage]:
     global _loaded
     if _loaded:
         return list(_pipeline_stages)
 
     package_names = ["backend.plugins.cognition.community"]
-    if _enterprise_enabled():
-        package_names.append("backend.plugins.cognition.enterprise")
 
     for package_name in package_names:
         package = importlib.import_module(package_name)

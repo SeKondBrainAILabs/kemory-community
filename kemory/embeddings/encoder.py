@@ -12,9 +12,9 @@ Two interchangeable backends, selected at runtime:
   This is what keeps the kemory pod's resident memory small (it was the
   dominant consumer — two model copies per pod under ``uvicorn --workers``).
 
-* **Local (fallback)** — when no service URL is configured (local dev, tests,
-  or if the remote is intentionally disabled), the model is lazy-loaded
-  in-process via sentence-transformers and reused as a module-level singleton.
+* **Local (fallback)** — when no service URL is configured, the model is
+  lazy-loaded in-process via FastEmbed/ONNX and reused as a module-level
+  singleton.
 
 Both backends serve the SAME model (``BAAI/bge-small-en-v1.5``), so vectors are
 interchangeable across the cutover — existing stored embeddings remain valid.
@@ -123,23 +123,22 @@ def _load_model() -> Any:
         if _model is not None:
             return _model
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import]
+            from fastembed import TextEmbedding  # type: ignore[import]
         except ImportError:  # pragma: no cover
             raise RuntimeError(
-                "In-process embedding model requested but sentence-transformers "
-                "is not installed. The default (prod) install omits it to keep the "
-                "image slim — set EMBEDDING_SERVICE_URL to use core-embedding-service, "
+                "In-process embedding model requested but fastembed is not installed. "
+                "Set EMBEDDING_SERVICE_URL to use an embedding service, "
                 "or install the local fallback with: pip install 'kemory[local-embeddings]'"
             )
         logger.info("Loading embedding model '%s' (first call — this may take a moment)", MODEL_ID)
-        _model = SentenceTransformer(MODEL_ID)
+        _model = TextEmbedding(model_name=MODEL_ID)
         logger.info("Embedding model loaded (%d dimensions)", EMBEDDING_DIM)
         return _model
 
 
 def _encode_local(text: str) -> list[float]:
     model = _load_model()
-    embedding = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
+    embedding = next(model.embed([text[:_MAX_TEXT_CHARS] or " "]))
     return embedding.tolist()
 
 
@@ -148,7 +147,7 @@ def encode(text: str) -> list[float]:
     Encode *text* into a normalised 384-dimensional float vector.
 
     Routes to the remote ``core-embedding-service`` when ``EMBEDDING_SERVICE_URL``
-    is configured, otherwise uses the in-process sentence-transformers model.
+    is configured, otherwise uses the in-process FastEmbed model.
 
     Parameters
     ----------
@@ -164,7 +163,7 @@ def encode(text: str) -> list[float]:
     ------
     RuntimeError
         If the remote backend is enabled but unreachable, or (local backend)
-        ``sentence-transformers`` is not installed. Callers treat embedding
+        ``fastembed`` is not installed. Callers treat embedding
         failures as non-fatal and backfill on the next enrichment pass.
     """
     if _remote_enabled():

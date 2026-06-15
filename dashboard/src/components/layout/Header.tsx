@@ -16,6 +16,7 @@ const pageTitles: Record<string, string> = {
   '/analytics': 'Storage Analytics',
   '/connectors': 'Connectors',
   '/security': 'Security Alerts',
+  '/settings': 'Settings',
 
 }
 

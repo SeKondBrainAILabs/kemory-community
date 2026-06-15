@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # ─── Identity Provider ────────────────────────────────────────
     # Hosted/default: Keycloak RS256 + internal HS256 fallback + DB-backed
     # agent API keys. Community: static single-user API-key identity.
-    kmv_identity: str = "keycloak"
+    kmv_identity: str = "local_single_user"
     kemory_local_api_key: str = ""
     kemory_community_config: str = ""
 
@@ -94,7 +94,13 @@ class Settings(BaseSettings):
     # ─── Vector Store ─────────────────────────────────────────────
     # Hosted default remains Weaviate. Community edition can run with
     # KMV_VECTOR_BACKEND=pgvector.
-    kmv_vector_backend: str = "weaviate"
+    kmv_vector_backend: str = "pgvector"
+
+    # ─── Blob Store / Telemetry ───────────────────────────────────
+    kmv_blob_backend: str = "local_fs"
+    kmv_blob_local_root: str = "~/.kemory-community/artifacts"
+    kmv_telemetry: str = "noop"
+    kmv_cognition_enterprise: bool = False
 
     # ─── JWT Authentication (internal HS256 for agents) ─────────
     # SECURITY: fail-closed in non-development environments. The previous
@@ -106,7 +112,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 15
 
-    # ─── API-key pepper (s9n-auth ApiKeyHasher, HMAC-SHA256) ─────
+    # ─── API-key pepper (HMAC-SHA256) ────────────────────────────
     # Server-side secret that keys the HMAC over agent API keys. New keys are
     # minted as `hmac-sha256:<kid>:<hex>`; existing bcrypt keys keep verifying
     # (allow_legacy_bcrypt) and upgrade to HMAC on next use. Same fail-closed
@@ -123,7 +129,7 @@ class Settings(BaseSettings):
     # Default is "enforce" — kemory has no production users yet, so we
     # ship multi-tenant from day 1 rather than running through shadow bake.
     # Set TENANT_ENFORCEMENT=off in local dev when working without Keycloak.
-    tenant_enforcement: str = "enforce"
+    tenant_enforcement: str = "off"
 
     # Keycloak claim name carrying the tenant identifier. Mapped from the
     # user attribute via a Protocol Mapper (WS-2). The legacy tenant name

@@ -6,9 +6,8 @@ import os
 
 from backend.adapters.telemetry.base import Telemetry
 from backend.adapters.telemetry.noop import NoOpTelemetry
-from backend.adapters.telemetry.posthog_backend import PostHogTelemetry
 
-VALID_TELEMETRY_BACKENDS = ("posthog", "noop")
+VALID_TELEMETRY_BACKENDS = ("noop",)
 
 _telemetry: Telemetry | None = None
 _telemetry_backend: str | None = None
@@ -16,8 +15,8 @@ _telemetry_backend: str | None = None
 
 def resolve_telemetry_backend(value: str | None = None) -> str:
     if value is None:
-        value = os.environ.get("KMV_TELEMETRY", "posthog")
-    resolved = value.strip().lower() or "posthog"
+        value = os.environ.get("KMV_TELEMETRY", "noop")
+    resolved = value.strip().lower() or "noop"
     if resolved not in VALID_TELEMETRY_BACKENDS:
         raise ValueError(f"Invalid KMV_TELEMETRY: {value!r}. Must be one of: {VALID_TELEMETRY_BACKENDS}")
     return resolved
@@ -31,12 +30,7 @@ def create_telemetry(
     resolved = resolve_telemetry_backend(backend)
     if resolved == "noop":
         return NoOpTelemetry()
-    if endpoint_url is None:
-        endpoint_url = os.environ.get("KMV_TELEMETRY_URL", "").strip()
-        if not endpoint_url:
-            kemory_url = os.environ.get("KEMORY_URL", "").rstrip("/")
-            endpoint_url = f"{kemory_url}/api/v1/telemetry" if kemory_url else ""
-    return PostHogTelemetry(endpoint_url=endpoint_url)
+    raise ValueError("Hosted telemetry is not available in Kemory Community.")
 
 
 def configure_telemetry(backend: str | None = None) -> Telemetry:
@@ -62,7 +56,6 @@ def reset_telemetry_for_tests() -> None:
 
 __all__ = [
     "NoOpTelemetry",
-    "PostHogTelemetry",
     "Telemetry",
     "configure_telemetry",
     "create_telemetry",

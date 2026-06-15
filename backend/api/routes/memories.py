@@ -41,8 +41,13 @@ from backend.services.memory_service import (
     update_memory,
 )
 from backend.services.namespace_matcher import RelatedNamespaceConflict
+from backend.config.settings import settings
 
 router = APIRouter(prefix="/api/v1", tags=["Memories"])
+
+
+def _skip_gatekeeper() -> bool:
+    return settings.kmv_identity == "local_single_user"
 
 
 @router.post(
@@ -69,6 +74,7 @@ async def create_memory_endpoint(
             request,
             db,
             org_id=auth.org_id,
+            skip_gatekeeper=_skip_gatekeeper(),
         )
         # Always 201 — dedup info is in the response body (memory.dedup field)
         # so clients don't need to branch on status code.
@@ -99,7 +105,7 @@ async def get_memory_endpoint(
 ):
     """Get a single memory by ID. Gatekeeper checks memory:read permission."""
     try:
-        return await get_memory(memory_id, auth.user_id, auth.agent_id, db)
+        return await get_memory(memory_id, auth.user_id, auth.agent_id, db, skip_gatekeeper=_skip_gatekeeper())
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -129,7 +135,7 @@ async def update_memory_endpoint(
             auth.agent_id,
             request,
             db,
-            skip_gatekeeper=admin,
+            skip_gatekeeper=admin or _skip_gatekeeper(),
             admin_view=admin,
         )
     except PermissionError as e:
@@ -157,7 +163,7 @@ async def delete_memory_endpoint(
             auth.user_id,
             auth.agent_id,
             db,
-            skip_gatekeeper=admin,
+            skip_gatekeeper=admin or _skip_gatekeeper(),
             admin_view=admin,
         )
     except PermissionError as e:
@@ -185,7 +191,14 @@ async def search_memories_endpoint(
     Fix KMV-QA-004: Admin users can search across all users' memories.
     """
     try:
-        return await search_memories(auth.user_id, auth.agent_id, request, db, admin_view=is_admin(auth))
+        return await search_memories(
+            auth.user_id,
+            auth.agent_id,
+            request,
+            db,
+            admin_view=is_admin(auth),
+            skip_gatekeeper=_skip_gatekeeper(),
+        )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:

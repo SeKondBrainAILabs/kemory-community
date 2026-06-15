@@ -22,6 +22,7 @@ import { ChatsListPage } from '@/pages/chats/ChatsListPage'
 import { ChatDetailPage } from '@/pages/chats/ChatDetailPage'
 import { ChatMappingsPage } from '@/pages/chat-mappings/ChatMappingsPage'
 import { DevicesPage } from '@/pages/devices/DevicesPage'
+import { SettingsPage } from '@/pages/settings/SettingsPage'
 
 export function App() {
   return (
@@ -57,6 +58,7 @@ export function App() {
         <Route path="chats/:chatId" element={<ChatDetailPage />} />
         <Route path="chat-mappings" element={<ChatMappingsPage />} />
         <Route path="devices" element={<DevicesPage />} />
+        <Route path="settings" element={<SettingsPage />} />
 
         {/* Super admin only */}
         <Route

@@ -9,10 +9,10 @@
 
 ## Status
 
-v0.1 ships around June 26, 2026 - until then this repo is scaffolding.
-See [PROJECT_PLAN.md](PROJECT_PLAN.md) for what's coming.
+v0.1.0 community build is in progress. The Docker runtime is the default
+setup path for local use and QA.
 
-## What it will be (v0.1)
+## Quick Start
 
 Two commands to a working memory service for your AI agents:
 
@@ -28,6 +28,8 @@ Kemory, so memories are portable.
 ## What ships in v0.1
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the full table.
+See [docs/PORT_REGISTRY.md](docs/PORT_REGISTRY.md) for the local Docker
+ports.
 
 ## Questions / feedback
 
