@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,10 @@ import click
 import httpx
 
 from kemory_cli import __version__
+
+# Org ids are UUIDs (ADR-012). Validate `kemory use <org>` input locally before
+# persisting / sending it as X-Organization-ID.
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 from kemory_cli.auth import (
     DeviceFlowError,
     get_valid_credentials,
@@ -46,10 +51,20 @@ def _require_creds(ctx: click.Context) -> Credentials:
     return creds
 
 
+def _headers(creds: Credentials) -> dict[str, str]:
+    """Auth + active-org headers. ADR-012: when an active org is selected
+    (`kemory use <org>`), send it as X-Organization-ID — the server validates
+    it against membership on every request (it's an input, never trusted)."""
+    h = {"Authorization": f"Bearer {creds.access_token}"}
+    if creds.active_org_id:
+        h["X-Organization-ID"] = creds.active_org_id
+    return h
+
+
 def _api_get(creds: Credentials, path: str) -> httpx.Response:
     return httpx.get(
         f"{creds.kemory_url.rstrip('/')}{path}",
-        headers={"Authorization": f"Bearer {creds.access_token}"},
+        headers=_headers(creds),
         timeout=10.0,
     )
 
@@ -57,7 +72,7 @@ def _api_get(creds: Credentials, path: str) -> httpx.Response:
 def _api_post(creds: Credentials, path: str, json_body: dict | None = None) -> httpx.Response:
     return httpx.post(
         f"{creds.kemory_url.rstrip('/')}{path}",
-        headers={"Authorization": f"Bearer {creds.access_token}"},
+        headers=_headers(creds),
         json=json_body or {},
         timeout=10.0,
     )
@@ -176,15 +191,32 @@ def login_cmd(ctx: click.Context, no_browser: bool, local_mode: bool) -> None:
             data = resp.json()
             creds.email = data.get("email", "")
             creds.org_id = data.get("org_id", "")
+            # ADR-012 org selection: auto-select when the user belongs to exactly
+            # one org; otherwise leave the choice to `kemory use <org>`.
+            multi_orgs = 0
+            try:
+                orgs_resp = _api_get(creds, "/api/v1/me/orgs")
+                orgs = orgs_resp.json() if orgs_resp.status_code == 200 else []
+            except httpx.HTTPError:
+                orgs = []
+            if len(orgs) == 1:
+                creds.active_org_id = orgs[0].get("org_id", "")
+            elif len(orgs) > 1:
+                multi_orgs = len(orgs)
             creds.save()
             click.echo(
                 click.style(
                     f"✓ Logged in as {creds.email or 'unknown'} · "
-                    f"org={creds.org_id or '?'} · "
+                    f"org={creds.active_org_id or creds.org_id or '?'} · "
                     f"teams={[t['name'] for t in data.get('teams', [])]}",
                     fg="green",
                 )
             )
+            if multi_orgs:
+                click.echo(
+                    f"  You belong to {multi_orgs} orgs — run `kemory orgs` to list, "
+                    f"`kemory use <org_id>` to switch."
+                )
             return
     except httpx.HTTPError:
         pass
@@ -239,7 +271,13 @@ def whoami_cmd(ctx: click.Context) -> None:
     me = resp.json()
     click.echo(f"Email:   {me.get('email')}")
     click.echo(f"User ID: {me.get('user_id')}")
-    click.echo(f"Org:     {me.get('org_name')} ({me.get('org_id')})")
+    role = me.get("org_role")
+    role_str = f"  (role: {role})" if role else ""
+    click.echo(f"Active org: {me.get('org_name')} ({me.get('org_id')}){role_str}")
+    if creds.active_org_id:
+        click.echo(f"  ↳ selected locally via `kemory use {creds.active_org_id}`")
+    else:
+        click.echo("  ↳ using token default — run `kemory orgs` to see switchable orgs")
     click.echo(f"Roles:   {', '.join(me.get('roles') or []) or '-'}")
     teams = me.get("teams") or []
     if teams:
@@ -248,6 +286,55 @@ def whoami_cmd(ctx: click.Context) -> None:
             click.echo(f"  • {t['name']:<30}  role={t['role']:<8}  can_write={t['can_write']}")
     else:
         click.echo("Teams:   (none)")
+
+
+# ─── active org (ADR-012) ──────────────────────────────────────────────────
+
+
+@cli.command("orgs")
+@click.pass_context
+def orgs_cmd(ctx: click.Context) -> None:
+    """List the organisations you can switch between, marking the active one."""
+    creds = _require_creds(ctx)
+    resp = _api_get(creds, "/api/v1/me/orgs")
+    if resp.status_code != 200:
+        raise click.ClickException(f"GET /api/v1/me/orgs failed: {resp.status_code} {resp.text}")
+    orgs = resp.json()
+    if not orgs:
+        click.echo("(no org memberships found)")
+        return
+    for o in orgs:
+        marker = click.style("●", fg="green") if o.get("active") else " "
+        click.echo(f"  {marker} {o['name']:<28}  {o['org_id']}  role={o.get('role', '-')}")
+    click.echo("\nSwitch with: kemory use <org_id>")
+
+
+@cli.command("use")
+@click.argument("org_id")
+@click.pass_context
+def use_cmd(ctx: click.Context, org_id: str) -> None:
+    """Switch the active organisation (ADR-012).
+
+    Persists the choice locally and sends it as X-Organization-ID on every
+    request; the server validates membership each time. No re-login needed.
+    """
+    creds = _require_creds(ctx)
+    org_id = org_id.strip()
+    if not _UUID_RE.match(org_id):
+        raise click.ClickException(f"'{org_id}' is not a valid org id (expected a UUID).")
+    creds.active_org_id = org_id
+    creds.save()
+    # Confirm membership by resolving identity in the new scope.
+    resp = _api_get(creds, "/api/v1/me")
+    if resp.status_code == 401:
+        creds.active_org_id = ""
+        creds.save()
+        raise click.ClickException(f"Not a member of org {org_id} (access denied) — active org unchanged.")
+    if resp.status_code != 200:
+        raise click.ClickException(f"switch verification failed: {resp.status_code} {resp.text}")
+    me = resp.json()
+    role = me.get("org_role") or "?"
+    click.echo(click.style(f"✓ Active org → {me.get('org_name')} ({org_id})  role={role}", fg="green"))
 
 
 # ─── keys ─────────────────────────────────────────────────────────────────

@@ -120,7 +120,12 @@ class Credentials:
     kemory_url: str  # e.g. https://kemory.prod.apps.s9n.ai
     env: str = DEFAULT_ENV
     email: str = ""
-    org_id: str = ""
+    org_id: str = ""  # the org from the token at login (primary / last-active hint)
+    # ADR-012: the user-selected ACTIVE org, sent as X-Organization-ID on every
+    # request and validated server-side. Empty → server falls back to the token
+    # org. Set by `kemory use <org>` / login auto-select. Not version-bumped:
+    # old credential files just default this to "" and keep working.
+    active_org_id: str = ""
     version: int = CREDENTIALS_VERSION
 
     def expires_within(self, seconds: int) -> bool:
