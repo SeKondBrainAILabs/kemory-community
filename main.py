@@ -58,7 +58,11 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info("kora.db.connected", url=settings.database_url[:30] + "...")
     except Exception as e:
+        # A schema-less or unreachable database must NOT serve traffic. Fail
+        # startup loudly so the orchestrator restarts / surfaces it, instead of
+        # booting an API that looks healthy but has no usable schema.
         logger.error("kora.db.connection_failed", error=str(e))
+        raise
 
     try:
         # Initialize Redis

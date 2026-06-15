@@ -57,13 +57,23 @@ async def readiness():
     checks = {}
     all_healthy = True
 
-    # Check PostgreSQL
+    # Check PostgreSQL — connectivity AND that the schema is initialized.
+    # A reachable-but-empty DB (e.g. failed bootstrap) must read as not-ready,
+    # otherwise the API advertises readiness while every query 500s.
     try:
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy import text as sa_text
+
         from backend.core.database import engine
 
         async with engine.connect() as conn:
-            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
-        checks["postgres"] = {"status": "healthy", "latency_ms": 0}
+            await conn.execute(sa_text("SELECT 1"))
+            has_core = await conn.run_sync(lambda c: sa_inspect(c).has_table("kemory_memories"))
+        if has_core:
+            checks["postgres"] = {"status": "healthy", "latency_ms": 0}
+        else:
+            checks["postgres"] = {"status": "unhealthy", "error": "schema not initialized"}
+            all_healthy = False
     except Exception as e:
         checks["postgres"] = {"status": "unhealthy", "error": str(e)}
         all_healthy = False
