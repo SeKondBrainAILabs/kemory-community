@@ -9,19 +9,35 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+  # The dashboard is the only place with a real dependency tree, and it was
+  # unwatched until now — this entry was commented out pending the subtree
+  # import, which landed in 5af259b. Everything here drifted in the meantime.
+  #
+  # Grouping minor+patch into one PR keeps this from producing the backlog it
+  # produced last time. Majors still arrive individually, which is what you
+  # want for something like a router.
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+    groups:
+      dashboard-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Same story as the dashboard: this was gated on the backend subtree import,
+  # which landed in 5361ed1. The backend's Python dependencies have been
+  # unwatched ever since. Grouped for the same reason.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      backend-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-
-# Enable after the backend and dashboard subtree import lands:
-#
-# - package-ecosystem: "pip"
-#   directory: "/"
-#   schedule:
-#     interval: "weekly"
-#
-# - package-ecosystem: "npm"
-#   directory: "/dashboard"
-#   schedule:
-#     interval: "weekly"
