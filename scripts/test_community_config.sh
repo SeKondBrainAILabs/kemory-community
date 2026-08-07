@@ -34,6 +34,11 @@ import os
 
 services = json.loads(os.environ["COMPOSE_JSON"])["services"]
 expected = {"api": 8111, "dashboard": 5175, "postgres": 5434}
+allowed_services = {*expected, "redis"}
+if set(services) != allowed_services:
+    raise SystemExit(
+        f"community compose services must be {sorted(allowed_services)}; got {sorted(services)}"
+    )
 for service, published in expected.items():
     actual = {int(port["published"]) for port in services[service].get("ports", [])}
     if published not in actual:
@@ -58,7 +63,7 @@ if grep -R --line-number -E '\b(namespace_merge|suggest_merge)\b' backend/plugin
 fi
 
 echo "Running enterprise-symbol grep guard (outside their adapter)"
-ENTERPRISE_SYMBOLS='minio|weaviate|keycloak|posthog'
+ENTERPRISE_SYMBOLS='minio|weaviate|keycloak|posthog|falkordb|neo4j|kafka'
 LEAKS=$(grep -RnE "^(from|import)\s+(${ENTERPRISE_SYMBOLS})\b" backend/ \
   | grep -vE "^backend/adapters/(blob_store|vector_store|identity_provider|telemetry)/" \
   || true)
@@ -67,6 +72,30 @@ if [ -n "$LEAKS" ]; then
   echo "$LEAKS" >&2
   exit 1
 fi
+
+echo "Running forbidden-package dependency guard"
+python3 - <<'PY'
+import tomllib
+from pathlib import Path
+
+project = tomllib.loads(Path("pyproject.toml").read_text())
+dependency_groups = [project["project"].get("dependencies", [])]
+dependency_groups.extend(project["project"].get("optional-dependencies", {}).values())
+forbidden = (
+    "minio",
+    "weaviate",
+    "python-keycloak",
+    "posthog",
+    "falkordb",
+    "neo4j",
+    "kafka-python",
+    "confluent-kafka",
+)
+dependencies = [item.lower() for group in dependency_groups for item in group]
+leaks = [item for item in dependencies if item.startswith(forbidden)]
+if leaks:
+    raise SystemExit(f"hosted-only dependencies found in community package: {leaks}")
+PY
 
 echo "Building community API and dashboard images"
 "${COMPOSE[@]}" build api dashboard
