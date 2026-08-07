@@ -70,8 +70,8 @@ release.
 
 ## After v0.1
 
-v0.2 (next 2 weeks): Host-local runtime, GH Pages docs site at
-`community.kemory.s9n.ai`, artifact thumbnails, recall benchmarks vs
+v0.2 (next 2 weeks): Host-local runtime, expanded Community documentation at
+`docs.sekondbrain.ai/kemory/community/`, artifact thumbnails, recall benchmarks vs
 Mem0/Letta/Zep, HN + Product Hunt launch.
 
 ## Questions?

@@ -24,8 +24,8 @@ jobs:
           python -m compileall backend kemory kemory_cli
       - name: Python unit tests
         run: PYTHONPATH=. pytest -q -o addopts= tests/unit
-      - name: Dashboard build
+      - name: Dashboard lint, test, and build
         working-directory: dashboard
-        run: npm ci && npm run build
+        run: npm ci && npm run lint && npm test && npm run build
       - name: Compose config
         run: docker compose -f docker-compose.community.yml config >/dev/null

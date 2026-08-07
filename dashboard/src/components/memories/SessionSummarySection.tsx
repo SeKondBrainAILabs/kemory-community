@@ -27,9 +27,9 @@ interface Props {
 }
 
 export function SessionSummarySection({ namespace, sessionId }: Props) {
-  if (!sessionId) return null
-
   const { data, isLoading, isError, error } = useSessionSummary(namespace, sessionId)
+
+  if (!sessionId) return null
 
   // 404 is expected until the pipeline has run for this session; render a
   // calm informative state, not a red error.
