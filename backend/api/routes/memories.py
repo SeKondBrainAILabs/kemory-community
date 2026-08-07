@@ -8,7 +8,7 @@ Endpoints for memory CRUD operations:
 - DELETE /api/v1/memories/{memory_id}                        — Delete a memory (soft)
 - POST   /api/v1/memories/search                             — Search memories
 - GET    /api/v1/namespaces                                  — List namespaces
-- GET    /api/v1/namespaces/{namespace}/compressed           — Multi-level memory read (L1-L4)
+- GET    /api/v1/namespaces/{namespace}/compressed           — Multi-level memory read (L1-L3.1)
 
 Spec reference: Section 10 (API Contracts), Section 7.4 (Memory Operations)
 Story: KMV-S11.2
@@ -240,7 +240,13 @@ async def aggregate_memories_endpoint(
     Story: KMV-AGG-01.
     """
     try:
-        return await aggregate_memories(auth.user_id, auth.agent_id, request, db)
+        return await aggregate_memories(
+            auth.user_id,
+            auth.agent_id,
+            request,
+            db,
+            skip_gatekeeper=_skip_gatekeeper(),
+        )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -292,6 +298,7 @@ async def list_namespaces_endpoint(
         db,
         admin_view=admin,
         agent_id=None if admin else auth.agent_id,
+        skip_gatekeeper=_skip_gatekeeper(),
     )
 
 
@@ -317,7 +324,7 @@ async def get_namespace_summary_endpoint(
             auth.agent_id,
             namespace,
             db,
-            skip_gatekeeper=admin,
+            skip_gatekeeper=admin or _skip_gatekeeper(),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
@@ -355,7 +362,7 @@ async def get_session_summary_endpoint(
 
     # Gatekeeper: agents need memory:read on the namespace. Admins bypass.
     admin = is_admin(auth)
-    if not admin:
+    if not admin and not _skip_gatekeeper():
         from backend.services.gatekeeper_service import (
             EvaluationRequest,
             evaluate,
@@ -410,18 +417,18 @@ async def get_session_summary_endpoint(
     }
 
 
-_VALID_MEMORY_MODES = {"raw", "aaak", "concept", "cognition"}
+_VALID_MEMORY_MODES = {"raw", "aaak", "concept"}
 
 
 @router.get(
     "/namespaces/{namespace}/compressed",
-    summary="Multi-level memory read (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)",
+    summary="Multi-level memory read (L1 raw / L2 AAAK / L3.1 concept)",
 )
 async def get_namespace_compressed_endpoint(
     namespace: str,
     mode: str = Query(
         default="concept",
-        description="Memory read level: raw (L1), aaak (L2), concept (L3.1), cognition (L4)",
+        description="Memory read level: raw (L1), aaak (L2), concept (L3.1)",
     ),
     merge_mode: str = Query(
         default="current",
@@ -438,8 +445,6 @@ async def get_namespace_compressed_endpoint(
     | raw       | L1    | Every active memory as raw dicts                 |
     | aaak      | L2    | Lossless AAAK encoding with compression metrics  |
     | concept   | L3.1  | LLM-synthesized concepts                         |
-    | cognition | L4    | Concepts + Cognition OS graph entities           |
-
     Story: KMV-S11.2
     """
     if mode not in _VALID_MEMORY_MODES:
@@ -464,7 +469,7 @@ async def get_namespace_compressed_endpoint(
             db,
             mode=mode,
             merge_mode=merge_mode,
-            skip_gatekeeper=is_admin(auth),
+            skip_gatekeeper=is_admin(auth) or _skip_gatekeeper(),
         )
         return JSONResponse(content=payload)
     except PermissionError as exc:

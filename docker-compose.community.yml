@@ -36,13 +36,11 @@ services:
       redis:
         condition: service_healthy
     environment:
-      API_KEY_PEPPER: community-ci-api-key-pepper-32-bytes
       API_PUBLIC_URL: http://api:8000
       CORS_ORIGINS: http://localhost:5175
       DATABASE_URL: postgresql+asyncpg://kora:kora_secret@postgres:5432/kora_vault
       DATABASE_URL_SYNC: postgresql://kora:kora_secret@postgres:5432/kora_vault
       ENVIRONMENT: development
-      JWT_SECRET_KEY: agent-memory-vault-jwt-secret-2026
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
       KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: community-ci-local-blob-signing-key-32-bytes

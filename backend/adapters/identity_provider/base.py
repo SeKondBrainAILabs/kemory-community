@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.auth_service import AuthContext
+from backend.core.auth_context import AuthContext
 
 
 class IdentityProvider(ABC):

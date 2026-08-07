@@ -521,20 +521,6 @@ async def enrich_memory(
     )
     await db.flush()
 
-    # KMV-E8 S8.2: Upsert entities to Cognition OS concept graph
-    try:
-        from backend.services.cognition_bridge import get_cognition_bridge
-
-        bridge = get_cognition_bridge()
-        if bridge.enabled and (entities or graph_rels):
-            await bridge.upsert_entities(
-                memory_id=str(memory_id),
-                entities=[e.model_dump() for e in entities],
-                relationships=[r.model_dump() for r in graph_rels],
-            )
-    except Exception as exc:
-        logger.debug("cognition_bridge.enrichment_hook_skipped", error=str(exc))
-
     processing_time = (time.monotonic() - start_time) * 1000
 
     return EnrichmentResult(

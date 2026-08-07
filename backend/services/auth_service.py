@@ -27,11 +27,12 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 import structlog
 from jose import JWTError, jwt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import settings
+from backend.core.auth_context import AuthContext
 from backend.models.agent import AgentRegistry
 
 logger = structlog.get_logger(__name__)
@@ -221,51 +222,6 @@ _AUTH_CACHE_TTL = 300  # seconds
 import asyncio as _asyncio
 
 _auth_cache_lock = _asyncio.Lock()
-
-
-class AuthContext(BaseModel):
-    """Represents the authenticated identity for a request.
-
-    Represents the community request identity. The shape mirrors hosted Kemory:
-    ``user_id``, ``agent_id``, ``agent_name``, ``scopes``, ``roles``,
-    ``org_id``, ``auth_method``, and ``acting_user_id``.
-
-    ``user_id`` and ``auth_method`` are re-declared as required to preserve
-    kemory's stricter construction contract (the base makes user_id optional
-    and auth_method default to "unknown"); every kemory auth path sets both.
-
-    Multi-tenant fields (org_id, team_ids, roles) are populated by the auth
-    middleware (see backend/core/auth.py and backend/core/tenancy.py); they
-    default to empty so single-tenant code paths keep working while
-    TENANT_ENFORCEMENT='off'.
-
-    Source priority for org_id:
-      keycloak path → token claim (settings.tenant_org_claim)
-      api_key path  → AgentRegistry.org_id (WS-5, never from headers)
-      jwt    path   → token claim "org_id" (HS256 internal agents)
-    """
-
-    user_id: uuid.UUID
-    auth_method: str  # "jwt", "api_key", or "keycloak"
-    agent_id: uuid.UUID | None = None
-    agent_name: str = ""
-    scopes: list[str] = Field(default_factory=list)
-    roles: list[str] = Field(default_factory=list)
-    org_id: str | None = None
-    acting_user_id: uuid.UUID | None = None
-
-    # Resolved server-side from TeamMember rows by team_resolver (WS-4).
-    # Not present on any token; recomputed per-request with a 60s cache.
-    team_ids: list[str] = Field(default_factory=list)
-
-    # ADR-012 Phase 2: the caller's role + the org's type for the *active*
-    # org, populated by the active-org resolution seam (backend/core/auth.py
-    # ::require_auth → backend/core/active_org.py). Both default to None —
-    # "no role/type information" — which write gates treat permissively, so
-    # single-tenant code paths are unchanged until a resolution mechanism
-    # (M2/M3) populates them.
-    org_role: str | None = None  # owner | admin | member | None
-    org_type: str | None = None  # personal | organisation | family | None
 
 
 class TokenPayload(BaseModel):

@@ -45,10 +45,7 @@ backend = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.1",
     "sqlalchemy>=2.0",
-    # python-jose is retained for the internal HS256 agent-JWT codec
-    # (auth_service.create/decode_access_token). Hosted bearer verification
-    # is intentionally absent from the community build.
-    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=42.0.0",
     # P4 #24: bcrypt direct (no passlib). passlib pulls stdlib `crypt`
     # which is removed in Python 3.13. We only ever used the bcrypt
     # scheme, so call bcrypt directly.

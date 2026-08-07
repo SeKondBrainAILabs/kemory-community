@@ -62,8 +62,8 @@ from sqlalchemy.orm import with_loader_criteria
 
 from backend.config.settings import settings
 from backend.core.auth import require_auth
+from backend.core.auth_context import AuthContext
 from backend.core.database import Base, get_db
-from backend.services.auth_service import AuthContext
 
 logger = structlog.get_logger(__name__)
 
