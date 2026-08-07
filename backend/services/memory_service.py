@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from backend.models.memory import Memory
 from backend.services.audit_service import log_audit_event
@@ -197,6 +198,12 @@ class MemorySearchRequest(BaseModel):
             "Search mode: 'hybrid' (default, vector cosine + FTS merged via RRF) "
             "or 'fts' (ILIKE substring only). Story: S9N-3074-SUB2"
         ),
+    )
+    min_score: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Optional hybrid rank-score floor; weak tail results are omitted.",
     )
     # S9N-TEMPORAL: Optional date range filters for temporal queries
     date_from: str | None = Field(
@@ -450,8 +457,14 @@ async def create_memory(
 
     # Layer 2: Semantic similarity (best-effort, ~10-50ms)
     dedup_skipped = False
+    embedding_vec: list[float] | None = None
+    embedding_attempted = False
     if settings.dedup_semantic_enabled:
         try:
+            from kemory.embeddings.encoder import encode as _embed
+
+            embedding_attempted = True
+            embedding_vec = list(_embed(request.content))
             sem_match = await _find_semantic_duplicate(
                 user_id,
                 request.namespace,
@@ -459,6 +472,7 @@ async def create_memory(
                 settings.dedup_semantic_threshold,
                 settings.dedup_semantic_max_candidates,
                 db,
+                query_embedding=embedding_vec,
             )
             if sem_match:
                 match_memory, similarity = sem_match
@@ -524,19 +538,20 @@ async def create_memory(
     # loaded yet on a cold pod), we log and store with embedding=NULL so
     # the row at least exists; the recovery path in enrich_memory will
     # backfill it on the next manual enrichment trigger.
-    embedding_vec: list[float] | None = None
     embedding_model: str | None = None
-    try:
-        from kemory.embeddings.encoder import encode as _embed
+    if not embedding_attempted:
+        try:
+            from kemory.embeddings.encoder import encode as _embed
 
-        embedding_vec = list(_embed(request.content))
+            embedding_vec = list(_embed(request.content))
+        except Exception as exc:
+            logger.warning(
+                "embedding.inline_failed",
+                namespace=request.namespace,
+                error=str(exc),
+            )
+    if embedding_vec is not None:
         embedding_model = "bge-small-en-v1.5"
-    except Exception as exc:
-        logger.warning(
-            "embedding.inline_failed",
-            namespace=request.namespace,
-            error=str(exc),
-        )
 
     memory = Memory(
         user_id=user_id,
@@ -585,6 +600,20 @@ async def create_memory(
                 db,
             )
         raise  # Re-raise if it wasn't the dedup index
+
+    if embedding_vec is not None:
+        try:
+            # Keep the vector write in the same transaction without letting a
+            # pgvector-side failure poison the outer memory transaction.
+            async with db.begin_nested():
+                await _upsert_memory_vector(memory, embedding_vec, db)
+        except Exception as exc:
+            logger.warning(
+                "embedding.vector_upsert_failed",
+                memory_id=str(memory.memory_id),
+                namespace=memory.namespace,
+                error=str(exc),
+            )
 
     # MV2-S02.2: Emit provenance event for creation
     await emit_event(
@@ -751,7 +780,7 @@ async def get_memory(
     - Expired memories are not returned
     """
     logger.debug("memory.get", memory_id=str(memory_id), user_id=str(user_id), agent_id=str(agent_id))
-    memory = await _get_active_memory(memory_id, user_id, db)
+    memory = await _get_active_memory(memory_id, user_id, db, defer_embedding=True)
 
     # Gatekeeper check
     if not skip_gatekeeper:
@@ -1061,6 +1090,9 @@ async def search_memories(
         if request.compression_tier:
             items = [i for i in items if i.compression_tier == request.compression_tier]
 
+        if request.min_score is not None:
+            items = [item for item in items if (item.similarity_score or 0.0) >= request.min_score]
+
         return MemoryListResponse(
             items=items,
             total=len(hybrid_results) + (len(items) - len(hybrid_results)),
@@ -1079,7 +1111,7 @@ async def search_memories(
     total = total_result.scalar() or 0
 
     # Apply pagination and ordering
-    query = query.order_by(Memory.updated_at.desc())
+    query = query.options(defer(Memory.embedding)).order_by(Memory.updated_at.desc())
     query = query.offset(request.offset).limit(request.limit)
 
     result = await db.execute(query)
@@ -1434,12 +1466,14 @@ async def _find_by_hash(
 ) -> Memory | None:
     """Find an active memory with the given content hash."""
     result = await db.execute(
-        select(Memory).where(
+        select(Memory)
+        .where(
             Memory.user_id == user_id,
             Memory.namespace == namespace,
             Memory.content_hash == content_hash,
             Memory.invalid_at == None,
         )
+        .options(defer(Memory.embedding))
     )
     return result.scalar_one_or_none()
 
@@ -1451,46 +1485,105 @@ async def _find_semantic_duplicate(
     threshold: float,
     max_candidates: int,
     db: AsyncSession,
+    query_embedding: list[float] | None = None,
 ) -> tuple[Memory, float] | None:
     """Find a semantically similar active memory above the threshold.
 
     Returns (memory, similarity) or None. Degrades gracefully if the
     embedding encoder is unavailable or no embedded memories exist.
     """
+    from backend.adapters.vector_store import create_vector_store
+    from backend.config.settings import settings
+    from backend.core.database import engine
+    from backend.core.tenancy import current_org_id
     from kemory.embeddings.encoder import encode
 
-    query_vec = encode(content)
-    if query_vec is None:
+    query_vec = query_embedding if query_embedding is not None else encode(content)
+    try:
+        vector_store = create_vector_store(postgres_engine=engine)
+        hits = await vector_store.search(
+            namespace=namespace,
+            user_id=user_id,
+            org_id=current_org_id() or settings.tenant_legacy_sentinel,
+            query_embedding=query_vec,
+            limit=max_candidates,
+        )
+    except Exception as exc:
+        logger.warning("dedup.vector_search_failed", error=str(exc))
+        hits = []
+    eligible_hits = [hit for hit in hits if hit.score >= threshold]
+    if not eligible_hits:
+        # Migration 017 created the canonical vector table without backfilling
+        # embeddings already stored on kemory_memories. Preserve dedup for
+        # those rows until they are naturally re-indexed.
+        legacy_result = await db.execute(
+            select(Memory)
+            .where(
+                Memory.user_id == user_id,
+                Memory.namespace == namespace,
+                Memory.invalid_at == None,
+                Memory.embedding != None,
+            )
+            .limit(max_candidates)
+        )
+        best_memory: Memory | None = None
+        best_score = 0.0
+        for candidate in legacy_result.scalars().all():
+            candidate_embedding = candidate.embedding
+            if not candidate_embedding or len(candidate_embedding) != len(query_vec):
+                continue
+            score = sum(
+                left * right
+                for left, right in zip(query_vec, candidate_embedding, strict=False)
+            )
+            if score > best_score:
+                best_memory = candidate
+                best_score = score
+        if best_memory is not None and best_score >= threshold:
+            return best_memory, best_score
         return None
 
-    # Fetch active embedded memories in the same scope
     result = await db.execute(
         select(Memory)
         .where(
             Memory.user_id == user_id,
+            Memory.memory_id.in_([hit.memory_id for hit in eligible_hits]),
             Memory.namespace == namespace,
             Memory.invalid_at == None,
-            Memory.embedding != None,
         )
-        .limit(max_candidates)
+        .options(defer(Memory.embedding))
     )
-    candidates = result.scalars().all()
-
-    best_match: Memory | None = None
-    best_sim = 0.0
-
-    for mem in candidates:
-        if mem.embedding is None:
-            continue
-        # Dot product of L2-normalised vectors = cosine similarity
-        sim = sum(a * b for a, b in zip(query_vec, mem.embedding, strict=False))
-        if sim > best_sim:
-            best_sim = sim
-            best_match = mem
-
-    if best_match and best_sim >= threshold:
-        return (best_match, best_sim)
+    memories = {str(memory.memory_id): memory for memory in result.scalars().all()}
+    for hit in eligible_hits:
+        match = memories.get(str(hit.memory_id))
+        if match is not None:
+            return match, hit.score
     return None
+
+
+async def _upsert_memory_vector(
+    memory: Memory,
+    embedding: list[float],
+    db: AsyncSession,
+) -> None:
+    """Write the canonical community vector row in the caller's transaction."""
+    from backend.adapters.vector_store import create_vector_store
+    from backend.config.settings import settings
+    from backend.core.database import engine
+
+    vector_store = create_vector_store(postgres_engine=engine)
+    await vector_store.upsert(
+        memory_id=memory.memory_id,
+        namespace=memory.namespace,
+        user_id=memory.user_id,
+        org_id=memory.org_id or settings.tenant_legacy_sentinel,
+        embedding=embedding,
+        metadata={
+            "memory_id": str(memory.memory_id),
+            "content_type": memory.content_type,
+        },
+        connection=await db.connection(),
+    )
 
 
 async def _handle_dedup_match(
@@ -1528,6 +1621,7 @@ async def _get_active_memory(
     user_id: uuid.UUID,
     db: AsyncSession,
     admin_view: bool = False,
+    defer_embedding: bool = False,
 ) -> Memory:
     """Fetch a non-deleted, non-expired memory belonging to the user.
     When admin_view=True the user_id ownership filter is skipped so admins
@@ -1535,7 +1629,10 @@ async def _get_active_memory(
     conditions = [Memory.memory_id == memory_id, Memory.invalid_at == None]
     if not admin_view:
         conditions.append(Memory.user_id == user_id)
-    result = await db.execute(select(Memory).where(*conditions))
+    stmt = select(Memory).where(*conditions)
+    if defer_embedding:
+        stmt = stmt.options(defer(Memory.embedding))
+    result = await db.execute(stmt)
     memory = result.scalar_one_or_none()
     if not memory:
         raise ValueError("Memory not found")
@@ -1600,7 +1697,7 @@ def _to_response(memory: Memory) -> MemoryResponse:
 # ─── L1 / L2 / L3 Compression Service (KMV-COMPRESS-01 / S9N-3050) ──────
 
 
-def _memory_to_dict(memory: Memory) -> dict:
+def _memory_to_dict(memory: Memory, include_embedding: bool = True) -> dict:
     """Convert a Memory ORM object into the plain-dict shape used by
     kemory.compression (matches the core-library episode dict).
 
@@ -1609,7 +1706,7 @@ def _memory_to_dict(memory: Memory) -> dict:
     has no signal to cluster on and every memory becomes a singleton group,
     skipping LLM synthesis entirely.
     """
-    return {
+    result = {
         "id": str(memory.memory_id),
         "namespace": memory.namespace,
         "content": memory.content,
@@ -1624,17 +1721,20 @@ def _memory_to_dict(memory: Memory) -> dict:
         "tier": memory.tier,
         "visibility": memory.visibility,
         "org_id": str(memory.user_id),
-        "embedding": list(memory.embedding) if memory.embedding else None,
     }
+    if include_embedding:
+        result["embedding"] = list(memory.embedding) if memory.embedding else None
+    return result
 
 
 async def _list_namespace_active_memories(
     user_id: uuid.UUID,
     namespace: str,
     db: AsyncSession,
+    include_embedding: bool = True,
 ) -> list[Memory]:
     """Return every active memory in a namespace for a user (no pagination)."""
-    result = await db.execute(
+    stmt = (
         select(Memory)
         .where(
             Memory.user_id == user_id,
@@ -1643,6 +1743,9 @@ async def _list_namespace_active_memories(
         )
         .order_by(Memory.created_at)
     )
+    if not include_embedding:
+        stmt = stmt.options(defer(Memory.embedding))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -1674,12 +1777,12 @@ async def list_namespace_raw(
         if not decision.allowed:
             raise PermissionError(f"Access denied: {decision.reason}")
 
-    memories = await _list_namespace_active_memories(user_id, namespace, db)
+    memories = await _list_namespace_active_memories(user_id, namespace, db, include_embedding=False)
     return {
         "mode": "raw",
         "namespace": namespace,
         "source_count": len(memories),
-        "memories": [_memory_to_dict(m) for m in memories],
+        "memories": [_memory_to_dict(m, include_embedding=False) for m in memories],
     }
 
 
@@ -1732,9 +1835,12 @@ async def get_namespace_compressed(
     from kemory.compression.concept import synthesize_namespace_local
     from kemory.compression.llm_client import CoreAIBackendClient
 
-    memories = await _list_namespace_active_memories(user_id, namespace, db)
+    needs_embedding = mode in {"concept", "cognition"}
+    memories = await _list_namespace_active_memories(
+        user_id, namespace, db, include_embedding=needs_embedding
+    )
     memory_ids = [str(m.memory_id) for m in memories]
-    memory_dicts = [_memory_to_dict(m) for m in memories]
+    memory_dicts = [_memory_to_dict(m, include_embedding=needs_embedding) for m in memories]
 
     cache = get_default_cache()
     cached = cache.get(str(user_id), namespace, mode, merge_mode, memory_ids)

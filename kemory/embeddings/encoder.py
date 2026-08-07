@@ -137,9 +137,46 @@ def _load_model() -> Any:
 
 
 def _encode_local(text: str) -> list[float]:
+    return _encode_local_batch([text])[0]
+
+
+_LOCAL_BATCH_SIZE = max(1, int(os.getenv("EMBEDDING_LOCAL_BATCH_SIZE", "32")))
+
+
+def _validate_vectors(vectors: list[list[float]], expected_count: int, backend: str) -> list[list[float]]:
+    """Reject reordered/truncated batch output before it reaches pgvector."""
+    if len(vectors) != expected_count:
+        raise RuntimeError(f"{backend} encoder returned {len(vectors)} vectors for {expected_count} texts")
+    for index, vector in enumerate(vectors):
+        if len(vector) != EMBEDDING_DIM:
+            raise RuntimeError(
+                f"{backend} encoder returned {len(vector)} dims at index {index}, "
+                f"expected {EMBEDDING_DIM}"
+            )
+    return vectors
+
+
+def _encode_local_batch(texts: list[str]) -> list[list[float]]:
+    """Encode an ordered text batch in one FastEmbed traversal."""
     model = _load_model()
-    embedding = next(model.embed([text[:_MAX_TEXT_CHARS] or " "]))
-    return embedding.tolist()
+    inputs = [text[:_MAX_TEXT_CHARS] or " " for text in texts]
+    vectors = [embedding.tolist() for embedding in model.embed(inputs, batch_size=_LOCAL_BATCH_SIZE)]
+    return _validate_vectors(vectors, len(texts), "local")
+
+
+def encode_batch(texts: list[str]) -> list[list[float]]:
+    """Encode texts in order, returning exactly one 384-dim vector per text.
+
+    FastEmbed receives the full list so it can batch the ONNX work. The remote
+    service currently exposes only ``/embed``; that path reuses its persistent
+    client while preserving the same count, order, and dimension contract.
+    """
+    if not texts:
+        return []
+    if _remote_enabled():
+        vectors = [_encode_remote(text) for text in texts]
+        return _validate_vectors(vectors, len(texts), "remote")
+    return _encode_local_batch(texts)
 
 
 def encode(text: str) -> list[float]:
@@ -166,9 +203,7 @@ def encode(text: str) -> list[float]:
         ``fastembed`` is not installed. Callers treat embedding
         failures as non-fatal and backfill on the next enrichment pass.
     """
-    if _remote_enabled():
-        return _encode_remote(text)
-    return _encode_local(text)
+    return encode_batch([text])[0]
 
 
 def reset_model() -> None:

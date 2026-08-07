@@ -25,6 +25,13 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     return dot / (left_norm * right_norm)
 
 
+def _validate_embedding(values: list[float], dimension: int) -> None:
+    if len(values) != dimension:
+        raise ValueError(f"embedding has {len(values)} dimensions; expected {dimension}")
+    if not all(math.isfinite(float(value)) for value in values):
+        raise ValueError("embedding contains a non-finite value")
+
+
 class PgvectorBackend(VectorStore):
     """VectorStore backed by pgvector, with a SQLite/PGlite-friendly fallback."""
 
@@ -45,8 +52,10 @@ class PgvectorBackend(VectorStore):
         org_id: UUID | str,
         embedding: list[float],
         metadata: dict[str, Any],
+        connection: Any | None = None,
     ) -> None:
-        dialect = await self._dialect_name()
+        _validate_embedding(embedding, self._dimension)
+        dialect = connection.dialect.name if connection is not None else await self._dialect_name()
         if dialect == "postgresql":
             await self._upsert_postgres(
                 memory_id=memory_id,
@@ -55,6 +64,7 @@ class PgvectorBackend(VectorStore):
                 org_id=org_id,
                 embedding=embedding,
                 metadata=metadata,
+                connection=connection,
             )
             return
         await self._upsert_sqlite(
@@ -64,6 +74,7 @@ class PgvectorBackend(VectorStore):
             org_id=org_id,
             embedding=embedding,
             metadata=metadata,
+            connection=connection,
         )
 
     async def _upsert_postgres(
@@ -75,8 +86,9 @@ class PgvectorBackend(VectorStore):
         org_id: UUID | str,
         embedding: list[float],
         metadata: dict[str, Any],
+        connection: Any | None,
     ) -> None:
-        async with self._engine.begin() as conn:
+        async def execute(conn: Any) -> None:
             await conn.execute(
                 text("""
                     INSERT INTO kemory_memory_vectors
@@ -101,6 +113,12 @@ class PgvectorBackend(VectorStore):
                 },
             )
 
+        if connection is not None:
+            await execute(connection)
+        else:
+            async with self._engine.begin() as conn:
+                await execute(conn)
+
     async def _upsert_sqlite(
         self,
         *,
@@ -110,8 +128,9 @@ class PgvectorBackend(VectorStore):
         org_id: UUID | str,
         embedding: list[float],
         metadata: dict[str, Any],
+        connection: Any | None,
     ) -> None:
-        async with self._engine.begin() as conn:
+        async def execute(conn: Any) -> None:
             await conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS kemory_memory_vectors (
@@ -150,16 +169,23 @@ class PgvectorBackend(VectorStore):
                 },
             )
 
+        if connection is not None:
+            await execute(connection)
+        else:
+            async with self._engine.begin() as conn:
+                await execute(conn)
+
     async def search(
         self,
         *,
-        namespace: str,
+        namespace: str | None,
         user_id: UUID,
         org_id: UUID | str,
         query_embedding: list[float],
         limit: int,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchHit]:
+        _validate_embedding(query_embedding, self._dimension)
         dialect = await self._dialect_name()
         if dialect == "postgresql":
             return await self._search_postgres(
@@ -182,7 +208,7 @@ class PgvectorBackend(VectorStore):
     async def _search_postgres(
         self,
         *,
-        namespace: str,
+        namespace: str | None,
         user_id: UUID,
         org_id: UUID | str,
         query_embedding: list[float],
@@ -190,13 +216,16 @@ class PgvectorBackend(VectorStore):
         filters: dict[str, Any] | None,
     ) -> list[SearchHit]:
         params: dict[str, Any] = {
-            "namespace": namespace,
             "user_id": str(user_id),
             "org_id": str(org_id),
             "query_embedding": _vector_literal(query_embedding),
             "limit": limit,
         }
         metadata_filter = ""
+        namespace_filter = ""
+        if namespace is not None:
+            namespace_filter = "AND namespace = :namespace"
+            params["namespace"] = namespace
         if filters:
             metadata_filter = "AND metadata @> CAST(:filters AS jsonb)"
             params["filters"] = json.dumps(filters)
@@ -209,9 +238,9 @@ class PgvectorBackend(VectorStore):
                         metadata,
                         1.0 - (embedding <=> CAST(:query_embedding AS vector)) AS score
                     FROM kemory_memory_vectors
-                    WHERE namespace = :namespace
-                      AND user_id = CAST(:user_id AS uuid)
+                    WHERE user_id = CAST(:user_id AS uuid)
                       AND org_id = :org_id
+                      {namespace_filter}
                       {metadata_filter}
                     ORDER BY embedding <=> CAST(:query_embedding AS vector)
                     LIMIT :limit
@@ -220,7 +249,7 @@ class PgvectorBackend(VectorStore):
             )
             rows = result.mappings().all()
 
-        return [
+        hits = [
             SearchHit(
                 memory_id=UUID(str(row["memory_id"])),
                 score=float(row["score"] or 0.0),
@@ -228,31 +257,38 @@ class PgvectorBackend(VectorStore):
             )
             for row in rows
         ]
+        hits.sort(key=lambda hit: (-hit.score, str(hit.memory_id)))
+        return hits
 
     async def _search_sqlite(
         self,
         *,
-        namespace: str,
+        namespace: str | None,
         user_id: UUID,
         org_id: UUID | str,
         query_embedding: list[float],
         limit: int,
         filters: dict[str, Any] | None,
     ) -> list[SearchHit]:
+        namespace_filter = ""
+        params = {
+            "user_id": str(user_id),
+            "org_id": str(org_id),
+        }
+        if namespace is not None:
+            namespace_filter = "AND namespace = :namespace"
+            params["namespace"] = namespace
+
         async with self._engine.connect() as conn:
             result = await conn.execute(
-                text("""
+                text(f"""
                     SELECT memory_id, embedding, metadata
                     FROM kemory_memory_vectors
-                    WHERE namespace = :namespace
-                      AND user_id = :user_id
+                    WHERE user_id = :user_id
                       AND org_id = :org_id
+                      {namespace_filter}
                 """),
-                {
-                    "namespace": namespace,
-                    "user_id": str(user_id),
-                    "org_id": str(org_id),
-                },
+                params,
             )
             rows = result.mappings().all()
 
@@ -269,7 +305,7 @@ class PgvectorBackend(VectorStore):
                     metadata=metadata,
                 )
             )
-        hits.sort(key=lambda hit: hit.score, reverse=True)
+        hits.sort(key=lambda hit: (-hit.score, str(hit.memory_id)))
         return hits[:limit]
 
     async def delete(
