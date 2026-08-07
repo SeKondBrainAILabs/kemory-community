@@ -40,8 +40,9 @@ from datetime import UTC
 from typing import Any
 
 import structlog
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from kemory.embeddings.encoder import encode
 from kemory.search.ranking import rank_results
@@ -113,8 +114,8 @@ async def hybrid_search(
         sparse=len(sparse_results),
     )
 
-    # Merge via RRF
-    merged = _rrf_merge(dense_results, sparse_results)
+    # Merge via RRF and carry one seen-set through every injection point.
+    merged, seen = _rrf_merge_with_seen(dense_results, sparse_results)
 
     # S9N-COGOS: Graph-augmented recall via Cognition OS
     # Expands results with cross-session entity relationships from the concept graph.
@@ -125,28 +126,30 @@ async def hybrid_search(
         if bridge.enabled and query:
             graph_results = await bridge.expand_recall(query, top_k=10)
             if graph_results:
-                # Inject graph results with a graph_proximity boost
+                # Inject graph results with a graph_proximity boost.
                 for gr in graph_results:
                     mid = gr.get("entity_id") or gr.get("id", "")
-                    if mid and mid not in {r.get("memory_id") for r in merged}:
-                        merged.append(
-                            {
-                                "memory_id": mid,
-                                "content": gr.get("content", ""),
-                                "namespace": namespace or "",
-                                "content_type": "text",
-                                "metadata": gr.get("metadata", {}),
-                                "source_type": "cognition_os",
-                                "score": gr.get("score", 0.5),
-                                "graph_proximity": 1.0,  # Boost graph results
-                            }
-                        )
+                    if not mid or mid in seen:
+                        continue
+                    seen.add(mid)
+                    merged.append(
+                        {
+                            "memory_id": mid,
+                            "content": gr.get("content", ""),
+                            "namespace": namespace or "",
+                            "content_type": "text",
+                            "metadata": gr.get("metadata", {}),
+                            "source_type": "cognition_os",
+                            "score": gr.get("score", 0.5),
+                            "graph_proximity": 1.0,
+                        }
+                    )
                 logger.debug("hybrid_search.cogos_expand", added=len(graph_results))
     except Exception as exc:
         logger.debug("hybrid_search.cogos_skipped", reason=str(exc))
 
     # Apply multi-signal re-ranking
-    reranked = rank_results(merged)
+    reranked = _dedupe_by_memory_id(rank_results(merged))
 
     # Paginate
     page = reranked[offset : offset + limit]
@@ -168,11 +171,11 @@ async def _dense_pass(
     content_type: str | None,
 ) -> list[dict[str, Any]]:
     """
-    Compute cosine similarity between the query embedding and stored vectors.
+    Retrieve nearest neighbours from the community pgvector HNSW index.
 
-    Uses Python-side dot-product (embeddings are L2-normalised, so dot == cosine).
-    Falls back to an empty list if no rows have been embedded yet or if the
-    sentence-transformers package is unavailable.
+    The vector adapter chooses candidates in PostgreSQL. This avoids loading an
+    arbitrary physical slice of ``kemory_memories`` and computing cosine in
+    Python, which silently lost recall as namespaces grew.
     """
     try:
         query_vec = encode(query)
@@ -180,48 +183,101 @@ async def _dense_pass(
         logger.warning("hybrid_search.dense_pass.encode_failed", error=str(exc))
         return []
 
-    # Fetch all embedded rows for this user (with optional filters)
-    # We pull the embedding as a JSON string from the DB to avoid pgvector
-    # dependency — the column is stored as FLOAT[] (plain Postgres array).
     from datetime import datetime
 
+    from backend.adapters.vector_store import create_vector_store
+    from backend.config.settings import settings
+    from backend.core.database import engine
+    from backend.core.tenancy import current_org_id
     from backend.models.memory import Memory
 
     now = datetime.now(UTC)
-    stmt = select(Memory).where(
-        Memory.user_id == user_id,
-        Memory.invalid_at.is_(None),
-        or_(Memory.expires_at.is_(None), Memory.expires_at > now),
-        Memory.embedding.is_not(None),
+    try:
+        vector_store = create_vector_store(postgres_engine=engine)
+        hits = await vector_store.search(
+            namespace=namespace,
+            user_id=user_id,
+            org_id=current_org_id() or settings.tenant_legacy_sentinel,
+            query_embedding=query_vec,
+            limit=_DENSE_CANDIDATES,
+        )
+    except Exception as exc:
+        logger.warning("hybrid_search.dense_pass.vector_failed", error=str(exc))
+        hits = []
+
+    hit_ids = [hit.memory_id for hit in hits]
+    stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.memory_id.in_(hit_ids),
+            Memory.invalid_at.is_(None),
+            or_(Memory.expires_at.is_(None), Memory.expires_at > now),
+        )
+        .options(defer(Memory.embedding))
     )
     if namespace:
-        stmt = stmt.where(Memory.embedding.is_not(None), Memory.namespace == namespace)
+        stmt = stmt.where(Memory.namespace == namespace)
     if content_type:
         stmt = stmt.where(Memory.content_type == content_type)
 
-    stmt = stmt.limit(_DENSE_CANDIDATES)
-    result = await db.execute(stmt)
-    rows = result.scalars().all()
+    rows = (await db.execute(stmt)).scalars().all() if hit_ids else []
+    rows_by_id = {str(row.memory_id): row for row in rows}
+    indexed = [
+        {
+            **_row_to_dict(rows_by_id[str(hit.memory_id)]),
+            "score": hit.score,
+            "vector_sim": hit.score,
+        }
+        for hit in hits
+        if str(hit.memory_id) in rows_by_id
+    ]
 
-    if not rows:
-        return []
+    # Revision 017 introduced kemory_memory_vectors without a destructive
+    # backfill. Score only rows that are still missing from the canonical
+    # index so existing community data remains searchable during transition.
+    from backend.models.memory_vector import MemoryVector
 
-    # Score each row.
-    #
-    # We attach the cosine similarity to BOTH "score" (used by RRF for sorting
-    # within this pass) and "vector_sim" (a stable field that survives the
-    # RRF merge, so the downstream multi-signal re-ranker can read the real
-    # cosine value rather than the tiny 1/(k+rank) RRF score).
-    scored: list[dict[str, Any]] = []
-    for row in rows:
-        stored_vec: list[float] | None = row.embedding
+    legacy_stmt = (
+        select(Memory)
+        .outerjoin(
+            MemoryVector,
+            and_(
+                MemoryVector.memory_id == Memory.memory_id,
+                MemoryVector.user_id == Memory.user_id,
+                MemoryVector.org_id == Memory.org_id,
+            ),
+        )
+        .where(
+            Memory.user_id == user_id,
+            Memory.invalid_at.is_(None),
+            or_(Memory.expires_at.is_(None), Memory.expires_at > now),
+            Memory.embedding.is_not(None),
+            MemoryVector.memory_id.is_(None),
+        )
+        .limit(_DENSE_CANDIDATES)
+    )
+    if namespace:
+        legacy_stmt = legacy_stmt.where(Memory.namespace == namespace)
+    if content_type:
+        legacy_stmt = legacy_stmt.where(Memory.content_type == content_type)
+
+    legacy_rows = (await db.execute(legacy_stmt)).scalars().all()
+    legacy = []
+    for row in legacy_rows:
+        stored_vec = row.embedding
         if not stored_vec or len(stored_vec) != len(query_vec):
             continue
-        sim = _dot(query_vec, stored_vec)
-        scored.append({**_row_to_dict(row), "score": sim, "vector_sim": sim})
+        score = _dot(query_vec, stored_vec)
+        legacy.append({**_row_to_dict(row), "score": score, "vector_sim": score})
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored
+    combined = _dedupe_by_memory_id(
+        sorted(
+            [*indexed, *legacy],
+            key=lambda item: (-item["score"], str(item["memory_id"])),
+        )
+    )
+    return combined[:_DENSE_CANDIDATES]
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +316,7 @@ async def _sparse_pass(
     if content_type:
         stmt = stmt.where(Memory.content_type == content_type)
 
-    stmt = stmt.limit(_SPARSE_CANDIDATES)
+    stmt = stmt.options(defer(Memory.embedding)).limit(_SPARSE_CANDIDATES)
     result = await db.execute(stmt)
     rows = result.scalars().all()
 
@@ -273,11 +329,11 @@ async def _sparse_pass(
 # ---------------------------------------------------------------------------
 
 
-def _rrf_merge(
+def _rrf_merge_with_seen(
     dense: list[dict[str, Any]],
     sparse: list[dict[str, Any]],
     k: int = _RRF_K,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], set[str]]:
     """
     Merge two ranked lists using Reciprocal Rank Fusion.
 
@@ -290,23 +346,47 @@ def _rrf_merge(
     all_docs: dict[str, dict[str, Any]] = {}
 
     for rank, doc in enumerate(dense, start=1):
-        mid = doc["memory_id"]
+        mid = doc.get("memory_id")
+        if not mid:
+            continue
         rrf_scores[mid] = rrf_scores.get(mid, 0.0) + 1.0 / (k + rank)
         all_docs[mid] = doc
 
     for rank, doc in enumerate(sparse, start=1):
-        mid = doc["memory_id"]
+        mid = doc.get("memory_id")
+        if not mid:
+            continue
         rrf_scores[mid] = rrf_scores.get(mid, 0.0) + 1.0 / (k + rank)
         if mid not in all_docs:
             all_docs[mid] = doc
 
     # Attach RRF score and sort
-    merged = []
-    for mid, doc in all_docs.items():
-        merged.append({**doc, "score": rrf_scores[mid]})
+    merged = [{**doc, "score": rrf_scores[mid]} for mid, doc in all_docs.items()]
+    merged.sort(key=lambda item: (-item["score"], str(item["memory_id"])))
+    return merged, set(all_docs)
 
-    merged.sort(key=lambda x: x["score"], reverse=True)
+
+def _rrf_merge(
+    dense: list[dict[str, Any]],
+    sparse: list[dict[str, Any]],
+    k: int = _RRF_K,
+) -> list[dict[str, Any]]:
+    """Backward-compatible RRF wrapper returning only the merged results."""
+    merged, _ = _rrf_merge_with_seen(dense, sparse, k=k)
     return merged
+
+
+def _dedupe_by_memory_id(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first ranked occurrence of each identifiable memory."""
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for result in results:
+        memory_id = result.get("memory_id")
+        if not memory_id or memory_id in seen:
+            continue
+        seen.add(memory_id)
+        unique.append(result)
+    return unique
 
 
 # ---------------------------------------------------------------------------

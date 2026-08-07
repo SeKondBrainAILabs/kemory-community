@@ -23,7 +23,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 | --- | --- | --- |
 | Rolling session digest and raw-source rehydration (hosted PR #152) | Port and adapt | New `018` migration, local user scope, latest three exchanges raw, whole-item source expansion, no AAAK prompt context. |
 | MCP JSON-RPC transport and canonical names | Port and adapt | Advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
-| Pgvector search scale, bulk ingest, retrieval floor | Planned port | Rework against `kemory_memory_vectors`; omit Gatekeeper, org fairness, hosted telemetry, and duplicate embedding stores. |
+| Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
 | Chat source chronology, timeline, content dates, namespace tags | Planned port | Keep local user scope and PostgreSQL; assign sequential community migrations. |
 | Memory, chat, and namespace dashboard UX | Planned selective port | Keep the current local API-key shell and Tailwind 3; exclude private design-system packages. |
 | Keycloak, OIDC, OAuth, DCR, teams, Gatekeeper, trusted org delegation | Exclude | Hosted identity and multi-tenant policy surfaces. |
@@ -37,6 +37,8 @@ community adapters and Docker runtime constraints applied at each boundary.
 - `kemory_session_digests` schema and ORM model
 - Prompt `session_digest_v1`
 - Canonical-only MCP discovery with legacy dispatch aliases
+- Pgvector ANN retrieval, transactional vector upsert, ordered batch encoding,
+  deterministic RRF, concept boost, and configurable result-score floor
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,

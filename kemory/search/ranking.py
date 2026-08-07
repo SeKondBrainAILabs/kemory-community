@@ -17,6 +17,7 @@ Story: MV2-S05.2 — Graph Proximity Signal
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
@@ -29,6 +30,23 @@ DEFAULT_WEIGHTS = {
     "graph_proximity": 0.15,
     "utility_salience": 0.15,
 }
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_weights() -> dict[str, float]:
+    """Return ranking weights with optional per-signal environment overrides."""
+    return {key: _env_float(f"KMV_RANK_W_{key.upper()}", value) for key, value in DEFAULT_WEIGHTS.items()}
+
+
+def concept_boost() -> float:
+    """Return the additive preference for distilled concept memories."""
+    return _env_float("KMV_RANK_CONCEPT_BOOST", 0.05)
 
 
 @dataclass
@@ -69,7 +87,7 @@ def compute_rank_score(
 
     Story: MV2-S05.1
     """
-    w = weights or DEFAULT_WEIGHTS
+    w = weights or env_weights()
 
     # Normalize each signal to [0, 1]
     vector_score = max(0.0, min(1.0, signals.vector_sim))
@@ -139,7 +157,9 @@ def rank_results(
         )
 
         blended = compute_rank_score(signals, weights)
+        if r.get("content_type") == "concept":
+            blended = min(1.0, blended + concept_boost())
         scored.append({**r, "rank_score": blended})
 
-    scored.sort(key=lambda x: x["rank_score"], reverse=True)
+    scored.sort(key=lambda item: (-item["rank_score"], str(item.get("memory_id", ""))))
     return scored

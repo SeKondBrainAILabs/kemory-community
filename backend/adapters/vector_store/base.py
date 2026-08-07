@@ -26,13 +26,14 @@ class VectorStore(ABC):
         org_id: UUID | str,
         embedding: list[float],
         metadata: dict[str, Any],
+        connection: Any | None = None,
     ) -> None: ...
 
     @abstractmethod
     async def search(
         self,
         *,
-        namespace: str,
+        namespace: str | None,
         user_id: UUID,
         org_id: UUID | str,
         query_embedding: list[float],
