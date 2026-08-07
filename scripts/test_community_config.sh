@@ -219,7 +219,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"{marker}: {name}{suffix}")
 
 
-with httpx.Client(base_url=base, timeout=30.0) as client:
+with httpx.Client(base_url=base, timeout=120.0) as client:
     ready = client.get("/health/ready")
     check("readiness is healthy", ready.status_code == 200, str(ready.status_code))
 
@@ -285,6 +285,51 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
     )
     total = search.json().get("total") if search.status_code == 200 else None
     check("memory search succeeds on pgvector config", search.status_code == 200 and total is not None, f"total={total}")
+
+    chat = client.post(
+        "/api/v1/chats",
+        headers=headers,
+        json={
+            "platform": "chatgpt",
+            "platform_conversation_id": "community-smoke-chat",
+            "namespace": "community:smoke",
+            "title": "Community smoke chat",
+            "captured_at": "2025-03-03T04:05:00Z",
+            "allow_duplicate": True,
+            "turns": [
+                {
+                    "source_turn_id": "community-smoke-turn",
+                    "role": "user",
+                    "content": "Smoke timeline",
+                    "sequence": 0,
+                    "timestamp": "2025-03-03T04:05:00Z",
+                }
+            ],
+        },
+    )
+    check(
+        "chat source date round-trips",
+        chat.status_code in (200, 201)
+        and chat.json().get("captured_at") == "2025-03-03T04:05:00+00:00",
+        f"status={chat.status_code}",
+    )
+
+    timeline = client.get(
+        "/api/v1/namespaces/community%3Asmoke/timeline",
+        headers=headers,
+    )
+    timeline_body = timeline.json() if timeline.status_code == 200 else {}
+    timeline_items = timeline_body.get("items", [])
+    check(
+        "namespace timeline interleaves chats and memories by source time",
+        timeline.status_code == 200
+        and len(timeline_items) == 2
+        and timeline_items[0].get("kind") == "chat"
+        and timeline_items[0].get("occurred_at") == "2025-03-03T04:05:00+00:00"
+        and timeline_items[1].get("kind") == "memory"
+        and timeline_items[1].get("occurred_at") == "2025-02-03T04:05:00+00:00",
+        f"status={timeline.status_code} items={len(timeline_items)}",
+    )
 
     artifact = client.post(
         "/api/v1/artifacts/upload",

@@ -37,6 +37,7 @@ import { useNamespaces, useNamespaceSummary } from '@/hooks/useMemories'
 import { useChatList } from '@/hooks/useChats'
 import type { NamespaceInfo } from '@/api/types'
 import { formatRelativeTime, cn } from '@/lib/utils'
+import { NamespaceTimeline } from '@/components/namespaces/NamespaceTimeline'
 import { NamespaceFilesTab } from './NamespaceFilesTab'
 
 // ─── Combined namespace row shape ───────────────────────────────────
@@ -183,6 +184,10 @@ function NamespaceDetailDrawer({
           </div>
         </div>
       )}
+
+      <div className="border-t border-black/[0.04] pt-4">
+        <NamespaceTimeline namespace={ns.namespace} />
+      </div>
 
       {related && related.length > 0 && (
         <div>

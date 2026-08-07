@@ -331,6 +331,34 @@ async def get_namespace_summary_endpoint(
 
 
 @router.get(
+    "/namespaces/{namespace}/timeline",
+    summary="Unified source-ordered stream of a namespace's chats and memories",
+)
+async def get_namespace_timeline_endpoint(
+    namespace: str,
+    limit: int = Query(40, ge=1, le=100),
+    cursor: str | None = Query(None, description="Opaque cursor from next_cursor."),
+    types: str = Query(
+        "chat,memory",
+        max_length=32,
+        description="Comma-separated kinds to include: chat and memory.",
+    ),
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.services.namespace_timeline_service import get_namespace_timeline
+
+    return await get_namespace_timeline(
+        auth.user_id,
+        namespace,
+        db,
+        limit=limit,
+        cursor=cursor,
+        types=types,
+    )
+
+
+@router.get(
     "/namespaces/{namespace}/sessions/{session_id}/summary",
     summary="Get per-session L3 rollup (session + cumulative-to-this-point)",
 )
