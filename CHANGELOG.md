@@ -36,4 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Community-only API route allowlist with no Gatekeeper evaluation, CogOS compression, or hosted telemetry startup.
 - Community port registry at `docs/PORT_REGISTRY.md`.
 
+### Changed
+- Dashboard builds and CI now use Node 24, with Vite constrained to the
+  hosted security floor (`^6.4.3`) and the npm lock refreshed to remove
+  high-severity transitive advisories.
+
 [Unreleased]: https://github.com/SeKondBrainAILabs/kemory-community/compare/HEAD...HEAD

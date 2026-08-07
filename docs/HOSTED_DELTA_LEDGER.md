@@ -7,14 +7,16 @@ it is not a mirror of the hosted product.
 ## Baseline
 
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
-- Hosted baseline inspected: `dcaa931ae8` (`v1.7.6`).
+- Hosted baseline inspected: `60390acd5f` (`v1.8.2`); previous audit baseline
+  was `dcaa931ae8` (`v1.7.6`).
 - Backend subtree anchor: `5b70a8a884` (equivalent hosted tree at `305adba0e8:backend`).
 - Python SDK anchor: `ea2c494530`.
 - CLI anchor: `6fb85a6d4b`.
 - Dashboard anchor: `c82bebf5cd`.
 
-The backend delta contains 374 effective commits. Dashboard contains 186
-effective commits. Changes are therefore ported by feature cohort, with
+The initial backend delta contained 374 effective commits and the dashboard
+contained 186. The follow-up audit from hosted `v1.7.6` through `v1.8.2`
+classified five more commits. Changes are ported by feature cohort, with
 community adapters and Docker runtime constraints applied at each boundary.
 
 ## Classification
@@ -30,6 +32,8 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
 | Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
 | Python CLI and stdio bridge | Ported and adapted | Local endpoint plus API-key configuration only; OAuth device flow, Bearer forwarding, hosted environments, org/team commands, telemetry, and hosted release upgrades are removed. |
+| Post-`v1.7.6` build security (`63b8035`, `60390ac`) | Ported and adapted | Raise the Vite floor to `^6.4.3`, refresh safe transitive dependency pins, and build the dashboard plus Node-based CI/release jobs on Node 24. Community retains npm/package-lock instead of hosted pnpm/private design-system dependencies. |
+| Post-`v1.7.6` exec analytics, pooled value mode, and agent-admin auth (`14ff2f2`, `fa0ad02`, `fb2da18`) | Excluded | These commits operate on hosted executive analytics, cross-org pooling, and agent/account-admin authorization. None of those routes or identity modes execute in local single-user Community. |
 | Keycloak, OIDC, OAuth, DCR, teams, Gatekeeper, trusted org delegation | Excluded | Removed dashboard identity/Bearer paths and hosted admin navigation; community boot does not import or mount agent JWT, pairing, identity/team, permission, or Gatekeeper routers, and memory reads bypass rule evaluation under `local_single_user`. |
 | Weaviate, FalkorDB, MinIO, PostHog, Kafka, KMS, Core Backend billing | Exclude | Community boot remains pgvector, local filesystem, noop telemetry, and user-supplied local services only. |
 | Hosted L5/CogOS push and executive analytics | Exclude | Hosted-only cognition and operational product surfaces. |
