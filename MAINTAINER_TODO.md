@@ -11,7 +11,7 @@ gh repo edit --add-topic kemory --add-topic memory --add-topic ai-agents \
   --add-topic rag --add-topic local-first --add-topic oss
 
 gh repo edit --description "Local-first, OSS memory for AI agents. Same wire protocol as hosted Kemory. Apache-2.0." \
-  --homepage "https://community.kemory.s9n.ai"
+  --homepage "https://docs.sekondbrain.ai/kemory/community/"
 
 gh repo edit --enable-discussions --enable-issues --enable-projects
 gh api -X PATCH "/repos/SeKondBrainAILabs/kemory-community" -f has_wiki=false
@@ -57,24 +57,15 @@ Add when needed (do NOT commit values):
 - `APPLE_DEVELOPER_ID_CERT` + `APPLE_DEVELOPER_ID_PASSWORD` - macOS binary signing (can wait until first real release)
 - `APPLE_NOTARY_API_KEY_ID` + `APPLE_NOTARY_API_KEY_ISSUER_ID` + `APPLE_NOTARY_API_PRIVATE_KEY` - notarization
 
-## 4. DNS
+## 4. Documentation
 
-Create a CNAME record:
+Community documentation is published by the central public docs repository:
 
-```text
-community.kemory.s9n.ai -> SeKondBrainAILabs.github.io
-```
+- Source: `SeKondBrainAILabs/docs_sekondbrain`
+- URL: `https://docs.sekondbrain.ai/kemory/community/`
+- Community Discussions and Issues remain in this repository.
 
-Propagation takes 5-30 minutes.
-
-## 5. GitHub Pages
-
-Settings -> Pages:
-- Source: `main` branch, `/docs` folder
-- Custom domain: `community.kemory.s9n.ai`
-- Enforce HTTPS: on (will be greyed until DNS propagates)
-
-## 6. npm reservation
+## 5. npm reservation
 
 ```bash
 npm login
@@ -84,12 +75,13 @@ npm publish --access public
 The v0.1 package is the Docker setup CLI. The tag release workflow builds
 and pushes the API/dashboard images to GHCR before publishing npm.
 
-## 7. Privacy policy (also needed for Chrome extension Web Store)
+## 6. Privacy policy
 
-`docs/privacy.md` has been drafted in this scaffold PR. Review the wording
-before configuring GitHub Pages or submitting any extension review.
+The Community Edition privacy source is maintained in
+`docs_sekondbrain/kemory/community/privacy.md`. Keep the operational mirror in
+this repository aligned when runtime providers or data paths change.
 
-## 8. Once the adapter refactor in `agent_memory_vault` lands
+## 7. Once the adapter refactor in `agent_memory_vault` lands
 
 - [x] Import community-safe backend, `kemory`, `kemory_cli`, and dashboard
   subtrees from `agent_memory_vault` after the adapter refactor landed.

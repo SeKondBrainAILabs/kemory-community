@@ -49,10 +49,11 @@ docker compose -f docker-compose.community.yml exec api \
 ## What ships in v0.1
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the full table.
-See [docs/PORT_REGISTRY.md](docs/PORT_REGISTRY.md) for the local Docker
-ports.
-See [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md) for the
-hosted-to-community port policy and current sync status.
+Read the complete public documentation at
+[docs.sekondbrain.ai/kemory/community](https://docs.sekondbrain.ai/kemory/community/).
+Repository-local copies of the [port registry](docs/PORT_REGISTRY.md) and
+[hosted delta ledger](docs/HOSTED_DELTA_LEDGER.md) remain beside the code so
+runtime and upstream-sync changes can be reviewed atomically.
 
 ## Questions / feedback
 
