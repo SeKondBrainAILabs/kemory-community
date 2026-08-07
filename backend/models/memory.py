@@ -190,6 +190,14 @@ class Memory(Base):
             "from created_at (ingest time) and valid_at (fact validity)"
         ),
     )
+    namespace_tag = Column(
+        String(120),
+        nullable=True,
+        comment=(
+            "Automatic second-tier segment within the namespace. Tags split "
+            "views while search and recall continue to span the parent namespace."
+        ),
+    )
     invalid_at = Column(
         DateTime(timezone=True),
         nullable=True,
@@ -305,6 +313,7 @@ class Memory(Base):
         Index("idx_memories_epoch", "namespace", "epoch_date"),
         Index("idx_memories_org_user", "org_id", "user_id"),
         Index("idx_memories_source_chat", "source_chat_id"),
+        Index("idx_memories_ns_tag", "user_id", "namespace", "namespace_tag"),
         Index(
             "uq_memories_user_ns_hash",
             "user_id",

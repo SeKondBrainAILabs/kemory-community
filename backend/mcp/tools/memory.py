@@ -34,6 +34,7 @@ from backend.services.memory_service import (
 def _skip_gatekeeper() -> bool:
     return settings.kmv_identity == "local_single_user"
 
+
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
         name="s9nmem_store_memory",
@@ -206,10 +207,11 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
 
     lines = [f"Found {result.total} memories (showing {len(result.items)}):\n"]
     for i, item in enumerate(result.items, 1):
+        namespace = f"{item.namespace}:{item.namespace_tag}" if item.namespace_tag else item.namespace
         lines.append(
             f"--- Memory {i} ---\n"
             f"ID: {item.memory_id}\n"
-            f"Namespace: {item.namespace}\n"
+            f"Namespace: {namespace}\n"
             f"Type: {item.content_type}\n"
             f"Content: {item.content[:500]}{'...' if len(item.content) > 500 else ''}\n"
             f"Happened: {item.occurred_at or 'Unknown'} | Added: {item.created_at}\n"
@@ -271,7 +273,8 @@ async def _handle_find_similar(args, user_id, agent_id, db):
     lines = [f"Found {len(result.items)} similar memories:\n"]
     for i, item in enumerate(result.items, 1):
         snippet = item.content[:200] + ("..." if len(item.content) > 200 else "")
-        lines.append(f"{i}. [{item.namespace}/{item.content_type}] id={item.memory_id}\n   {snippet}")
+        namespace = f"{item.namespace}:{item.namespace_tag}" if item.namespace_tag else item.namespace
+        lines.append(f"{i}. [{namespace}/{item.content_type}] id={item.memory_id}\n   {snippet}")
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
     )

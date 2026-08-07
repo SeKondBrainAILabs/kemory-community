@@ -18,6 +18,7 @@ from backend.models.memory import Memory
 from backend.models.memory_event import MemoryEvent
 from backend.models.memory_vector import MemoryVector
 from backend.models.namespace_policy import NamespacePolicy
+from backend.models.namespace_tag import NamespaceTag  # S9N-6612
 from backend.models.permission import PermissionRule
 from backend.models.session_digest import SessionDigest
 from backend.models.session_summary import SessionSummary
@@ -34,6 +35,7 @@ __all__ = [
     "ConsentRequest",
     "Memory",
     "MemoryEvent",
+    "NamespaceTag",
     "MemoryVector",
     "NamespacePolicy",
     "SessionDigest",

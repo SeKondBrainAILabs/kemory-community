@@ -7,6 +7,7 @@ export interface TimelineEntry {
   id: string
   occurred_at: string
   namespace: string
+  namespace_tag?: string | null
   platform: string
   title?: string | null
   turn_count?: number | null

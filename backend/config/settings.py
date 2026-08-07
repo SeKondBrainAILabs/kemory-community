@@ -175,6 +175,9 @@ class Settings(BaseSettings):
     # knows what to ask for.
     auto_approve_agents: bool = False
 
+    # Automatic second-tier namespace tags. Disabling this stops new resolver
+    # assignments while preserving existing tag values for reads.
+    namespace_tags_enabled: bool = True
     # Per-tenant rate limits applied by tenant_rate_limit_middleware.
     # Generous defaults — a popular product gets noisy fast and we don't
     # want to throttle real customers. Override per-deployment via env.
@@ -290,6 +293,7 @@ class Settings(BaseSettings):
             _parse_cors_origins(self.cors_origins)
         except ValueError as exc:
             raise ValueError(f"CORS_ORIGINS is malformed: {exc}. Refusing to start.") from exc
+
 
 # Singleton settings instance
 settings = Settings()

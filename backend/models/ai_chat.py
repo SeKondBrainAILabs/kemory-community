@@ -117,6 +117,15 @@ class AIChat(Base):
     )
 
     captured_at = Column(DateTime(timezone=True), nullable=True)
+    namespace_tag = Column(
+        String(120),
+        nullable=True,
+        comment=(
+            "S9N-6612: automatic second-tier segment within the namespace "
+            "(shown as namespace:tag). View segmentation only — never affects "
+            "namespace routing, merge history, or search scope."
+        ),
+    )
 
     source_type = Column(
         String(32),
@@ -158,6 +167,7 @@ class AIChat(Base):
         Index("idx_ai_chats_org_user", "org_id", "user_id"),
         Index("idx_ai_chats_namespace", "namespace"),
         Index("idx_ai_chats_captured", "user_id", "captured_at"),
+        Index("idx_ai_chats_ns_tag", "user_id", "namespace", "namespace_tag"),
     )
 
     def __repr__(self) -> str:

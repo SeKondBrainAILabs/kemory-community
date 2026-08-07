@@ -208,6 +208,8 @@ class ChatResponse(BaseModel):
     source_project_id: str | None
     source_project_name: str | None
     namespace: str
+    # S9N-6612: second-tier segment (namespace:tag). None = untagged.
+    namespace_tag: str | None = None
     requested_namespace: str | None
     title: str | None
     model: str | None
@@ -232,6 +234,8 @@ class ChatListItem(BaseModel):
     platform: str
     platform_conversation_id: str
     namespace: str
+    # S9N-6612: second-tier segment (namespace:tag). None = untagged.
+    namespace_tag: str | None = None
     title: str | None
     captured_at: str | None
     updated_at: str
@@ -652,11 +656,7 @@ async def _backfill_artifact_dates(
     if not dated:
         return 0
 
-    rows = (
-        (await db.execute(select(AIChatTurn).where(AIChatTurn.chat_id == chat.chat_id)))
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(select(AIChatTurn).where(AIChatTurn.chat_id == chat.chat_id))).scalars().all()
     by_source = {row.source_turn_id: row for row in rows if row.source_turn_id}
     by_content = {(row.role, row.sequence, row.content): row for row in rows}
     updated = 0
@@ -669,11 +669,7 @@ async def _backfill_artifact_dates(
         if row is None:
             continue
         stored = (
-            (
-                await db.execute(
-                    select(AIChatArtifact).where(AIChatArtifact.turn_id == row.turn_id)
-                )
-            )
+            (await db.execute(select(AIChatArtifact).where(AIChatArtifact.turn_id == row.turn_id)))
             .scalars()
             .all()
         )
@@ -767,11 +763,13 @@ async def upsert_chat(
         await _persist_turns(chat, payload.turns, db)
         await db.flush()
         turn_count = await _count_turns(chat.chat_id, db)
+        await db.commit()
         # chats-v1 auto-classify: fire-and-forget background task that
         # re-evaluates the namespace once the chat has accumulated enough
         # content. Extension keeps pushing by (platform, conv_id), unaware
         # — we silently redirect to the right namespace under the hood.
         _schedule_auto_classify_safe(chat.chat_id, user_id)
+        schedule_tag_resolution_safe(chat.chat_id)
         return _to_response(
             chat,
             turn_count=turn_count,
@@ -846,10 +844,12 @@ async def upsert_chat(
     await _sync_chat_artifact_namespace(existing, db)
     await db.flush()
     turn_count = await _count_turns(existing.chat_id, db)
+    await db.commit()
     # Fire auto-classify again on every content-changing update — the
     # chat may have just crossed the AUTO_MIN_TURNS / AUTO_MIN_CHARS
     # gates with this push. No-op when the chat is no longer pending.
     _schedule_auto_classify_safe(existing.chat_id, user_id)
+    schedule_tag_resolution_safe(existing.chat_id)
     return _to_response(
         existing,
         turn_count=turn_count,
@@ -870,6 +870,18 @@ def _schedule_auto_classify_safe(chat_id: uuid.UUID, user_id: uuid.UUID) -> None
         schedule_auto_classify(chat_id, user_id)
     except Exception as exc:
         logger.debug("ai_chat_service.auto_classify_schedule_failed", reason=str(exc))
+
+
+def schedule_tag_resolution_safe(chat_id: uuid.UUID) -> None:
+    """Schedule second-tier tagging without letting it break chat ingestion."""
+    try:
+        from backend.services.namespace_tag_service import (
+            schedule_tag_resolution_safe as schedule,
+        )
+
+        schedule(chat_id)
+    except Exception as exc:
+        logger.debug("ai_chat_service.tag_resolution_schedule_failed", reason=str(exc))
 
 
 async def move_chat(
@@ -920,12 +932,15 @@ async def move_chat(
             logger.debug("ai_chat_service.move_chat.matcher_skipped", reason=str(exc))
 
     chat.namespace = resolved
+    chat.namespace_tag = None
     chat.requested_namespace = None
     chat.updated_at = datetime.now(UTC)
     await _sync_chat_artifact_namespace(chat, db)
     await db.flush()
 
     turn_count = await _count_turns(chat.chat_id, db)
+    await db.commit()
+    schedule_tag_resolution_safe(chat.chat_id)
     return _to_response(
         chat,
         turn_count=turn_count,
@@ -962,6 +977,9 @@ async def append_turns(
     chat.updated_at = datetime.now(UTC)
     await db.flush()
     total = await _count_turns(chat_id, db)
+    await db.commit()
+    _schedule_auto_classify_safe(chat.chat_id, user_id)
+    schedule_tag_resolution_safe(chat.chat_id)
     return {
         "chat_id": str(chat_id),
         "appended": inserted,
@@ -1039,6 +1057,7 @@ async def list_chats(
                 platform=chat.platform,
                 platform_conversation_id=chat.platform_conversation_id,
                 namespace=chat.namespace,
+                namespace_tag=chat.namespace_tag,
                 title=chat.title,
                 captured_at=chat.captured_at.isoformat() if chat.captured_at else None,
                 updated_at=chat.updated_at.isoformat() if chat.updated_at else "",
@@ -1308,6 +1327,7 @@ def _to_response(
         source_project_id=chat.source_project_id,
         source_project_name=chat.source_project_name,
         namespace=chat.namespace,
+        namespace_tag=chat.namespace_tag,
         requested_namespace=chat.requested_namespace,
         title=chat.title,
         model=chat.model,

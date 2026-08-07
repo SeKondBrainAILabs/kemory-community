@@ -68,6 +68,7 @@ export interface ChatResponse {
   source_project_id: string | null
   source_project_name: string | null
   namespace: string
+  namespace_tag?: string | null
   requested_namespace: string | null
   title: string | null
   model: string | null
@@ -89,6 +90,7 @@ export interface ChatListItem {
   platform: Platform
   platform_conversation_id: string
   namespace: string
+  namespace_tag?: string | null
   title: string | null
   captured_at: string | null
   updated_at: string

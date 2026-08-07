@@ -154,6 +154,7 @@ class MemoryResponse(BaseModel):
     round_id: str | None = None
     valid_at: str | None = None
     occurred_at: str | None = None
+    namespace_tag: str | None = None
     invalid_at: str | None = None
     decay_score: float | None = None
     temporal_anchor: str | None = None
@@ -515,14 +516,10 @@ async def create_memory(
         expires_at = now + timedelta(seconds=request.ttl_seconds)
 
     valid_at_dt = (
-        datetime.fromisoformat(request.valid_at.replace("Z", "+00:00"))
-        if request.valid_at
-        else None
+        datetime.fromisoformat(request.valid_at.replace("Z", "+00:00")) if request.valid_at else None
     )
     occurred_at_dt = (
-        datetime.fromisoformat(request.occurred_at.replace("Z", "+00:00"))
-        if request.occurred_at
-        else None
+        datetime.fromisoformat(request.occurred_at.replace("Z", "+00:00")) if request.occurred_at else None
     )
 
     # PR #17: org_id is NOT NULL on kemory_memories. Use the auth
@@ -1019,6 +1016,7 @@ async def search_memories(
                         round_id=r.get("round_id"),
                         valid_at=r.get("valid_at"),
                         occurred_at=r.get("occurred_at"),
+                        namespace_tag=r.get("namespace_tag"),
                         invalid_at=r.get("invalid_at"),
                         decay_score=r.get("decay_score"),
                         temporal_anchor=r.get("temporal_anchor"),
@@ -1406,10 +1404,7 @@ async def _find_semantic_duplicate(
             candidate_embedding = candidate.embedding
             if not candidate_embedding or len(candidate_embedding) != len(query_vec):
                 continue
-            score = sum(
-                left * right
-                for left, right in zip(query_vec, candidate_embedding, strict=False)
-            )
+            score = sum(left * right for left, right in zip(query_vec, candidate_embedding, strict=False))
             if score > best_score:
                 best_memory = candidate
                 best_score = score
@@ -1555,6 +1550,7 @@ def _to_response(memory: Memory) -> MemoryResponse:
         round_id=memory.round_id,
         valid_at=memory.valid_at.isoformat() if memory.valid_at else None,
         occurred_at=memory.occurred_at.isoformat() if memory.occurred_at else None,
+        namespace_tag=memory.namespace_tag,
         invalid_at=memory.invalid_at.isoformat() if memory.invalid_at else None,
         decay_score=memory.decay_score,
         temporal_anchor=memory.temporal_anchor,
@@ -1589,6 +1585,7 @@ def _memory_to_dict(memory: Memory, include_embedding: bool = True) -> dict:
         "created_at": memory.created_at.isoformat() if memory.created_at else "",
         "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,
         "occurred_at": memory.occurred_at.isoformat() if memory.occurred_at else None,
+        "namespace_tag": memory.namespace_tag,
         "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,
         "metadata": memory.meta,
         "source_agent": str(memory.source_agent_id) if memory.source_agent_id else "",

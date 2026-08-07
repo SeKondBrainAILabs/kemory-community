@@ -8,7 +8,15 @@
  */
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ExternalLink, Inbox, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  ExternalLink,
+  Inbox,
+  MessageSquare,
+  Paperclip,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { PageShell } from '@/components/layout/PageShell'
@@ -75,6 +83,9 @@ export function ChatsListPage() {
 
   const totalCount = list.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const visibleChats = (list.data?.items ?? []).filter(
+    (chat) => !inboxOnly || isInboxNamespace(chat.namespace),
+  )
 
   function selectChat(chatId: string | null) {
     setSearchParams((prev) => {
@@ -116,19 +127,31 @@ export function ChatsListPage() {
       {
         accessorKey: 'namespace',
         header: 'Namespace',
-        cell: ({ row }) =>
-          isInboxNamespace(row.original.namespace) ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-              title="Sitting in the inbox — open the chat to classify or move it"
-            >
-              <Inbox size={10} /> {row.original.namespace}
-            </span>
-          ) : (
-            <span className="font-mono text-xs text-content-secondary">
-              {row.original.namespace}
-            </span>
-          ),
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-1.5">
+            {isInboxNamespace(row.original.namespace) ? (
+              <span
+                className="inline-flex min-w-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                title="Sitting in the inbox — open the chat to classify or move it"
+              >
+                <Inbox size={10} className="shrink-0" />
+                <span className="truncate">{row.original.namespace}</span>
+              </span>
+            ) : (
+              <span className="truncate font-mono text-xs text-content-secondary">
+                {row.original.namespace}
+              </span>
+            )}
+            {row.original.namespace_tag && (
+              <span
+                className="max-w-40 shrink-0 truncate rounded bg-brand-primary/10 px-1 text-[10px] font-medium text-brand-primaryDark"
+                title={`${row.original.namespace}:${row.original.namespace_tag}`}
+              >
+                :{row.original.namespace_tag}
+              </span>
+            )}
+          </div>
+        ),
       },
       {
         accessorKey: 'turn_count',
@@ -257,8 +280,8 @@ export function ChatsListPage() {
         </div>
       </div>
 
-      <div className="flex gap-4">
-        <div className="flex-1 space-y-3">
+      <div className="flex flex-col gap-4 xl:flex-row">
+        <div className="min-w-0 flex-1 space-y-3">
           {list.isLoading ? (
             <div className="rounded-lg border border-border bg-white p-8 text-center text-sm text-content-tertiary">
               Loading chats…
@@ -277,13 +300,88 @@ export function ChatsListPage() {
             </div>
           ) : (
             <>
-              <DataTable
-                columns={columns}
-                data={(list.data?.items ?? []).filter(
-                  (r) => !inboxOnly || isInboxNamespace(r.namespace),
-                )}
-                onRowClick={(row) => selectChat(row.chat_id)}
-              />
+              <div className="hidden md:block">
+                <DataTable
+                  columns={columns}
+                  data={visibleChats}
+                  onRowClick={(row) => selectChat(row.chat_id)}
+                />
+              </div>
+              <div className="space-y-2 md:hidden">
+                {visibleChats.map((chat) => (
+                  <div
+                    key={chat.chat_id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectChat(chat.chat_id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        selectChat(chat.chat_id)
+                      }
+                    }}
+                    className="rounded-lg border border-border bg-white p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+                  >
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={chat.platform} />
+                          <span className="text-xs text-content-tertiary">
+                            {formatRelative(chat.updated_at)}
+                          </span>
+                        </div>
+                        <div className="mt-2 font-medium text-content-primary">
+                          {chat.title || <span className="italic">untitled</span>}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Link
+                          to={`/chats/${chat.chat_id}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary hover:text-content-primary"
+                          title="Open as standalone page"
+                        >
+                          <ExternalLink size={15} />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setConfirmDelete(chat)
+                          }}
+                          className="rounded p-1.5 text-content-tertiary hover:bg-red-50 hover:text-status-danger"
+                          title="Delete chat"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="max-w-full truncate font-mono text-[11px] text-content-secondary">
+                        {chat.namespace}
+                      </span>
+                      {chat.namespace_tag && (
+                        <span
+                          className="max-w-full truncate rounded bg-brand-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-primaryDark"
+                          title={`${chat.namespace}:${chat.namespace_tag}`}
+                        >
+                          :{chat.namespace_tag}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-center gap-4 text-xs text-content-tertiary">
+                      <span className="inline-flex items-center gap-1">
+                        <MessageSquare size={13} />
+                        {chat.turn_count}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Paperclip size={13} />
+                        {chat.artifact_count}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
               <div className="flex items-center justify-between text-xs text-content-tertiary">
                 <span>
                   Page {page + 1} of {totalPages}
@@ -312,7 +410,7 @@ export function ChatsListPage() {
         </div>
 
         {selectedChatId && (
-          <aside className="w-[480px] shrink-0 overflow-hidden rounded-lg border border-border bg-white">
+          <aside className="w-full shrink-0 overflow-hidden rounded-lg border border-border bg-white xl:w-[480px]">
             <div className="flex items-center justify-between border-b border-border bg-surface-secondary/40 px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-content-secondary">
                 Chat detail

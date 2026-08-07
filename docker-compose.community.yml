@@ -55,6 +55,7 @@ services:
       KMV_TELEMETRY: noop
       KMV_VECTOR_BACKEND: pgvector
       MEMORY_VAULT_MODE: platform
+      NAMESPACE_TAGS_ENABLED: ${NAMESPACE_TAGS_ENABLED:-true}
       REDIS_URL: redis://redis:6379/0
       TENANT_ENFORCEMENT: "off"
       WORKERS: "1"

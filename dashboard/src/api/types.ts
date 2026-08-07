@@ -71,6 +71,7 @@ export interface MemoryResponse {
   round_id: string | null
   valid_at: string | null
   occurred_at: string | null
+  namespace_tag?: string | null
   invalid_at: string | null
   decay_score: number | null
   temporal_anchor: string | null
