@@ -47,7 +47,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
-      KEMORY_RUN_MIGRATIONS: "false"
+      # init_db() bootstraps a fresh database (create_all + alembic stamp,
+      # advisory-locked) and no-op upgrades an existing one — see
+      # backend/core/database.py. "false" is for k8s deployments that run a
+      # separate migrate Job; with compose it just means a fresh clone comes
+      # up with no tables and every request 500s.
+      KEMORY_RUN_MIGRATIONS: "true"
       KMV_BLOB_BACKEND: local_fs
       KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
       KMV_COGNITION_ENTERPRISE: "false"

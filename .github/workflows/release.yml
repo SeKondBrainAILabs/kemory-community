@@ -40,21 +40,21 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      - id: npm-token
-        name: Check npm token
+      # This workflow only runs on version tags, so a missing token is not a
+      # situation to skip around — it means the release is broken. The previous
+      # silent-skip notice is how v0.1.0 got tagged, the README told users to
+      # `npx kemory-community`, and the package sat unpublished for two months.
+      - name: Require npm token
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -n "${NODE_AUTH_TOKEN}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::NPM_TOKEN is not configured; skipping npm publish. Publish manually after npm login."
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN is not configured, so this version tag cannot be published to npm. Add the NPM_TOKEN repository secret and re-run this workflow."
+            exit 1
           fi
       - run: npm install --package-lock=false
       - run: npm test
       - run: npm run prepublishOnly
-      - if: steps.npm-token.outputs.available == 'true'
-        run: npm publish --access public
+      - run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

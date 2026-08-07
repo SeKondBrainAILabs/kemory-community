@@ -14,16 +14,56 @@ use and QA; current development selectively ports compatible hosted features.
 
 ## Quick Start
 
-Two commands to a working memory service for your AI agents:
+### Run from source (Docker)
+
+```bash
+git clone https://github.com/SeKondBrainAILabs/kemory-community.git
+cd kemory-community
+docker compose -f docker-compose.community.yml up -d --build
+```
+
+The first build takes a few minutes (it compiles the API image and bundles
+the dashboard). After that:
+
+- API: `http://127.0.0.1:8111`
+- Dashboard: `http://127.0.0.1:5175`
+
+Same REST + MCP wire protocol as hosted Kemory, so memories are portable.
+
+The stack starts with a default API key (`kemory-community-ci-key`) meant
+for local trials. To use your own:
+
+```bash
+KEMORY_LOCAL_API_KEY="$(openssl rand -hex 24)" \
+  docker compose -f docker-compose.community.yml up -d
+```
+
+### Verify your install
+
+```bash
+curl -fsS http://127.0.0.1:8111/health/ready
+```
+
+```bash
+curl -fsS -H "X-API-Key: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}" \
+  http://127.0.0.1:8111/api/v1/namespaces
+```
+
+The first returns the readiness document; the second returns your (initially
+empty) namespace list. A `401` from the second means the key doesn't match
+what the API container was started with.
+
+### npm installer
 
 ```bash
 npx kemory-community@latest init --runtime docker
 npx kemory-community@latest up
 ```
 
-Local Docker API at `http://127.0.0.1:8111`, dashboard at
-`http://127.0.0.1:5175`. Same REST + MCP wire protocol as hosted
-Kemory, so memories are portable.
+The installer generates a compose file with a randomly generated API key and
+pulls prebuilt images — no clone needed. **Not available yet:** the npm
+package and the public images for v0.1 are pending publication (see the npm
+badge above). Until then, use the run-from-source path.
 
 ### Namespace tags
 
