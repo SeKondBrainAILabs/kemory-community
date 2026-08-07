@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm setup CLI for Docker-first community runtime configuration.
 - Community backend/dashboard import with Docker compose for API, dashboard, Redis, and pgvector.
 - Canonical `kemory_*` MCP tool names with `s9nmem_*` and `kora_*` compatibility aliases.
+- Indexed pgvector retrieval with legacy-row fallback, batch encoding, deterministic ranking, and optional score floors.
 - Dashboard Settings page for API key, runtime settings, JSON export, and JSON import.
 - Community port registry at `docs/PORT_REGISTRY.md`.
 
