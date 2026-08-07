@@ -20,9 +20,6 @@ import os
 from typing import Any
 
 import httpx
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
 
 from kemory_cli.config import Credentials
 
@@ -32,8 +29,6 @@ logger = logging.getLogger("kemory.mcp_bridge")
 # bridge process, not once per MCP tool call.
 _legacy_alias_warned = False
 _request_ids = itertools.count(1)
-
-server = Server("kemory")
 
 # Active environment for this bridge process. Set by ``serve(env)`` from the
 # ``kemory --env <env> mcp serve`` invocation the MCP host runs; credential
@@ -162,8 +157,9 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
+async def list_tools() -> list[Any]:
+    from mcp.types import Tool
+
     async with _client() as client:
         try:
             result = await _jsonrpc(client, "tools/list")
@@ -189,8 +185,9 @@ async def list_tools() -> list[Tool]:
             ]
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+    from mcp.types import TextContent
+
     headers = _build_headers()
     if "Authorization" not in headers and "X-API-Key" not in headers:
         return [
@@ -262,6 +259,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def _main() -> None:
+    try:
+        from mcp.server import Server
+        from mcp.server.stdio import stdio_server
+    except ImportError as exc:
+        raise RuntimeError(
+            "The MCP stdio bridge requires the CLI extra. "
+            "Install it with: pip install 'kemory-community[cli]'"
+        ) from exc
+
+    server = Server("kemory")
+    server.list_tools()(list_tools)
+    server.call_tool()(call_tool)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
