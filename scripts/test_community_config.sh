@@ -92,6 +92,85 @@ if leaks:
     raise SystemExit(f"hosted-only dependencies found in community package: {leaks}")
 PY
 
+echo "Running forbidden-import guard"
+python3 - <<'PY'
+import ast
+from pathlib import Path
+
+# The declared-dependency guard above only reads pyproject. A ported hosted file
+# can still *import* a package nobody declared — it then fails at runtime with
+# ImportError instead of at review. scripts/qa_full_test.py shipped that way:
+# it imported `jose`, which is on the forbidden list and absent from pyproject.
+#
+# Keys are the top-level MODULE names, which differ from the distribution names
+# used above (python-jose -> jose, kafka-python -> kafka).
+FORBIDDEN_MODULES = {
+    "minio": "hosted object storage",
+    "weaviate": "hosted vector store",
+    "keycloak": "hosted identity",
+    "jose": "hosted JWT auth",
+    "posthog": "hosted telemetry",
+    "falkordb": "hosted graph store",
+    "neo4j": "hosted graph store",
+    "kafka": "hosted event bus",
+    "confluent_kafka": "hosted event bus",
+}
+
+ROOTS = ("backend", "kemory", "kemory_cli", "scripts", "tests")
+SKIP_PARTS = {"__pycache__", "node_modules", "versions"}
+
+# Known-dead hosted modules, exempted BY PATH and enumerated so the gate stays
+# green on today's tree and red on anything new — the same approach .gitleaks.toml
+# takes with its allowlist.
+#
+# backend/services/auth_service.py imports `jose` for create_access_token and
+# decode_access_token. Both are unreachable from backend/main.py: the only
+# importers are agent_service.py and extension_key_service.py, reached solely
+# via the agents, pair and extension_keys routers — none of which main.py
+# mounts. That is why the container boots at all without python-jose installed.
+#
+# Deleting that chain touches five modules and deserves its own review, so it
+# is exempted here rather than skipped silently. Remove this entry with it.
+KNOWN_DEAD_HOSTED = {
+    "backend/services/auth_service.py",
+}
+
+violations = []
+for root in ROOTS:
+    base = Path(root)
+    if not base.is_dir():
+        continue
+    for path in base.rglob("*.py"):
+        if SKIP_PARTS.intersection(path.parts):
+            continue
+        if path.as_posix() in KNOWN_DEAD_HOSTED:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            violations.append(f"{path}: does not parse ({exc.msg})")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module] if node.level == 0 and node.module else []
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                if top in FORBIDDEN_MODULES:
+                    violations.append(
+                        f"{path}:{node.lineno} imports '{top}' ({FORBIDDEN_MODULES[top]})"
+                    )
+
+if violations:
+    raise SystemExit(
+        "hosted-only imports found in community source:\n  " + "\n  ".join(violations)
+    )
+print("no hosted-only imports")
+PY
+
 echo "Building community API and dashboard images"
 "${COMPOSE[@]}" build api dashboard
 

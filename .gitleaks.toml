@@ -1,0 +1,99 @@
+# gitleaks config for kemory-community.
+#
+# Why this exists
+# ---------------
+# This is a public repository, so a leaked credential is disclosed the moment
+# it is pushed — there is no window to notice and fix it privately. Upstream
+# (the private hosted repo) has carried a gitleaks config for a while; the
+# community port brought the code across but not the gate. This restores it.
+#
+# GitHub secret scanning + push protection should ALSO be enabled on this repo
+# from Settings → Code security. They are the better first line of defence
+# because they block the push outright. But they only match *known provider*
+# patterns — AWS, Stripe, GitHub tokens — and kemory's own API keys use bespoke
+# `kc_` / `kora_` prefixes that no provider pattern knows about. This config
+# teaches a scanner those formats, so kemory's own credential type is covered.
+# The two are complementary; neither replaces the other.
+#
+# Scope: the CI job runs `--no-git`, i.e. it scans the WORKING TREE, not
+# history. That is deliberate. The useful question for a gate is "does the code
+# we are about to ship contain a secret". Re-flagging immutable history on every
+# run would just train people to ignore the job, and history here cannot be
+# rewritten without breaking every clone and fork of a public repo.
+
+title = "kemory-community"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "kemory-community-api-key"
+description = "Kemory community local API key (kc_ + 32-char base64url)"
+# bin/kemory-community.js generates these as
+#   `kc_${crypto.randomBytes(24).toString('base64url')}`
+# which is exactly 32 base64url characters after the prefix.
+regex = '''kc_[A-Za-z0-9_-]{32}\b'''
+entropy = 4.3
+
+[[rules]]
+id = "kemory-agent-api-key"
+description = "Kemory agent API key (kora_ + 32-char random suffix)"
+# Retained from upstream: hosted-origin identifiers still appear in ported
+# modules and in the legacy MCP dispatch aliases.
+#
+# `\b` after exactly 32 chars is what separates a real key from `kora_`-prefixed
+# metric names and identifiers. The entropy floor is a second, independent
+# filter: a random base62 key scores ~4.5-5.0, a snake_case name well under 3.5.
+# (gitleaks uses Go RE2 — no lookahead/lookbehind, hence this approach.)
+regex = '''kora_[A-Za-z0-9_-]{32}\b'''
+entropy = 4.3
+
+[allowlist]
+description = """
+Exempted BY VALUE, not by path, so a NEW secret in any of these same files is
+still caught.
+
+Two categories: non-secret strings that trip gitleaks' generic rules, and the
+non-random local defaults that ship in this repo's own compose file. The latter
+are deliberately public — they are placeholders for a loopback-only stack, and
+`npx kemory-community init` generates a random key rather than using them. They
+are listed here so the gate stays green on today's tree and red on anything new.
+
+Every entry below was opened and read before being listed.
+"""
+regexes = [
+  # ── Non-secrets that match gitleaks' generic rules ────────────────────────
+  # localStorage / env-var NAMES, not values:
+  #   dashboard/src/api/client.ts   const API_KEY_STORAGE_KEY = 's9nmv_api_key'
+  '''\bs9nmv_api_key\b''',
+  '''\bS9NMV_API_KEY\b''',
+  # Test fixture:
+  #   dashboard/tests/unit/chats.test.tsx   api_key: 'kemory_abcd1234'
+  '''\bkemory_abcd1234\b''',
+  # A literal probe string sent as a bearer token to assert it is REJECTED:
+  #   scripts/test_community_config.sh  -H "Authorization: Bearer community-probe"
+  '''\bcommunity-probe\b''',
+
+  # ── Non-random local defaults committed on purpose ────────────────────────
+  # docker-compose.community.yml / bin/kemory-community.js. These are only ever
+  # reachable over loopback and the installer does not use them.
+  '''\bkemory-community-ci-key\b''',
+  '''community-ci-local-blob-signing-key-32-bytes''',
+  '''community-local-blob-signing-key-32-bytes''',
+  # Local Postgres passwords in the same two files.
+  '''\bkora_secret\b''',
+  '''\bkemory_local\b''',
+]
+paths = [
+  # Template of variable NAMES with placeholder values — by design.
+  '''^\.env\.example$''',
+  # Vendored / generated: not ours, and lockfile hashes trip entropy rules.
+  '''(^|/)node_modules/''',
+  '''(^|/)package-lock\.json$''',
+  # Build artifacts. Absent from a fresh CI checkout, but present locally, and
+  # a compiled .pyc embeds the string literals of the test fixtures above.
+  '''(^|/)__pycache__/''',
+  '''\.pyc$''',
+  '''(^|/)\.venv[^/]*/''',
+  '''(^|/)dist/''',
+]
