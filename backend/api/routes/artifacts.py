@@ -35,6 +35,7 @@ from backend.core.database import get_db
 from backend.services.artifact_service import (
     delete_artifact_row,
     get_artifact_response,
+    list_artifacts,
     list_memory_artifacts,
     list_namespace_artifacts,
     upload_artifact,
@@ -42,6 +43,23 @@ from backend.services.artifact_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 local_fs_router = APIRouter(tags=["artifacts"])
+
+
+@router.get("/artifacts", summary="List local artifacts")
+async def list_artifacts_endpoint(
+    namespace: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_artifacts(auth.user_id, limit, offset, namespace, db)
+    return {
+        "items": [item.model_dump(mode="json") for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def _stream_result(

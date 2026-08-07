@@ -15,7 +15,7 @@ in the background to:
        - content_type = "concept"
        - metadata._compression_tier = "L3.1"
        - metadata._source_memory_ids = [list of source memory IDs]
-       - metadata._synthesis_source = "core_ai_backend" | "raw_fallback"
+       - metadata._synthesis_source = "groq" | "raw_fallback"
 
 This makes `compression_tier` a **stored, queryable field** on every
 memory record rather than a read-time derivation.  The dashboard reads
@@ -912,19 +912,7 @@ async def _summarize_with_groq(
     or "cumulative (as of <ts>)". Shown to the LLM in the prompt so the
     produced prose frames itself correctly.
     """
-    # PR #18 dropped the `groq` direct-SDK dep from pyproject.toml in
-    # favour of routing all LLM traffic through core-ai-backend. This
-    # function still exists (and the name is grandfathered through
-    # callers) but the body now POSTs to core-ai-backend's
-    # /v1/chat/completions, the same OpenAI-compat endpoint the
-    # reranker and the L3.1 chat-fallback use.
-    import os
-
-    import httpx
-
-    base_url = os.environ.get("CORE_AI_BACKEND_URL") or os.environ.get("AI_BACKEND_URL")
-    if not base_url:
-        raise RuntimeError("CORE_AI_BACKEND_URL not set — L3 narrative summary cannot run")
+    from kemory.llm import assistant_text, chat_completion
 
     memories_text = "\n".join(f"[{i + 1}] {(m.content or '').strip()[:500]}" for i, m in enumerate(memories))
 
@@ -943,25 +931,15 @@ async def _summarize_with_groq(
     )
 
     payload = {
-        "model": L3_SUMMARY_GROQ_MODEL,
+        "model": settings.kmv_synthesis_model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 512,
     }
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    token = os.environ.get("CORE_AI_BACKEND_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{base_url.rstrip('/')}/v1/chat/completions",
-            json=payload,
-            headers=headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return (data["choices"][0]["message"]["content"] or "").strip()
+    text = assistant_text(await chat_completion(payload, timeout_seconds=120.0))
+    if text is None:
+        raise RuntimeError("GROQ_API_KEY is not configured or Groq returned no content")
+    return text
 
 
 async def _maybe_synthesize_l3_1(

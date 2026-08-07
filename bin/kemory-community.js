@@ -132,6 +132,9 @@ function dockerCompose(config) {
       KMV_COGNITION_ENTERPRISE: "false"
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: community-local-blob-signing-key-32-bytes
+      OPENAI_API_KEY: \${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
+      COHERE_API_KEY: \${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
       MEMORY_VAULT_MODE: platform
       REDIS_URL: redis://redis:6379/0
@@ -193,6 +196,9 @@ function envFile(config) {
   return `KEMORY_LOCAL_API_KEY=${config.apiKey}
 KEMORY_COMMUNITY_IMAGE=${config.apiImage}
 KEMORY_COMMUNITY_DASHBOARD_IMAGE=${config.dashboardImage}
+OPENAI_API_KEY=
+VOYAGE_API_KEY=
+COHERE_API_KEY=
 `;
 }
 

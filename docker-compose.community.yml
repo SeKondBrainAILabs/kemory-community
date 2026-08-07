@@ -36,7 +36,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      API_PUBLIC_URL: http://api:8000
+      API_PUBLIC_URL: http://127.0.0.1:8111
       CORS_ORIGINS: http://localhost:5175
       DATABASE_URL: postgresql+asyncpg://kora:kora_secret@postgres:5432/kora_vault
       DATABASE_URL_SYNC: postgresql://kora:kora_secret@postgres:5432/kora_vault
@@ -44,6 +44,9 @@ services:
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
       KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: community-ci-local-blob-signing-key-32-bytes
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "false"
       KMV_BLOB_BACKEND: local_fs
       KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
@@ -51,7 +54,6 @@ services:
       KMV_IDENTITY: local_single_user
       KMV_TELEMETRY: noop
       KMV_VECTOR_BACKEND: pgvector
-      LOG_LEVEL: INFO
       MEMORY_VAULT_MODE: platform
       REDIS_URL: redis://redis:6379/0
       TENANT_ENFORCEMENT: "off"

@@ -24,7 +24,8 @@ describe('Sidebar', () => {
       'Memories',
       'Chats',
       'Namespaces',
-      'Health',
+      'Artifacts',
+      'Doctor',
       'Chat Mappings',
       'Settings',
     ]

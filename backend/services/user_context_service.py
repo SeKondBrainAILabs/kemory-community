@@ -10,8 +10,8 @@ for agent session start.
 depth="l3" (default): reads stored NamespacePolicy.consolidated_summary
     values — no LLM call, sub-100ms response.
 
-depth="l4": l3 + one cross-namespace synthesis pass via core-ai-backend.
-    Returns synthesis=None if the backend is unreachable — never raises.
+depth="l4": l3 + one cross-namespace synthesis pass via Groq.
+    Returns synthesis=None if Groq is unconfigured or unreachable.
 
 The l4 synthesis is NOT stored automatically; callers decide whether to
 persist it (e.g. as a memory in a 'user:model' namespace).
@@ -21,13 +21,12 @@ Story: KMV-CTX-01
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime
 
 import structlog
 
-from backend.services.compression_pipeline import L3_SUMMARY_GROQ_MODEL
+from backend.config.settings import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -99,19 +98,13 @@ async def _synthesize_l4(
 ) -> str | None:
     """One LLM synthesis pass across all non-null namespace summaries.
 
-    Routes through core-ai-backend /v1/chat/completions (same pattern as
-    _summarize_with_groq in compression_pipeline.py). Returns None on any
+    Routes through the user-configured Groq endpoint. Returns None on any
     failure — graceful degradation, no exception propagated to caller.
     """
-    import httpx
+    from kemory.llm import assistant_text, chat_completion
 
     summaries = [n for n in namespaces if n.get("summary")]
     if not summaries:
-        return None
-
-    base_url = (os.environ.get("CORE_AI_BACKEND_URL") or os.environ.get("AI_BACKEND_URL", "")).rstrip("/")
-    if not base_url:
-        logger.debug("user_context.l4.skipped", reason="no_core_ai_backend_url")
         return None
 
     blocks = "\n\n".join(
@@ -132,27 +125,13 @@ async def _synthesize_l4(
     )
 
     payload = {
-        "model": L3_SUMMARY_GROQ_MODEL,
+        "model": settings.kmv_synthesis_model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 768,
     }
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    token = os.environ.get("CORE_AI_BACKEND_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = (data["choices"][0]["message"]["content"] or "").strip()
-            return text or None
+        return assistant_text(await chat_completion(payload, timeout_seconds=120.0))
     except Exception as exc:
         logger.warning(
             "user_context.l4.failed",

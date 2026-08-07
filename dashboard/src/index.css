@@ -4,6 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .field {
+    @apply mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-sm text-content-primary outline-none focus:border-brand-primary;
+  }
+}
+
 :root {
   --color-brand-primary: #6366f1;
   --color-brand-primary-dark: #4f46e5; /* S9N-6165: AA-safe filled/selected states */

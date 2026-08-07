@@ -32,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from typing import Any
@@ -66,6 +67,14 @@ def _remote_enabled() -> bool:
     return bool(_SERVICE_URL)
 
 
+def _provider() -> str:
+    return os.getenv("KEMORY_EMBEDDING_PROVIDER", "fastembed").strip().lower()
+
+
+def _model_id() -> str:
+    return os.getenv("EMBEDDING_MODEL", MODEL_ID).strip() or MODEL_ID
+
+
 def _get_client() -> Any:
     """Lazy module-level httpx.Client singleton for the embedding service."""
     global _client
@@ -89,7 +98,7 @@ def _encode_remote(text: str) -> list[float]:
     """Embed *text* via the shared core-embedding-service /embed endpoint."""
     import httpx
 
-    payload = {"text": text[:_MAX_TEXT_CHARS] or " ", "model": MODEL_ID, "normalize": True}
+    payload = {"text": text[:_MAX_TEXT_CHARS] or " ", "model": _model_id(), "normalize": True}
     client = _get_client()
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
@@ -130,8 +139,9 @@ def _load_model() -> Any:
                 "Set EMBEDDING_SERVICE_URL to use an embedding service, "
                 "or install the local fallback with: pip install 'kemory[local-embeddings]'"
             )
-        logger.info("Loading embedding model '%s' (first call — this may take a moment)", MODEL_ID)
-        _model = TextEmbedding(model_name=MODEL_ID)
+        model_id = _model_id()
+        logger.info("Loading embedding model '%s' (first call - this may take a moment)", model_id)
+        _model = TextEmbedding(model_name=model_id)
         logger.info("Embedding model loaded (%d dimensions)", EMBEDDING_DIM)
         return _model
 
@@ -150,8 +160,7 @@ def _validate_vectors(vectors: list[list[float]], expected_count: int, backend: 
     for index, vector in enumerate(vectors):
         if len(vector) != EMBEDDING_DIM:
             raise RuntimeError(
-                f"{backend} encoder returned {len(vector)} dims at index {index}, "
-                f"expected {EMBEDDING_DIM}"
+                f"{backend} encoder returned {len(vector)} dims at index {index}, expected {EMBEDDING_DIM}"
             )
     return vectors
 
@@ -164,6 +173,64 @@ def _encode_local_batch(texts: list[str]) -> list[list[float]]:
     return _validate_vectors(vectors, len(texts), "local")
 
 
+def _encode_cloud_batch(texts: list[str], provider: str) -> list[list[float]]:
+    """Use a user-configured cloud provider while preserving pgvector's 384 dimensions."""
+    import httpx
+
+    inputs = [text[:_MAX_TEXT_CHARS] or " " for text in texts]
+    model = _model_id()
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/embeddings"
+        payload = {"model": model, "input": inputs, "dimensions": EMBEDDING_DIM}
+        parser = lambda data: [item["embedding"] for item in data["data"]]
+    elif provider == "voyage":
+        api_key = os.getenv("VOYAGE_API_KEY", "").strip()
+        url = os.getenv("VOYAGE_BASE_URL", "https://api.voyageai.com/v1").rstrip("/") + "/embeddings"
+        payload = {"model": model, "input": inputs, "output_dimension": 512}
+        parser = lambda data: [item["embedding"] for item in data["data"]]
+    elif provider == "cohere":
+        api_key = os.getenv("COHERE_API_KEY", "").strip()
+        url = os.getenv("COHERE_BASE_URL", "https://api.cohere.com/v2").rstrip("/") + "/embed"
+        payload = {
+            "model": model,
+            "texts": inputs,
+            "input_type": "search_document",
+            "embedding_types": ["float"],
+            "output_dimension": 512,
+        }
+        parser = lambda data: data["embeddings"]["float"]
+    else:
+        raise RuntimeError(f"Unsupported embedding provider: {provider}")
+
+    if not api_key:
+        raise RuntimeError(f"{provider.upper()}_API_KEY is required for embedding provider '{provider}'")
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        vectors = parser(response.json())
+    if provider in {"voyage", "cohere"}:
+        vectors = [_truncate_and_normalize(vector) for vector in vectors]
+    return _validate_vectors(vectors, len(inputs), provider)
+
+
+def _truncate_and_normalize(vector: list[float]) -> list[float]:
+    """Adapt providers whose Matryoshka dimensions do not include 384."""
+    if len(vector) < EMBEDDING_DIM:
+        raise RuntimeError(
+            f"cloud encoder returned {len(vector)} dims, expected at least {EMBEDDING_DIM}"
+        )
+    resized = vector[:EMBEDDING_DIM]
+    norm = math.sqrt(sum(value * value for value in resized))
+    if norm == 0:
+        raise RuntimeError("cloud encoder returned a zero-length embedding")
+    return [value / norm for value in resized]
+
+
 def encode_batch(texts: list[str]) -> list[list[float]]:
     """Encode texts in order, returning exactly one 384-dim vector per text.
 
@@ -173,6 +240,9 @@ def encode_batch(texts: list[str]) -> list[list[float]]:
     """
     if not texts:
         return []
+    provider = _provider()
+    if provider != "fastembed":
+        return _encode_cloud_batch(texts, provider)
     if _remote_enabled():
         vectors = [_encode_remote(text) for text in texts]
         return _validate_vectors(vectors, len(texts), "remote")

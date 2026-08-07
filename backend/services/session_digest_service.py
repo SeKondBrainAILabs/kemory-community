@@ -9,7 +9,6 @@ transport/export dialect.
 from __future__ import annotations
 
 import math
-import os
 import re
 import uuid
 from collections.abc import Sequence
@@ -18,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +29,6 @@ from backend.models.memory import Memory
 from backend.models.namespace_policy import NamespacePolicy
 from backend.models.session_digest import SessionDigest
 from backend.models.session_summary import SessionSummary
-from backend.services.compression_pipeline import L3_SUMMARY_GROQ_MODEL
 from backend.services.memory_service import MemorySearchRequest, search_memories
 
 logger = structlog.get_logger(__name__)
@@ -221,7 +218,7 @@ async def get_session_context(
     raw_tail_count = min(max(int(raw_tail_count or RAW_TAIL_EXCHANGES), 1), 10)
     token_budget = min(max(int(token_budget or DEFAULT_TOKEN_BUDGET), 128), MAX_TOKEN_BUDGET)
     max_relevant_memories = min(max(int(max_relevant_memories or 0), 0), MAX_RELEVANT_MEMORIES)
-    model = model or L3_SUMMARY_GROQ_MODEL
+    model = model or settings.kmv_synthesis_model
 
     exchanges = await load_session_exchanges(
         user_id,
@@ -329,7 +326,7 @@ async def rehydrate_session_sources(
         MAX_REHYDRATION_TOKEN_BUDGET,
     )
     max_items = min(max(int(max_items or DEFAULT_REHYDRATION_ITEMS), 1), MAX_REHYDRATION_ITEMS)
-    model = model or L3_SUMMARY_GROQ_MODEL
+    model = model or settings.kmv_synthesis_model
     org_id = current_org_id() or settings.tenant_legacy_sentinel
 
     row = await _load_digest_row(user_id, org_id, namespace, session_id, db)
@@ -507,7 +504,7 @@ async def refresh_session_digest(
 ) -> dict[str, Any]:
     """Update the stored digest for exchanges older than the raw tail."""
 
-    model = model or L3_SUMMARY_GROQ_MODEL
+    model = model or settings.kmv_synthesis_model
     org_id = current_org_id() or settings.tenant_legacy_sentinel
     compactable = exchanges[:-raw_tail_count] if raw_tail_count else list(exchanges)
 
@@ -607,7 +604,9 @@ async def generate_digest_update(
     token_budget: int,
     model: str,
 ) -> DigestGeneration:
-    """Use core-ai-backend when available, otherwise deterministic fallback."""
+    """Use the configured Groq key when available, otherwise deterministic fallback."""
+
+    from kemory.llm import assistant_text, chat_completion, groq_enabled
 
     source_exchanges = _format_source_exchanges(batch)
     prompt = _render_prompt(
@@ -618,8 +617,7 @@ async def generate_digest_update(
         background_context=background_context,
         source_exchanges=source_exchanges,
     )
-    base_url = (os.environ.get("CORE_AI_BACKEND_URL") or os.environ.get("AI_BACKEND_URL", "")).rstrip("/")
-    if not base_url:
+    if not groq_enabled():
         return DigestGeneration(
             text=_extractive_digest(previous_digest, batch, token_budget, model),
             tier="L2.1-extractive",
@@ -631,24 +629,11 @@ async def generate_digest_update(
         "temperature": 0.2,
         "max_tokens": min(max(token_budget, 128), MAX_TOKEN_BUDGET),
     }
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    token = os.environ.get("CORE_AI_BACKEND_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = (data["choices"][0]["message"]["content"] or "").strip()
-            if text:
-                fitted, _ = fit_text_to_budget(text, token_budget, model)
-                return DigestGeneration(text=fitted, tier="L2.1")
+        text = assistant_text(await chat_completion(payload, timeout_seconds=30.0))
+        if text:
+            fitted, _ = fit_text_to_budget(text, token_budget, model)
+            return DigestGeneration(text=fitted, tier="L2.1")
     except Exception as exc:
         logger.warning(
             "session_digest.llm_failed", namespace=namespace, session_id=session_id, error=str(exc)
@@ -768,7 +753,7 @@ def count_tokens(text: str, model: str | None = None) -> TokenCount:
     token proxy.
     """
 
-    model_name = model or L3_SUMMARY_GROQ_MODEL
+    model_name = model or settings.kmv_synthesis_model
     try:
         import tiktoken  # type: ignore[import-not-found]
 

@@ -5,11 +5,12 @@ import {
   LayoutDashboard,
   Database,
   FolderTree,
-  Heart,
   Settings,
   MessageCircle,
   MessagesSquare,
   Link as LinkIcon,
+  FileArchive,
+  Stethoscope,
   X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
@@ -47,10 +48,11 @@ const primaryNav: NavItem[] = [
   { to: '/memories', icon: Database, label: 'Memories' },
   { to: '/chats', icon: MessagesSquare, label: 'Chats' },
   { to: '/namespaces', icon: FolderTree, label: 'Namespaces' },
+  { to: '/artifacts', icon: FileArchive, label: 'Artifacts' },
 ]
 
 const opsNav: NavItem[] = [
-  { to: '/system-health', icon: Heart, label: 'Health' },
+  { to: '/doctor', icon: Stethoscope, label: 'Doctor' },
   { to: '/chat-mappings', icon: LinkIcon, label: 'Chat Mappings' },
 ]
 

@@ -10,6 +10,21 @@ export type CommunitySettings = {
   blob_backend: string
   telemetry: string
   tenant_enforcement: string
+  runtime: CommunityRuntimeSettings
+}
+
+export type CommunityRuntimeSettings = {
+  groq_configured: boolean
+  embedding_provider: 'fastembed' | 'openai' | 'voyage' | 'cohere'
+  embedding_model: string
+  groq_model: string
+  artifact_max_bytes: number
+  log_level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
+}
+
+export type CommunityRuntimeSettingsUpdate = Omit<CommunityRuntimeSettings, 'groq_configured'> & {
+  groq_api_key?: string
+  clear_groq_api_key?: boolean
 }
 
 export type CommunityExport = {
@@ -29,6 +44,12 @@ export type CommunityExport = {
 
 export async function getCommunitySettings(): Promise<CommunitySettings> {
   return api.get('api/v1/community/settings').json()
+}
+
+export async function updateCommunitySettings(
+  update: CommunityRuntimeSettingsUpdate,
+): Promise<CommunityRuntimeSettings> {
+  return api.put('api/v1/community/settings', { json: update }).json()
 }
 
 export async function exportCommunityBundle(): Promise<CommunityExport> {

@@ -22,6 +22,17 @@ export interface ArtifactListResponse {
   offset: number
 }
 
+export async function listArtifacts(
+  params: { namespace?: string; limit?: number; offset?: number } = {},
+): Promise<ArtifactListResponse> {
+  const search: Record<string, string | number> = {
+    limit: params.limit ?? 50,
+    offset: params.offset ?? 0,
+  }
+  if (params.namespace) search.namespace = params.namespace
+  return api.get('api/v1/artifacts', { searchParams: search }).json()
+}
+
 export async function listNamespaceArtifacts(
   namespace: string,
   params: { limit?: number; offset?: number } = {},

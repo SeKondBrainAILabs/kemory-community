@@ -31,6 +31,7 @@ from backend.core.database import close_db, init_db
 from backend.core.metrics import metrics_endpoint, metrics_middleware  # WS-8
 from backend.core.redis import close_redis, init_redis
 from backend.mcp.server import router as mcp_router
+from backend.services.community_settings_service import load_community_runtime_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     Application lifecycle manager.
     Initializes all service connections on startup and cleans up on shutdown.
     """
+    load_community_runtime_settings()
     logger.info(
         "kora.startup",
         service=settings.app_name,

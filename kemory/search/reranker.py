@@ -4,8 +4,8 @@ kemory/search/reranker.py
 LLM-backed re-ranker and synthesiser for ``kora_get_context``.
 
 This module handles the third stage of the hybrid retrieval pipeline:
-given a ranked list of candidate memory snippets, it calls the core AI
-backend to produce a single, coherent natural-language answer.
+given a ranked list of candidate memory snippets, it calls Groq to produce a
+single, coherent natural-language answer.
 
 Design decisions
 ----------------
@@ -14,12 +14,8 @@ Design decisions
 * The prompt is intentionally minimal: we pass the topic and the top-N
   snippets and ask for a concise synthesis.  The full prompt template is
   stored in ``House_Rules_Contracts/PROMPTS_CONTRACT.md`` (entry: KMV-RERANK-01).
-* The AI call goes through ``core-ai-backend`` exclusively
-  (env var ``CORE_AI_BACKEND_URL``, with ``AI_BACKEND_URL`` accepted as a
-  legacy alias). Memory Vault never calls Groq/OpenAI/Anthropic directly
-  — that's core-ai-backend's job. If the backend is unset, the reranker
-  returns ``None`` and ``get_context`` falls through to a raw context
-  block.
+* The AI call uses the local user's ``GROQ_API_KEY``. If it is unset, the
+  reranker returns ``None`` and ``get_context`` falls through to raw context.
 
 Story: S9N-3074-SUB3
 Author: sachmans <sachin@sachinduggal.com>
@@ -40,9 +36,7 @@ _MAX_SNIPPETS: int = int(os.getenv("KMV_RERANK_MAX_SNIPPETS", "10"))
 # Maximum characters per snippet sent to the LLM
 _SNIPPET_CHARS: int = int(os.getenv("KMV_RERANK_SNIPPET_CHARS", "400"))
 
-# Model to use for synthesis (overridable via env). Default matches the
-# model the SeKondBrain Shared AI Backend serves locally, so the
-# reranker works out-of-the-box against the deployed ai-backend.
+# Model to use for synthesis (overridable via env).
 _SYNTHESIS_MODEL: str = os.getenv("KMV_SYNTHESIS_MODEL", "llama-3.3-70b-versatile")
 
 
@@ -128,31 +122,17 @@ def _build_prompt(topic: str, snippets: list[dict[str, Any]], max_snippets: int 
 
 async def _call_ai_backend(prompt: str) -> str | None:
     """
-    Call the AI backend to generate a synthesis response.
-
-    Architectural invariant: Memory Vault NEVER calls Groq/OpenAI/
-    Anthropic directly. All LLM traffic routes through core-ai-backend,
-    which centralises model selection, prompt budget, provider routing,
-    and audit. If the backend is unreachable, return None — callers
-    fall through to a raw passthrough rather than bypassing the
-    contract.
-
-    Reads ``CORE_AI_BACKEND_URL`` (or legacy ``AI_BACKEND_URL`` for
-    back-compat — every deployment now uses the former).
+    Call the community Groq backend to generate a synthesis response.
     """
-    ai_backend_url = os.getenv("CORE_AI_BACKEND_URL") or os.getenv("AI_BACKEND_URL")
-    if not ai_backend_url:
-        logger.debug("reranker.ai_backend_unset")
-        return None
-    return await _call_internal_backend(ai_backend_url, prompt)
+    return await _call_internal_backend(prompt)
 
 
-async def _call_internal_backend(base_url: str, prompt: str) -> str | None:
-    """POST to the internal AI backend service (feature bus pattern)."""
-    import httpx
+async def _call_internal_backend(prompt: str) -> str | None:
+    """POST to the user-configured Groq service."""
+    from kemory.llm import assistant_text, chat_completion
 
     payload = {
-        "model": _SYNTHESIS_MODEL,
+        "model": os.getenv("KMV_SYNTHESIS_MODEL", _SYNTHESIS_MODEL),
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 256,
         "temperature": 0.1,
@@ -162,20 +142,4 @@ async def _call_internal_backend(base_url: str, prompt: str) -> str | None:
     # 256-token completions on a 70B model. 30s caused regular timeouts;
     # 120s is comfortable headroom while still bounded enough that a
     # stuck call doesn't hang the request indefinitely.
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{base_url.rstrip('/')}/v1/chat/completions",
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
-
-
-# NB: a previous iteration of this module had a `_call_openai_compat`
-# helper that bypassed core-ai-backend and called Groq/OpenAI directly via
-# the `openai` SDK (gated by KMV_RERANK_BACKEND=openai). That violated
-# the architectural invariant — Memory Vault doesn't pick LLM providers;
-# core-ai-backend does. Removed in v0.16.x; always route through
-# `_call_internal_backend`. Do not reintroduce.
+    return assistant_text(await chat_completion(payload, timeout_seconds=120.0))

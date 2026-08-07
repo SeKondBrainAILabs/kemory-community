@@ -30,6 +30,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config.settings import settings
 from backend.models.ai_chat import AIChatArtifact
 from backend.services.ai_chat_service import ArtifactResponse, _artifact_to_response
 from backend.services.artifact_storage import (
@@ -104,6 +105,8 @@ async def upload_artifact(
     """
     if not data:
         raise ValueError("Empty upload body.")
+    if len(data) > settings.kemory_artifact_max_bytes:
+        raise ValueError(f"Artifact exceeds configured limit of {settings.kemory_artifact_max_bytes} bytes.")
 
     # ── Resolve namespace ────────────────────────────────────────────
     effective_namespace: str
@@ -234,6 +237,33 @@ async def list_namespace_artifacts(
 
     rows = (await db.execute(base.limit(limit).offset(offset))).scalars().all()
     return [_artifact_to_response(r) for r in rows], int(total)
+
+
+async def list_artifacts(
+    user_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    namespace: str | None = None,
+    db: AsyncSession = None,
+) -> tuple[list[ArtifactResponse], int]:
+    """Return all local-user artifacts, optionally scoped to a namespace."""
+    filters = [AIChatArtifact.user_id == user_id]
+    if namespace:
+        filters.append(AIChatArtifact.namespace == namespace)
+
+    total = int(
+        (await db.execute(select(func.count()).select_from(AIChatArtifact).where(*filters))).scalar() or 0
+    )
+    rows = (
+        await db.execute(
+            select(AIChatArtifact)
+            .where(*filters)
+            .order_by(AIChatArtifact.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars()
+    return [_artifact_to_response(row) for row in rows], total
 
 
 async def list_memory_artifacts(

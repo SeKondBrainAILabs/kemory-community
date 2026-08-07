@@ -1,16 +1,7 @@
 """
 kemory/compression/llm_client.py
 ========================================
-Thin HTTP client for ``core-ai-backend`` — the SeKondBrain LLM proxy.
-
-Memory Vault never calls Groq/OpenAI/Anthropic directly. All LLM calls for
-concept synthesis go through ``core-ai-backend`` which handles model selection,
-prompt chains, and provider routing.
-
-Configured via two env vars:
-
-- ``CORE_AI_BACKEND_URL``  — base URL (e.g. ``http://core-ai-backend:8000``)
-- ``CORE_AI_BACKEND_TOKEN`` — bearer token for service-to-service auth
+Community LLM client backed by the user's Groq API key.
 
 When unreachable, the client returns a synthetic ``Concept`` containing the
 raw group with a ``synthesis_unavailable`` flag — agents still get data.
@@ -30,15 +21,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Concept:
-    """A synthesized concept produced by core-ai-backend (or fallback)."""
+    """A synthesized concept produced by Groq (or a deterministic fallback)."""
 
     name: str
     synthesis: str
     source_memory_ids: list[str] = field(default_factory=list)
     directional: bool = False
     positions_merged: int = 0
-    synthesis_unavailable: bool = False  # True when core-ai-backend was unreachable
-    source: str = "core_ai_backend"  # "core_ai_backend" | "raw_fallback"
+    synthesis_unavailable: bool = False
+    source: str = "groq"  # "groq" | "raw_fallback"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,7 +44,7 @@ class Concept:
 
 
 class CoreAIBackendClient:
-    """Async HTTP client for core-ai-backend concept synthesis endpoints."""
+    """Compatibility name for the community Groq concept client."""
 
     def __init__(
         self,
@@ -61,13 +52,15 @@ class CoreAIBackendClient:
         token: str | None = None,
         timeout: float = 30.0,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("CORE_AI_BACKEND_URL", "")).rstrip("/")
-        self.token = token or os.environ.get("CORE_AI_BACKEND_TOKEN", "")
+        self.base_url = (base_url or os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai")).rstrip(
+            "/"
+        )
+        self.token = token or os.environ.get("GROQ_API_KEY", "")
         self.timeout = timeout
 
     @property
     def enabled(self) -> bool:
-        return bool(self.base_url)
+        return bool(self.token)
 
     async def synthesize_concept(
         self,
@@ -80,31 +73,11 @@ class CoreAIBackendClient:
         if not self.enabled:
             return self._fallback(memories, directional=False)
 
-        payload = {
-            "task": "concept_synthesis",
-            "memories": [self._strip_memory(m) for m in memories],
-        }
-        result = await self._post("/v1/synthesize/concept", payload)
-        if result is None:
-            # The bespoke /v1/synthesize/* routes were retired upstream
-            # (every call returns 404). Fall back to core-ai-backend's
-            # chat/completions — same backend, just a different endpoint.
-            # Memory Vault still doesn't call any LLM provider directly.
-            chat_fallback = await self._synthesize_via_chat(
-                memories,
-                directional=False,
-            )
-            if chat_fallback is not None:
-                return chat_fallback
-            return self._fallback(memories, directional=False)
-        return Concept(
-            name=result.get("name", "concept"),
-            synthesis=result.get("synthesis", ""),
-            source_memory_ids=[str(m.get("id", "")) for m in memories if m.get("id")],
+        result = await self._synthesize_via_chat(
+            memories,
             directional=False,
-            positions_merged=len(memories),
-            source="core_ai_backend",
         )
+        return result or self._fallback(memories, directional=False)
 
     async def merge_directional(
         self,
@@ -121,34 +94,17 @@ class CoreAIBackendClient:
         if not self.enabled:
             return self._fallback(memories, directional=True, mode=mode)
 
-        payload = {
-            "task": "merge_directional",
-            "merge_mode": mode,
-            "memories": [self._strip_memory(m) for m in memories],
-        }
-        result = await self._post("/v1/synthesize/merge_directional", payload)
-        if result is None:
-            chat_fallback = await self._synthesize_via_chat(
-                memories,
-                directional=True,
-                mode=mode,
-            )
-            if chat_fallback is not None:
-                return chat_fallback
-            return self._fallback(memories, directional=True, mode=mode)
-        return Concept(
-            name=result.get("name", "concept"),
-            synthesis=result.get("synthesis", ""),
-            source_memory_ids=[str(m.get("id", "")) for m in memories if m.get("id")],
+        result = await self._synthesize_via_chat(
+            memories,
             directional=True,
-            positions_merged=len(memories),
-            source="core_ai_backend",
+            mode=mode,
         )
+        return result or self._fallback(memories, directional=True, mode=mode)
 
     # ── Internals ─────────────────────────────────────────────────────
 
     def _strip_memory(self, mem: dict[str, Any]) -> dict[str, Any]:
-        """Send only the fields core-ai-backend needs (id, content, created_at)."""
+        """Return the synthesis-safe memory fields."""
         return {
             "id": mem.get("id"),
             "content": mem.get("content", ""),
@@ -162,9 +118,9 @@ class CoreAIBackendClient:
         directional: bool,
         mode: str = "current",
     ) -> Concept:
-        """When core-ai-backend is unreachable, return raw group as-is."""
+        """When Groq is unavailable, return the raw group as-is."""
         logger.warning(
-            "core_ai_backend.unavailable",
+            "groq.unavailable",
             extra={"directional": directional, "mode": mode, "memory_count": len(memories)},
         )
         if directional and mode == "current" and memories:
@@ -196,20 +152,7 @@ class CoreAIBackendClient:
         directional: bool,
         mode: str | None = None,
     ) -> Concept | None:
-        """Fallback synthesis via core-ai-backend's /v1/chat/completions.
-
-        The original /v1/synthesize/concept and /v1/synthesize/merge_directional
-        endpoints have been retired upstream — every call returns 404, which
-        previously caused L3.1 to silently degrade to raw_passthrough.
-
-        This fallback still routes through core-ai-backend (architectural
-        invariant: Memory Vault never calls Groq/OpenAI/Anthropic directly —
-        the org's LLM provider is configured on the backend, not here). It
-        just uses the OpenAI-compatible /v1/chat/completions instead of the
-        retired bespoke synthesis routes.
-
-        Returns None on any failure; caller falls through to raw_fallback.
-        """
+        """Synthesize through Groq's OpenAI-compatible chat endpoint."""
         if not self.enabled:
             return None
 
@@ -261,31 +204,27 @@ class CoreAIBackendClient:
                 source_memory_ids=[str(m.get("id", "")) for m in memories if m.get("id")],
                 directional=directional,
                 positions_merged=len(memories),
-                source="core_ai_backend",
+                source="groq",
             )
         except Exception as exc:
             logger.warning(
-                "core_ai_backend.chat_fallback_parse_failed: %s — %s",
+                "groq.chat_fallback_parse_failed: %s - %s",
                 type(exc).__name__,
                 str(exc)[:200],
             )
             return None
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        """POST to core-ai-backend, return parsed JSON or None on failure."""
+        """POST to Groq, returning parsed JSON or None on failure."""
+        from kemory.llm import chat_completion
+
         try:
-            import httpx
-        except ImportError:
-            logger.warning("httpx not installed — core-ai-backend client disabled")
-            return None
-        headers: dict[str, str] = {}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(self.base_url + path, json=payload, headers=headers)
-                resp.raise_for_status()
-                return resp.json()
+            return await chat_completion(
+                payload,
+                timeout_seconds=self.timeout,
+                api_key=self.token,
+                base_url=self.base_url,
+            )
         except Exception as exc:
-            logger.warning("core_ai_backend.request_failed: %s %s — %s", "POST", path, exc)
+            logger.warning("groq.request_failed: %s %s - %s", "POST", path, exc)
             return None
