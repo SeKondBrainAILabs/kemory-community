@@ -1,7 +1,7 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm install --package-lock-only && npm ci
+RUN npm ci
 COPY . .
 # FE_VERSION is consumed by vite.config.ts to override the package.json
 # default, so the dashboard footer's "FE:x.y.z" badge tracks the actual

@@ -21,6 +21,19 @@ export function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString()
 }
 
+// S9N-6166: full local date-time for timestamp tooltips (browser timezone).
+export function formatAbsoluteTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return dateStr
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 export function formatLatency(ms: number): string {
   if (ms < 1) return '<1ms'
   if (ms < 1000) return `${Math.round(ms)}ms`

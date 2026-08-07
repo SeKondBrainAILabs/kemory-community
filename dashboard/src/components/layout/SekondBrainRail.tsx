@@ -80,7 +80,7 @@ export function SekondBrainRail() {
   return (
     <aside
       aria-label="SekondBrain apps"
-      className="fixed left-0 top-0 z-50 flex h-screen w-[56px] flex-col items-center justify-between bg-[#0b0b10] px-[8px] py-[14px]"
+      className="fixed left-0 top-0 z-50 hidden h-screen w-[56px] flex-col items-center justify-between bg-[#0b0b10] px-[8px] py-[14px] md:flex"
     >
       {/* Brand mark + vertical wordmark */}
       <div className="flex flex-col items-center gap-[22px]">

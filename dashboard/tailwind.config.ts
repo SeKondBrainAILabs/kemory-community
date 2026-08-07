@@ -7,6 +7,9 @@ export default {
       colors: {
         brand: {
           primary: '#6366f1',
+          // S9N-6165: darker indigo for selected/filled states — white text on
+          // #6366f1 is only 4.47:1 (fails AA at ≤12px); on #4f46e5 it's 5.9:1.
+          primaryDark: '#4f46e5',
           secondary: '#8b5cf6',
         },
         // Pulse / Kora signature palette (from Core_Kora + Figma Kanvas design)
@@ -25,8 +28,9 @@ export default {
         },
         content: {
           primary: '#1a1a1a',
-          secondary: '#6b7280',
-          tertiary: '#9ca3af',
+          // S9N-6165: AA-compliant secondary/tertiary (see index.css)
+          secondary: '#4b5563',
+          tertiary: '#6b7280',
         },
         border: {
           DEFAULT: '#e5e7eb',

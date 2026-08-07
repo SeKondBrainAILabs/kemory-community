@@ -59,7 +59,7 @@ function AvgWeightBar({ weight }: { weight: number }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-xs text-slate-400">{pct}% avg</span>
+      <span className="text-xs text-content-tertiary">{pct}% avg</span>
     </div>
   )
 }
@@ -161,7 +161,7 @@ export function NamespaceSummaryHeader({
               />
             )}
             {totalMemories !== undefined && advanced && (
-              <span className="text-xs text-slate-400">({totalMemories} total)</span>
+              <span className="text-xs text-content-tertiary">({totalMemories} total)</span>
             )}
           </div>
 
@@ -170,7 +170,7 @@ export function NamespaceSummaryHeader({
 
           {/* Health sentence — hidden in advanced mode (too verbose) */}
           {!advanced && (
-            <p className="hidden text-xs text-slate-500 md:block">{sentence}</p>
+            <p className="hidden text-xs text-content-secondary md:block">{sentence}</p>
           )}
         </div>
 
@@ -198,7 +198,7 @@ export function NamespaceSummaryHeader({
 
       {/* ── Trigger result ── */}
       {triggerMsg && (
-        <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
+        <div className="border-t border-slate-100 px-4 py-2 text-xs text-content-secondary">
           {triggerMsg}
         </div>
       )}
@@ -219,13 +219,13 @@ export function NamespaceSummaryHeader({
           {/* Policy toggle */}
           <button
             onClick={() => setShowPolicy((v) => !v)}
-            className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50"
+            className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-xs font-medium text-content-secondary hover:bg-slate-50"
           >
             <span className="flex items-center gap-1.5">
               <Clock size={11} />
               Decay Policy
               {policy.data?.is_default && (
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-400">default</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-content-tertiary">default</span>
               )}
             </span>
             {showPolicy ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
@@ -239,7 +239,7 @@ export function NamespaceSummaryHeader({
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                      <label className="mb-1 block text-xs font-medium text-content-secondary">
                         Decay Rate (daily)
                       </label>
                       <input
@@ -248,10 +248,10 @@ export function NamespaceSummaryHeader({
                         onChange={(e) => setPolicyDraft((d) => ({ ...d, decay_rate: parseFloat(e.target.value) }))}
                         className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-400 focus:outline-none"
                       />
-                      <p className="mt-0.5 text-xs text-slate-400">e.g. 0.1 = 10%/day</p>
+                      <p className="mt-0.5 text-xs text-content-tertiary">e.g. 0.1 = 10%/day</p>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                      <label className="mb-1 block text-xs font-medium text-content-secondary">
                         Retention (days)
                       </label>
                       <input
@@ -260,7 +260,7 @@ export function NamespaceSummaryHeader({
                         onChange={(e) => setPolicyDraft((d) => ({ ...d, retention_days: parseInt(e.target.value) }))}
                         className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-400 focus:outline-none"
                       />
-                      <p className="mt-0.5 text-xs text-slate-400">rolling window</p>
+                      <p className="mt-0.5 text-xs text-content-tertiary">rolling window</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -270,7 +270,7 @@ export function NamespaceSummaryHeader({
                       onChange={(e) => setPolicyDraft((d) => ({ ...d, auto_consolidate: e.target.checked }))}
                       className="rounded border-slate-300"
                     />
-                    <label htmlFor="auto-consolidate-ns" className="text-xs text-slate-500">
+                    <label htmlFor="auto-consolidate-ns" className="text-xs text-content-secondary">
                       Auto-sync daily
                     </label>
                   </div>

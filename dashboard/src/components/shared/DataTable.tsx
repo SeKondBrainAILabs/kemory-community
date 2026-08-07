@@ -14,10 +14,20 @@ interface DataTableProps<T> {
   columns: ColumnDef<T, unknown>[]
   data: T[]
   onRowClick?: (row: T) => void
+  initialSorting?: SortingState
+  stickyHeader?: boolean
+  maxHeight?: string
 }
 
-export function DataTable<T>({ columns, data, onRowClick }: DataTableProps<T>) {
-  const [sorting, setSorting] = useState<SortingState>([])
+export function DataTable<T>({
+  columns,
+  data,
+  onRowClick,
+  initialSorting,
+  stickyHeader = false,
+  maxHeight,
+}: DataTableProps<T>) {
+  const [sorting, setSorting] = useState<SortingState>(initialSorting ?? [])
 
   const table = useReactTable({
     data,
@@ -29,16 +39,22 @@ export function DataTable<T>({ columns, data, onRowClick }: DataTableProps<T>) {
   })
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-white">
+    <div
+      className={cn(
+        'rounded-lg border border-border bg-white',
+        maxHeight ? 'overflow-auto' : 'overflow-hidden',
+      )}
+      style={maxHeight ? { maxHeight } : undefined}
+    >
       <table className="w-full text-sm">
-        <thead>
+        <thead className={cn(stickyHeader && 'sticky top-0 z-10')}>
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="bg-surface-secondary">
               {hg.headers.map((header) => (
                 <th
                   key={header.id}
                   className={cn(
-                    'px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-content-secondary',
+                    'bg-surface-secondary px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-content-secondary',
                     header.column.getCanSort() && 'cursor-pointer select-none',
                   )}
                   onClick={header.column.getToggleSortingHandler()}
@@ -57,9 +73,22 @@ export function DataTable<T>({ columns, data, onRowClick }: DataTableProps<T>) {
             <tr
               key={row.id}
               onClick={() => onRowClick?.(row.original)}
+              // S9N-6164: keyboard-activatable rows so the detail panel can be
+              // opened without a mouse (Enter/Space), satisfying the a11y gate.
+              {...(onRowClick && {
+                tabIndex: 0,
+                role: 'button',
+                onKeyDown: (e: React.KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onRowClick(row.original)
+                  }
+                },
+              })}
               className={cn(
                 'border-t border-border transition-colors hover:bg-surface-secondary',
-                onRowClick && 'cursor-pointer',
+                onRowClick &&
+                  'cursor-pointer focus:outline-none focus-visible:bg-surface-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary',
               )}
             >
               {row.getVisibleCells().map((cell) => (

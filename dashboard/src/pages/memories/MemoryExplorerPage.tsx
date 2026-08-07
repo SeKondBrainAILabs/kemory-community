@@ -11,12 +11,14 @@
  *   KMV-S12.2: Raw and AAAK (Compress) views
  *   KMV-S12.3: Compacted (Concept) and Cognition views
  */
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
 import { PageShell } from '@/components/layout/PageShell'
 import { DataTable } from '@/components/shared/DataTable'
+import { Pagination } from '@/components/shared/Pagination'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { EmptyState } from '@/components/shared/EmptyState'
 import { JsonViewer } from '@/components/shared/JsonViewer'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
@@ -24,22 +26,36 @@ import {
   useMemorySearch,
   useNamespaces,
   useMemoryEnrichment,
+  useMemoryHistory,
   useDeleteMemory,
   useUpdateMemory,
   useMemoryLevel,
 } from '@/hooks/useMemories'
-import { formatRelativeTime } from '@/lib/utils'
+import { formatRelativeTime, formatAbsoluteTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { MemoryResponse } from '@/api/types'
+import type { MemoryResponse, MemoryEvent } from '@/api/types'
 import type { MemoryReadMode } from '@/api/memories'
-import { X, Trash2, Pencil, ChevronLeft, ChevronRight, Check, Layers } from 'lucide-react'
+import {
+  X,
+  Trash2,
+  Pencil,
+  Check,
+  Layers,
+  Copy,
+  ClipboardCheck,
+  History as HistoryIcon,
+  FileText,
+  ArrowLeftRight,
+} from 'lucide-react'
+import { MarkdownView } from '@/components/shared/MarkdownView'
+import { MemoryCard } from '@/components/memories/MemoryCard'
+import { NamespaceCombobox } from '@/components/memories/NamespaceCombobox'
+import { useUrlState } from '@/hooks/useUrlState'
 import { NamespaceSummaryHeader } from '@/components/memories/NamespaceSummaryHeader'
 import { MemoryHealthBadge } from '@/components/memories/MemoryHealthBadge'
 import { MemoryLevelsSection } from '@/components/memories/MemoryLevelsSection'
 import { SessionSummarySection } from '@/components/memories/SessionSummarySection'
 import { MemoryLevelBadge, MemoryLevelLegend } from '@/components/shared/MemoryLevelBadge'
-
-const PAGE_SIZE = 50
 
 const contentTypes = ['all', 'text', 'structured', 'conversation', 'fact', 'preference'] as const
 
@@ -55,13 +71,61 @@ const MEMORY_LEVELS: { mode: MemoryReadMode; label: string; description: string 
   { mode: 'cognition', label: 'Cognition (L4)', description: 'Concepts + Cognition OS graph entities' },
 ]
 
-const columns: ColumnDef<MemoryResponse, unknown>[] = [
+// S9N-6163: wrap query terms in the content column with <mark>. Each
+// whitespace-separated term is highlighted case-insensitively; the query is
+// regex-escaped so punctuation in a search can't break the pattern.
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function highlightMatch(text: string, query: string): ReactNode {
+  const terms = query.trim().split(/\s+/).filter(Boolean).map(escapeRegExp)
+  if (!terms.length) return text
+  // Single capturing group → String.split alternates [text, match, text, …],
+  // so the matched fragments land on the odd indices.
+  const parts = text.split(new RegExp(`(${terms.join('|')})`, 'ig'))
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="rounded bg-amber-200 px-0.5 text-content-primary">
+        {part}
+      </mark>
+    ) : (
+      part
+    ),
+  )
+}
+
+// S9N-6163: columns are built per-render so the content cell can highlight the
+// active query. Kept as a pure builder + useMemo (not a module const) to avoid
+// rebuilding the array on every keystroke while still tracking the query.
+function buildColumns(
+  query: string,
+  timeField: 'created' | 'updated',
+  onToggleTimeField: () => void,
+): ColumnDef<MemoryResponse, unknown>[] {
+  return [
   {
     accessorKey: 'content',
     header: 'Content',
-    cell: ({ getValue }) => (
-      <span className="line-clamp-2 max-w-sm text-sm">{getValue() as string}</span>
-    ),
+    cell: ({ row, getValue }) => {
+      // S9N-6163: relevance chip when the row carries a search score
+      const rel = row.original.similarity_score
+      return (
+        <div className="flex max-w-sm items-start gap-2">
+          <span className="line-clamp-2 text-sm">
+            {highlightMatch(getValue() as string, query)}
+          </span>
+          {rel != null && (
+            <span
+              className="mt-0.5 shrink-0 rounded bg-brand-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-primaryDark"
+              title="Search relevance"
+            >
+              {Math.round(rel * 100)}%
+            </span>
+          )}
+        </div>
+      )
+    },
   },
   { accessorKey: 'namespace', header: 'Namespace' },
   {
@@ -103,11 +167,36 @@ const columns: ColumnDef<MemoryResponse, unknown>[] = [
   },
   { accessorKey: 'version', header: 'Ver' },
   {
-    accessorKey: 'created_at',
-    header: 'Created',
-    cell: ({ getValue }) => formatRelativeTime(getValue() as string),
+    // S9N-6166: Age column — relative time + absolute tooltip, sortable,
+    // with a header toggle between created_at and updated_at. Dates read
+    // newest-first, so the first sort click should be descending.
+    id: 'age',
+    sortDescFirst: true,
+    accessorFn: (row) => (timeField === 'created' ? row.created_at : row.updated_at),
+    header: () => (
+      <span className="inline-flex items-center gap-1">
+        {timeField === 'created' ? 'Created' : 'Updated'}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleTimeField()
+          }}
+          title={`Show ${timeField === 'created' ? 'updated' : 'created'} time`}
+          aria-label={`Show ${timeField === 'created' ? 'updated' : 'created'} time`}
+          className="rounded p-0.5 text-content-tertiary hover:bg-surface-tertiary hover:text-content-primary"
+        >
+          <ArrowLeftRight size={11} />
+        </button>
+      </span>
+    ),
+    cell: ({ getValue }) => {
+      const v = getValue() as string
+      return <span title={formatAbsoluteTime(v)}>{formatRelativeTime(v)}</span>
+    },
   },
-]
+  ]
+}
 
 // ── KMV-S12.2: Raw View ──────────────────────────────────────────────────────
 function MemoryRawView({ namespace }: { namespace: string }) {
@@ -295,7 +384,17 @@ export function MemoryExplorerPage() {
   const [contentType, setContentType] = useState('all')
   const [tier, setTier] = useState<TierFilter>('all')
   const [selected, setSelected] = useState<MemoryResponse | null>(null)
-  const [page, setPage] = useState(0)
+  const url = useUrlState()
+  const pageSize = [25, 50, 100].includes(Number(url.get('size'))) ? Number(url.get('size')) : 50
+  const page = Math.max(0, (parseInt(url.get('page', '1'), 10) || 1) - 1)
+  const setPage = useCallback(
+    (nextPage: number) => url.set({ page: nextPage === 0 ? null : String(nextPage + 1) }),
+    [url],
+  )
+  const setPageSize = useCallback(
+    (size: number) => url.set({ size: size === 50 ? null : String(size), page: null }),
+    [url],
+  )
 
   // KMV-S12.1: Memory level toggle state
   const [memoryLevel, setMemoryLevel] = useState<MemoryReadMode>('raw')
@@ -306,11 +405,17 @@ export function MemoryExplorerPage() {
   const [editContent, setEditContent] = useState('')
   const [editContentType, setEditContentType] = useState('')
 
-  // Namespace search filter (for large namespace lists)
-  const [nsFilter, setNsFilter] = useState('')
-
   // Delete confirm dialog
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // S9N-6166: which timestamp the Age column shows/sorts by
+  const [timeField, setTimeField] = useState<'created' | 'updated'>('created')
+
+  // S9N-6164: detail panel v2 — tab, copy feedback, focus restore refs
+  const [panelTab, setPanelTab] = useState<'details' | 'history'>('details')
+  const [copied, setCopied] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
 
   const namespaces = useNamespaces()
   const search = useMemorySearch({
@@ -318,8 +423,8 @@ export function MemoryExplorerPage() {
     namespace: namespace || undefined,
     content_type: contentType === 'all' ? undefined : contentType,
     compression_tier: tier === 'all' ? undefined : tier,
-    limit: PAGE_SIZE,
-    offset: page * PAGE_SIZE,
+    limit: pageSize,
+    offset: page * pageSize,
     // Hybrid mode tolerates an empty query (falls back to a plain SQL
     // listing) whereas fts mode returns 422. Keeps the Explorer populated
     // on first open, before the user has typed anything.
@@ -327,17 +432,90 @@ export function MemoryExplorerPage() {
   })
 
   const enrichment = useMemoryEnrichment(selected?.memory_id ?? '')
+  // S9N-6164: history only fetched while the History tab is open on a selection
+  const history = useMemoryHistory(
+    selected?.memory_id ?? '',
+    !!selected && panelTab === 'history',
+  )
   const deleteMutation = useDeleteMemory()
   const updateMutation = useUpdateMemory()
 
   const totalCount = search.data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+
+  // S9N-6163/6166: columns depend on the active query (highlighting) and the
+  // selected timestamp field (Age column).
+  const columns = useMemo(
+    () =>
+      buildColumns(query, timeField, () =>
+        setTimeField((f) => (f === 'created' ? 'updated' : 'created')),
+      ),
+    [query, timeField],
+  )
+  // In-flight shimmer: isLoading only covers the first fetch; isFetching stays
+  // true on every refetch, so a query change dims the (placeholder) rows while
+  // the new results load instead of the table looking frozen.
+  const isSearching = search.isFetching && !search.isLoading
 
   function openDetail(row: MemoryResponse) {
+    // S9N-6164: remember the trigger so focus can return to it on close
+    lastFocusedRef.current = document.activeElement as HTMLElement | null
     setSelected(row)
     setEditing(false)
+    setPanelTab('details')
     setEditContent(row.content)
     setEditContentType(row.content_type)
+  }
+
+  // S9N-6164: single close path — clears selection and restores focus to the
+  // row (or whatever opened the panel) for a keyboard round-trip.
+  function closePanel() {
+    setSelected(null)
+    setEditing(false)
+    setPanelTab('details')
+    lastFocusedRef.current?.focus?.()
+  }
+
+  // S9N-6164: Escape closes the panel; outside-click closes it too. Editing
+  // guards Escape so a mid-edit Escape doesn't discard silently — it exits edit
+  // mode first, then a second Escape closes.
+  useEffect(() => {
+    if (!selected) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (editing) {
+        setEditing(false)
+        return
+      }
+      closePanel()
+    }
+    function onClick(e: MouseEvent) {
+      if (editing || confirmDelete) return
+      const el = panelRef.current
+      const target = e.target as Node | null
+      if (el && target && !el.contains(target)) closePanel()
+    }
+    window.addEventListener('keydown', onKey)
+    // capture=false, and defer click binding a tick so the opening click
+    // doesn't immediately close the panel.
+    const t = window.setTimeout(() => document.addEventListener('mousedown', onClick), 0)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.clearTimeout(t)
+      document.removeEventListener('mousedown', onClick)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, editing, confirmDelete])
+
+  async function handleCopyContent() {
+    if (!selected) return
+    try {
+      await navigator.clipboard.writeText(selected.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // clipboard blocked (insecure context / permissions) — no-op
+    }
   }
 
   function handleDelete() {
@@ -377,40 +555,19 @@ export function MemoryExplorerPage() {
           value={query}
           onChange={(v) => { setQuery(v); setPage(0) }}
           placeholder="Search memories…"
-          className="w-64"
+          className="w-full sm:w-64"
+          hotkey
         />
-        {/* Namespace selector — includes text filter when list is large */}
-        <div className="flex flex-col gap-1">
-          {(namespaces.data?.length ?? 0) > 10 && (
-            <input
-              type="text"
-              value={nsFilter}
-              onChange={(e) => setNsFilter(e.target.value)}
-              placeholder="Filter namespaces…"
-              className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-content-primary focus:border-brand-primary focus:outline-none"
-            />
-          )}
-          <select
-            value={namespace}
-            onChange={(e) => { setNamespace(e.target.value); setPage(0) }}
-            className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-content-primary focus:border-brand-primary focus:outline-none"
-          >
-            <option value="">
-              All namespaces ({namespaces.data?.reduce((s, n) => s + n.count, 0) ?? 0})
-            </option>
-            {namespaces.data
-              ?.filter((ns) =>
-                nsFilter === '' ||
-                ns.namespace.toLowerCase().includes(nsFilter.toLowerCase())
-              )
-              .map((ns) => (
-                <option key={ns.namespace} value={ns.namespace}>
-                  {ns.namespace} ({ns.count})
-                </option>
-              ))}
-          </select>
-        </div>
-        <div className="flex gap-1">
+        <NamespaceCombobox
+          namespaces={namespaces.data ?? []}
+          value={namespace}
+          totalCount={namespaces.data?.reduce((sum, item) => sum + item.count, 0) ?? 0}
+          onChange={(value) => {
+            setNamespace(value)
+            setPage(0)
+          }}
+        />
+        <div className="flex flex-wrap gap-1">
           {contentTypes.map((ct) => (
             <button
               key={ct}
@@ -418,7 +575,7 @@ export function MemoryExplorerPage() {
               className={cn(
                 'rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors',
                 contentType === ct
-                  ? 'bg-brand-primary text-white'
+                  ? 'bg-brand-primaryDark text-white'
                   : 'border border-border bg-white text-content-secondary hover:bg-surface-secondary',
               )}
             >
@@ -428,7 +585,7 @@ export function MemoryExplorerPage() {
         </div>
 
         {/* F12: Compression tier filter pills (L1 / L2 / L3.1) */}
-        <div className="flex items-center gap-1" title="Filter by memory compression tier">
+        <div className="flex flex-wrap items-center gap-1" title="Filter by memory compression tier">
           {tiers.map((t) => (
             <button
               key={t}
@@ -436,7 +593,7 @@ export function MemoryExplorerPage() {
               className={cn(
                 'rounded-full px-3 py-1 text-xs font-medium transition-colors',
                 tier === t
-                  ? 'bg-brand-primary text-white'
+                  ? 'bg-brand-primaryDark text-white'
                   : 'border border-border bg-white text-content-secondary hover:bg-surface-secondary',
               )}
             >
@@ -452,7 +609,7 @@ export function MemoryExplorerPage() {
             className={cn(
               'ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
               showLevelView
-                ? 'border-brand-primary bg-brand-primary text-white'
+                ? 'border-brand-primaryDark bg-brand-primaryDark text-white'
                 : 'border-border bg-white text-content-secondary hover:bg-surface-secondary',
             )}
             title="View memory levels for selected namespace"
@@ -464,7 +621,7 @@ export function MemoryExplorerPage() {
       </div>
 
       {/* F12: Tier legend — explains what L1 / L2 / L3.1 mean */}
-      <div className="mb-3 px-1">
+      <div className="mb-3 overflow-x-auto px-1">
         <MemoryLevelLegend />
       </div>
 
@@ -480,6 +637,7 @@ export function MemoryExplorerPage() {
             </div>
             <button
               onClick={() => setShowLevelView(false)}
+              aria-label="Close memory levels"
               className="rounded p-1 text-content-tertiary hover:bg-surface-secondary"
             >
               <X size={14} />
@@ -533,52 +691,91 @@ export function MemoryExplorerPage() {
 
           {search.isLoading ? (
             <LoadingSkeleton lines={10} />
+          ) : (search.data?.items?.length ?? 0) === 0 ? (
+            <EmptyState
+              title={query ? `No memories match “${query}”` : 'No memories yet'}
+              description={
+                query
+                  ? 'Try a different search, or clear it to browse everything.'
+                  : 'Memories your agents store will appear here.'
+              }
+              action={
+                query ? { label: 'Clear search', onClick: () => { setQuery(''); setPage(0) } } : undefined
+              }
+            />
           ) : (
             <>
-              <DataTable
-                columns={columns}
-                data={search.data?.items ?? []}
-                onRowClick={openDetail}
-              />
-              {/* Pagination — KMV-QA-015 */}
-              <div className="mt-3 flex items-center justify-between text-xs text-content-tertiary">
-                <span>
-                  {totalCount} {totalCount === 1 ? 'memory' : 'memories'} total
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
-                    className="rounded p-1 hover:bg-surface-secondary disabled:opacity-40"
-                  >
-                    <ChevronLeft size={14} />
-                  </button>
-                  <span>Page {page + 1} of {totalPages}</span>
-                  <button
-                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                    disabled={page >= totalPages - 1}
-                    className="rounded p-1 hover:bg-surface-secondary disabled:opacity-40"
-                  >
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
+              {/* S9N-6167: table on ≥768px, card list below */}
+              <div
+                className={cn(
+                  'hidden transition-opacity md:block',
+                  isSearching && 'pointer-events-none animate-pulse opacity-50',
+                )}
+                aria-busy={isSearching}
+              >
+                <DataTable
+                  // S9N-6166: browse defaults to newest-first; an active
+                  // search keeps the backend relevance order (no client sort).
+                  // Remount on mode change so the default re-seeds.
+                  key={query ? 'search' : 'browse'}
+                  columns={columns}
+                  data={search.data?.items ?? []}
+                  onRowClick={openDetail}
+                  initialSorting={query ? [] : [{ id: 'age', desc: true }]}
+                  stickyHeader
+                  maxHeight="calc(100vh - 15rem)"
+                />
               </div>
+              <div
+                className={cn(
+                  'space-y-2 transition-opacity md:hidden',
+                  isSearching && 'pointer-events-none animate-pulse opacity-50',
+                )}
+                aria-busy={isSearching}
+              >
+                {(search.data?.items ?? []).map((m) => (
+                  <MemoryCard key={m.memory_id} memory={m} timeField={timeField} onClick={openDetail} />
+                ))}
+              </div>
+              <Pagination
+                page={page}
+                pageCount={totalPages}
+                pageSize={pageSize}
+                total={totalCount}
+                label={query ? 'results' : 'memories'}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             </>
           )}
         </div>
 
         {/* Detail panel */}
         {selected && (
-          <div className="w-96 shrink-0 rounded-lg border border-border bg-white p-4">
+          <div
+            ref={panelRef}
+            role="dialog"
+            aria-label="Memory detail"
+            className="fixed inset-0 z-50 w-full overflow-y-auto border-border bg-white p-4 md:static md:z-auto md:w-96 md:shrink-0 md:self-start md:overflow-visible md:rounded-lg md:border"
+          >
             {/* Panel header */}
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-content-primary">Memory Detail</h3>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={handleCopyContent}
+                  className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary hover:text-brand-primary"
+                  title={copied ? 'Copied!' : 'Copy content'}
+                  aria-label={copied ? 'Content copied' : 'Copy content'}
+                >
+                  {copied ? <ClipboardCheck size={14} className="text-status-success" /> : <Copy size={14} />}
+                </button>
                 {!editing && (
                   <button
                     onClick={() => setEditing(true)}
                     className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary hover:text-brand-primary"
                     title="Edit memory"
+                    aria-label="Edit memory"
                   >
                     <Pencil size={14} />
                   </button>
@@ -587,17 +784,52 @@ export function MemoryExplorerPage() {
                   onClick={() => setConfirmDelete(true)}
                   className="rounded p-1.5 text-content-tertiary hover:bg-red-50 hover:text-status-danger"
                   title="Delete memory"
+                  aria-label="Delete memory"
                 >
                   <Trash2 size={14} />
                 </button>
                 <button
-                  onClick={() => { setSelected(null); setEditing(false) }}
+                  onClick={closePanel}
+                  aria-label="Close detail panel"
+                  title="Close (Esc)"
                   className="rounded p-1.5 text-content-tertiary hover:bg-surface-secondary"
                 >
                   <X size={14} />
                 </button>
               </div>
             </div>
+
+            {/* S9N-6164: Details / History tabs (hidden while editing) */}
+            {!editing && (
+              <div className="mb-3 flex gap-1 border-b border-border" role="tablist" aria-label="Memory detail tabs">
+                <button
+                  role="tab"
+                  aria-selected={panelTab === 'details'}
+                  onClick={() => setPanelTab('details')}
+                  className={cn(
+                    'flex items-center gap-1.5 border-b-2 px-2 py-1.5 text-xs font-medium',
+                    panelTab === 'details'
+                      ? 'border-brand-primary text-brand-primaryDark'
+                      : 'border-transparent text-content-secondary hover:text-content-primary',
+                  )}
+                >
+                  <FileText size={13} /> Details
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={panelTab === 'history'}
+                  onClick={() => setPanelTab('history')}
+                  className={cn(
+                    'flex items-center gap-1.5 border-b-2 px-2 py-1.5 text-xs font-medium',
+                    panelTab === 'history'
+                      ? 'border-brand-primary text-brand-primaryDark'
+                      : 'border-transparent text-content-secondary hover:text-content-primary',
+                  )}
+                >
+                  <HistoryIcon size={13} /> History
+                </button>
+              </div>
+            )}
 
             {/* Edit form — KMV-QA-014 */}
             {editing ? (
@@ -643,12 +875,44 @@ export function MemoryExplorerPage() {
                   <p className="text-xs text-status-danger">Failed to save. Please try again.</p>
                 )}
               </div>
+            ) : panelTab === 'history' ? (
+              /* S9N-6164: provenance timeline from the history endpoint */
+              <div className="space-y-2 text-sm">
+                {history.isLoading ? (
+                  <LoadingSkeleton lines={4} />
+                ) : history.isError ? (
+                  <p className="text-xs text-status-danger">Failed to load history.</p>
+                ) : (history.data?.length ?? 0) === 0 ? (
+                  <p className="text-xs italic text-content-tertiary">No provenance events recorded.</p>
+                ) : (
+                  <ol className="relative space-y-3 border-l border-border pl-4">
+                    {history.data!.map((ev: MemoryEvent) => (
+                      <li key={ev.event_id} className="relative">
+                        <span className="absolute -left-[21px] top-1 h-2 w-2 rounded-full bg-brand-primary" />
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-content-primary">{ev.event_type}</span>
+                          <span className="text-[10px] text-content-tertiary" title={ev.created_at}>
+                            {formatRelativeTime(ev.created_at)}
+                          </span>
+                        </div>
+                        <div className="text-xs text-content-secondary">
+                          {ev.actor_type}
+                          {ev.actor_id ? ` · ${ev.actor_id}` : ''}
+                        </div>
+                        {ev.reason && (
+                          <div className="mt-0.5 text-xs text-content-tertiary">{ev.reason}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             ) : (
               /* Read-only detail view */
               <div className="space-y-3 text-sm">
                 <div>
                   <div className="mb-1 text-xs font-medium text-content-tertiary">Content</div>
-                  <p className="whitespace-pre-wrap text-content-primary">{selected.content}</p>
+                  <MarkdownView content={selected.content} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -683,12 +947,17 @@ export function MemoryExplorerPage() {
                     <div className="text-content-tertiary">Tier</div>
                     <MemoryLevelBadge tier={(selected as MemoryResponse & { compression_tier?: string }).compression_tier ?? 'L1'} />
                   </div>
+                  <div className="col-span-2">
+                    <div className="text-content-tertiary">Source agent</div>
+                    <div className="break-all font-medium">{selected.source_agent_id ?? '—'}</div>
+                  </div>
                 </div>
                 <div className="text-xs text-content-tertiary">
                   ID: <code className="rounded bg-surface-tertiary px-1">{selected.memory_id}</code>
                 </div>
-                <div className="text-xs text-content-tertiary">
-                  Created {formatRelativeTime(selected.created_at)}
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-content-tertiary">
+                  <span title={selected.created_at}>Created {formatRelativeTime(selected.created_at)}</span>
+                  <span title={selected.updated_at}>Updated {formatRelativeTime(selected.updated_at)}</span>
                 </div>
                 {/* KMV-S15.3: Expanded memory health (status, weight, decay countdown) */}
                 <MemoryHealthBadge

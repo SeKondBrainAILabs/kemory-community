@@ -78,6 +78,8 @@ export interface MemoryResponse {
   compression_tier: 'L1' | 'L2' | 'L3.1'
   // F12: Source memory IDs for L3.1 synthesized concepts (provenance)
   source_memory_ids: string[] | null
+  // S9N-6163: blended relevance score (rank_score) returned on hybrid search
+  similarity_score?: number | null
 }
 
 export interface MemorySearchRequest {
@@ -93,6 +95,20 @@ export interface MemorySearchRequest {
   // "No data" on first load). Hybrid falls through to a plain SQL listing
   // when no query is provided, so we default to hybrid for list views.
   search_mode?: 'fts' | 'hybrid' | 'dense'
+}
+
+// S9N-6164: provenance event from GET /api/v1/memories/{id}/history
+export interface MemoryEvent {
+  event_id: string
+  memory_id: string
+  event_type: string
+  actor_type: string
+  actor_id: string | null
+  reason: string | null
+  before_state: Record<string, unknown> | null
+  after_state: Record<string, unknown> | null
+  metadata: Record<string, unknown> | null
+  created_at: string
 }
 
 // ─── Graph Domain (F12) ──────────────────────────────────────

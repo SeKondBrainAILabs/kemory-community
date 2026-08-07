@@ -13,7 +13,7 @@
 import { cn } from '@/lib/utils'
 import { computeMemoryHealth, type MemoryHealthInfo } from '@/lib/memoryHealth'
 import { useAdvancedView } from '@/contexts/AdvancedViewContext'
-import { Clock, Archive, Activity } from 'lucide-react'
+import { Clock, Activity } from 'lucide-react'
 
 interface MemoryHealthBadgeProps {
   weight?: number | null
@@ -82,25 +82,7 @@ function WeightBar({
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-xs text-slate-400">{pct}%</span>
-    </div>
-  )
-}
-
-function DecayPill({ icon: Icon, label, value, title }: {
-  icon: React.ElementType
-  label: string
-  value: string
-  title?: string
-}) {
-  return (
-    <div
-      className="flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-xs text-slate-500"
-      title={title}
-    >
-      <Icon size={10} className="shrink-0" />
-      <span className="hidden sm:inline">{label}:</span>
-      <span className="font-medium text-slate-600">{value}</span>
+      <span className="text-xs text-content-tertiary">{pct}%</span>
     </div>
   )
 }
@@ -135,42 +117,24 @@ export function MemoryHealthBadge({
     : `~${health.daysUntilFloor}d`
 
   if (compact) {
+    const percent = Math.round(health.weight * 100)
+    const tooltip = [
+      `Status: ${health.statusLabel}`,
+      `Strength: ${percent}%`,
+      archiveLabel ? `Archive in: ${archiveLabel}` : null,
+      floorLabel ? `Strength floor in: ${floorLabel}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
     return (
-      <div className="flex flex-wrap items-center gap-1.5">
-        {/* Status badge */}
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={tooltip}>
         <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
-            styles.badge,
-          )}
-        >
-          <span
-            className={cn('h-1.5 w-1.5 rounded-full', styles.dot)}
-          />
-          {advanced ? (consolidationStatus ?? 'pending') : health.statusLabel}
-        </span>
-
-        {/* Weight */}
-        <WeightBar weight={health.weight} tier={health.tier} display={weightDisplay} />
-
-        {/* Decay pills — always show both */}
-        {archiveLabel && (
-          <DecayPill
-            icon={Archive}
-            label="archive"
-            value={archiveLabel}
-            title={`Days until archived: ${health.daysUntilArchived}`}
-          />
-        )}
-        {floorLabel && advanced && (
-          <DecayPill
-            icon={Activity}
-            label="floor"
-            value={floorLabel}
-            title={`Days until weight reaches minimum: ${health.daysUntilFloor}`}
-          />
-        )}
-      </div>
+          className={cn('h-2 w-2 shrink-0 rounded-full', styles.dot)}
+          aria-label={health.statusLabel}
+        />
+        <span className="text-xs text-content-secondary">{percent}%</span>
+      </span>
     )
   }
 
@@ -183,7 +147,7 @@ export function MemoryHealthBadge({
       <div className="grid grid-cols-2 gap-3">
         {/* Status */}
         <div>
-          <p className="mb-1 text-xs font-medium text-slate-400">Status</p>
+          <p className="mb-1 text-xs font-medium text-content-tertiary">Status</p>
           <span
             className={cn(
               'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
@@ -191,22 +155,25 @@ export function MemoryHealthBadge({
             )}
           >
             <span className={cn('h-1.5 w-1.5 rounded-full', styles.dot)} />
-            {advanced ? (consolidationStatus ?? 'pending') : health.statusLabel}
+            {health.statusLabel}
           </span>
+          {advanced && consolidationStatus && consolidationStatus !== health.statusLabel && (
+            <p className="mt-0.5 text-xs text-content-tertiary">raw: {consolidationStatus}</p>
+          )}
         </div>
 
         {/* Weight */}
         <div>
-          <p className="mb-1 text-xs font-medium text-slate-400">Memory Strength</p>
+          <p className="mb-1 text-xs font-medium text-content-tertiary">Memory Strength</p>
           <WeightBar weight={health.weight} tier={health.tier} display={weightDisplay} />
           {advanced && (
-            <p className="mt-0.5 text-xs text-slate-400">raw: {health.weight.toFixed(4)}</p>
+            <p className="mt-0.5 text-xs text-content-tertiary">raw: {health.weight.toFixed(4)}</p>
           )}
         </div>
 
         {/* Days until archived */}
         <div>
-          <p className="mb-1 text-xs font-medium text-slate-400">
+          <p className="mb-1 text-xs font-medium text-content-tertiary">
             <Clock size={10} className="mr-0.5 inline" />
             Archive in
           </p>
@@ -218,13 +185,13 @@ export function MemoryHealthBadge({
               : `${health.daysUntilArchived} day${health.daysUntilArchived === 1 ? '' : 's'}`}
           </p>
           {advanced && retentionDays && (
-            <p className="text-xs text-slate-400">retention: {retentionDays}d</p>
+            <p className="text-xs text-content-tertiary">retention: {retentionDays}d</p>
           )}
         </div>
 
         {/* Days until weight floor */}
         <div>
-          <p className="mb-1 text-xs font-medium text-slate-400">
+          <p className="mb-1 text-xs font-medium text-content-tertiary">
             <Activity size={10} className="mr-0.5 inline" />
             Strength floor in
           </p>
@@ -236,7 +203,7 @@ export function MemoryHealthBadge({
               : `~${health.daysUntilFloor} day${health.daysUntilFloor === 1 ? '' : 's'}`}
           </p>
           {advanced && (
-            <p className="text-xs text-slate-400">decay: {((decayRate ?? 0.1) * 100).toFixed(0)}%/day</p>
+            <p className="text-xs text-content-tertiary">decay: {((decayRate ?? 0.1) * 100).toFixed(0)}%/day</p>
           )}
         </div>
       </div>

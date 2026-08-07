@@ -21,6 +21,7 @@ import {
   MessagesSquare,
   Link as LinkIcon,
   Smartphone,
+  X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { getLiveness } from '@/api/health'
@@ -95,9 +96,10 @@ function NavRow({ to, icon: Icon, label }: NavItem) {
     <NavLink
       to={to}
       end={to === '/'}
+      title={label}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors md:justify-center md:px-0 lg:justify-start lg:px-3',
           isActive
             ? 'bg-white text-content-primary shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04]'
             : 'text-content-secondary hover:bg-black/[0.04] hover:text-content-primary',
@@ -105,20 +107,26 @@ function NavRow({ to, icon: Icon, label }: NavItem) {
       }
     >
       <Icon size={16} className="shrink-0" />
-      <span className="truncate">{label}</span>
+      <span className="truncate md:hidden lg:inline">{label}</span>
     </NavLink>
   )
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">
+    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-content-tertiary md:hidden lg:block">
       {children}
     </div>
   )
 }
 
-export function Sidebar() {
+export function Sidebar({
+  mobileOpen = false,
+  onClose,
+}: {
+  mobileOpen?: boolean
+  onClose?: () => void
+}) {
   const { hasRole } = useAuth()
   const { data: liveness } = useQuery({ queryKey: ['health-live'], queryFn: getLiveness, staleTime: 60_000 })
   const visibleOps = opsNav.filter(
@@ -128,14 +136,19 @@ export function Sidebar() {
   return (
     <aside
       aria-label="Kemory"
-      className="fixed left-[56px] top-0 z-40 flex h-screen w-[240px] flex-col border-r border-black/[0.06] bg-white/60 backdrop-blur-[20px]"
+      className={cn(
+        // S9N-6167: full (lg) → icon rail (md) → off-canvas drawer (<md).
+        'fixed top-0 z-50 flex h-screen flex-col border-r border-black/[0.06] bg-white/95 backdrop-blur-[20px] transition-transform duration-200 md:bg-white/60',
+        'left-0 w-[264px] md:left-[56px] md:w-[64px] md:translate-x-0 lg:w-[240px]',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+      )}
     >
       {/* App header: Kemory app tile + name + version block */}
-      <div className="flex items-start gap-3 border-b border-black/[0.05] px-4 pb-4 pt-5">
+      <div className="flex items-start gap-3 border-b border-black/[0.05] px-4 pb-4 pt-5 md:justify-center md:px-2 lg:justify-start lg:px-4">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-sm">
           <Brain size={20} strokeWidth={2} />
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 md:hidden lg:block">
           <div className="truncate text-[15px] font-semibold leading-tight text-content-primary">
             Kemory
           </div>
@@ -146,6 +159,15 @@ export function Sidebar() {
             FE:{__FE_VERSION__} / BE:{liveness?.version ?? '…'}
           </div>
         </div>
+        {/* Mobile drawer close */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close navigation"
+          className="ml-auto rounded-lg p-1.5 text-content-tertiary hover:bg-black/[0.04] hover:text-content-primary md:hidden"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {/* Nav */}
@@ -171,10 +193,11 @@ export function Sidebar() {
         <NavRow to="/settings" icon={Settings} label="Settings" />
         <button
           type="button"
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary"
+          title="Feedback"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-content-secondary transition-colors hover:bg-black/[0.04] hover:text-content-primary md:justify-center md:px-0 lg:justify-start lg:px-3"
         >
-          <MessageCircle size={16} />
-          <span>Feedback?</span>
+          <MessageCircle size={16} className="shrink-0" />
+          <span className="md:hidden lg:inline">Feedback?</span>
         </button>
       </div>
     </aside>

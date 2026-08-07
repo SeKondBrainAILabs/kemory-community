@@ -3,6 +3,7 @@ import type {
   MemoryResponse,
   MemoryListResponse,
   MemorySearchRequest,
+  MemoryEvent,
   NamespaceInfo,
   NamespaceSummary,
   EnrichmentResult,
@@ -23,6 +24,11 @@ export async function searchMemories(params: MemorySearchRequest): Promise<Memor
 
 export async function getMemory(memoryId: string): Promise<MemoryResponse> {
   return api.get(`api/v1/memories/${memoryId}`).json()
+}
+
+// S9N-6164: provenance history for the Memory Detail panel's History tab.
+export async function getMemoryHistory(memoryId: string): Promise<MemoryEvent[]> {
+  return api.get(`api/v1/memories/${memoryId}/history`).json()
 }
 
 export async function getNamespaces(): Promise<NamespaceInfo[]> {

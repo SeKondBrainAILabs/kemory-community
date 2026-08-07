@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   searchMemories,
   getMemory,
+  getMemoryHistory,
   getNamespaces,
   getNamespaceSummary,
   getMemoryEnrichment,
@@ -50,6 +51,17 @@ export function useMemory(memoryId: string) {
     queryKey: ['memories', memoryId],
     queryFn: () => getMemory(memoryId),
     enabled: !!memoryId,
+  })
+}
+
+// S9N-6164: provenance events for the Memory Detail History tab. Only fetched
+// when a memory is selected and the History tab is open (enabled gate).
+export function useMemoryHistory(memoryId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['memories', memoryId, 'history'],
+    queryFn: () => getMemoryHistory(memoryId),
+    enabled: !!memoryId && enabled,
+    staleTime: 30_000,
   })
 }
 

@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom'
-import { LogOut, User, Code2 } from 'lucide-react'
+import { LogOut, User, Code2, Menu } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useAdvancedView } from '@/contexts/AdvancedViewContext'
 import { cn } from '@/lib/utils'
@@ -20,7 +20,7 @@ const pageTitles: Record<string, string> = {
 
 }
 
-export function Header() {
+export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   const location = useLocation()
   const { user, logout } = useAuth()
   const { advanced, toggle } = useAdvancedView()
@@ -28,8 +28,19 @@ export function Header() {
   const title = pageTitles[basePath] ?? 'Kemory'
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-black/[0.06] bg-white/50 px-6 backdrop-blur-[20px]">
-      <h1 className="text-lg font-semibold text-content-primary">{title}</h1>
+    <header className="flex h-16 items-center justify-between border-b border-black/[0.06] bg-white/50 px-4 backdrop-blur-[20px] sm:px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        {/* S9N-6167: mobile hamburger — opens the sidebar drawer */}
+        <button
+          type="button"
+          onClick={onMenuClick}
+          aria-label="Open navigation"
+          className="-ml-1 rounded-lg p-2 text-content-secondary hover:bg-surface-secondary md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <h1 className="truncate text-lg font-semibold text-content-primary">{title}</h1>
+      </div>
 
       <div className="flex items-center gap-3">
         {/* KMV-S15.1: Advanced view toggle (UUIDs, raw JSON, technical metadata) */}
@@ -50,16 +61,17 @@ export function Header() {
         </button>
         {user && (
           <>
-            <div className="flex items-center gap-2 text-sm text-content-secondary">
+            <div className="hidden items-center gap-2 text-sm text-content-secondary sm:flex">
               <User className="h-4 w-4" />
               <span>{user.firstName} {user.lastName}</span>
             </div>
             <button
               onClick={logout}
-              className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-content-secondary hover:bg-surface-secondary transition-colors"
+              aria-label="Sign out"
+              className="flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-content-secondary transition-colors hover:bg-surface-secondary sm:px-3"
             >
               <LogOut className="h-4 w-4" />
-              Sign out
+              <span className="hidden sm:inline">Sign out</span>
             </button>
           </>
         )}

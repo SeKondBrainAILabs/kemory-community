@@ -22,7 +22,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: 'https://app.memory.dxb-gw.basanti.ai',
+    baseURL: process.env.PW_BASE_URL ?? 'https://app.memory.dxb-gw.basanti.ai',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'off',

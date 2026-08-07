@@ -11,4 +11,8 @@ cat > /usr/share/nginx/html/config.json <<EOF
 }
 EOF
 
+DNS_RESOLVER="${DNS_RESOLVER:-$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)}"
+sed -i "s|__DNS_RESOLVER__|${DNS_RESOLVER:-127.0.0.11}|g" \
+    /etc/nginx/conf.d/default.conf
+
 exec nginx -g "daemon off;"
