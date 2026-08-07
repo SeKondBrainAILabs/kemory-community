@@ -25,7 +25,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 | MCP JSON-RPC transport and canonical names | Ported and adapted | Standard JSON-RPC 2.0 over HTTP and stdio; advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
 | Chat source chronology, timeline, content dates, namespace tags | Planned port | Keep local user scope and PostgreSQL; assign sequential community migrations. |
-| Memory, chat, and namespace dashboard UX | Planned selective port | Keep the current local API-key shell and Tailwind 3; exclude private design-system packages. |
+| Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; retained the local API-key shell and Tailwind 3; excluded private design-system packages. |
 | Keycloak, OIDC, OAuth, DCR, teams, Gatekeeper, trusted org delegation | Exclude | Hosted identity and multi-tenant policy surfaces. |
 | Weaviate, FalkorDB, MinIO, PostHog, Kafka, KMS, Core Backend billing | Exclude | Community boot remains pgvector, local filesystem, noop telemetry, and user-supplied local services only. |
 | Hosted L5/CogOS push and executive analytics | Exclude | Hosted-only cognition and operational product surfaces. |
@@ -40,6 +40,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 - Pgvector ANN retrieval, transactional vector upsert, ordered batch encoding,
   deterministic RRF, concept boost, and configurable result-score floor
 - Standard MCP JSON-RPC methods at `/mcp/v1`, with stdio bridge parity
+- Selective memory explorer and namespace dashboard UX with responsive and accessible states
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,

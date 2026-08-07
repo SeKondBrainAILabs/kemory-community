@@ -36,7 +36,7 @@ describe('LoginPage', () => {
     renderLoginPage()
 
     expect(screen.getByText('Sign in')).toBeInTheDocument()
-    expect(screen.getByText('S9N Memory Vault')).toBeInTheDocument()
+    expect(screen.getByText('Kemory')).toBeInTheDocument()
   })
 
   it('redirects to / when already authenticated', () => {

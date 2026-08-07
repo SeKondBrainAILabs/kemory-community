@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Indexed pgvector retrieval with legacy-row fallback, batch encoding, deterministic ranking, and optional score floors.
 - Standard MCP JSON-RPC 2.0 transport over authenticated HTTP and stdio.
 - Dashboard Settings page for API key, runtime settings, JSON export, and JSON import.
+- Responsive memory explorer with relevance sorting, result highlighting, Markdown detail, history, namespace filtering, and URL-backed pagination.
 - Community port registry at `docs/PORT_REGISTRY.md`.
 
 [Unreleased]: https://github.com/SeKondBrainAILabs/kemory-community/compare/HEAD...HEAD

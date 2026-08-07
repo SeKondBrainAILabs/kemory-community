@@ -6,6 +6,7 @@
 
 :root {
   --color-brand-primary: #6366f1;
+  --color-brand-primary-dark: #4f46e5; /* S9N-6165: AA-safe filled/selected states */
   --color-brand-secondary: #8b5cf6;
   --color-accent-blue: #3b82f6;
 
@@ -18,8 +19,11 @@
   --color-bg-secondary: #f8f9fa;
   --color-bg-tertiary: #f1f3f5;
   --color-text-primary: #1a1a1a;
-  --color-text-secondary: #6b7280;
-  --color-text-tertiary: #9ca3af;
+  /* S9N-6165: secondary/tertiary darkened one step on the gray ramp so BOTH
+     clear WCAG AA (4.5:1) on white — was #6b7280 (4.83:1, ok) / #9ca3af
+     (2.54:1, FAIL). Now #4b5563 (7.6:1) / #6b7280 (4.83:1), hierarchy kept. */
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
   --color-border: #e5e7eb;
   --color-success: #16a34a;
   --color-warning: #d97706;
@@ -48,6 +52,20 @@ body {
   color: var(--color-text-primary);
   min-height: 100vh;
   background: #ffffff;
+}
+
+/* S9N-6165: visible keyboard focus for every interactive control. Uses
+   :focus-visible so mouse clicks don't show the ring, only keyboard nav. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* -------------------------------------------------------------------------- */
