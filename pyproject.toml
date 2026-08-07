@@ -80,9 +80,8 @@ dev = [
     "faker>=23.2.1",
     "hatchling",
 ]
-# WS-10 — kemory CLI for humans. Installed as `pip install kemory[cli]`,
-# exposed as the `kemory` console script. Keeps all heavy backend deps
-# out of the CLI install footprint (httpx + click are enough).
+# Community Python CLI and MCP bridge. The npm package remains the primary
+# installer; this extra keeps the Python bridge lightweight and local-only.
 cli = [
     "click>=8.1.0",
     "httpx>=0.27.0",

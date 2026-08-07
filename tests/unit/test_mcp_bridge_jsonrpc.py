@@ -96,13 +96,8 @@ async def test_jsonrpc_rejects_malformed_responses(body):
 
 def test_local_cached_credential_is_forwarded_as_api_key():
     credentials = Credentials(
-        access_token="local-secret",
-        refresh_token="",
-        expires_at=9999999999,
-        issuer="local",
-        client_id="local",
+        api_key="local-secret",
         kemory_url="http://localhost:8111",
-        env="local",
     )
 
     with (
@@ -120,4 +115,15 @@ def test_bridge_defaults_to_community_docker_port():
         patch.dict("os.environ", {}, clear=True),
         patch("kemory_cli.mcp_bridge.Credentials.load", return_value=None),
     ):
-        assert _resolve_url() == "http://localhost:8111"
+        assert _resolve_url() == "http://127.0.0.1:8111"
+
+
+def test_bridge_never_builds_bearer_header():
+    credentials = Credentials(api_key="local-secret")
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("kemory_cli.mcp_bridge.Credentials.load", return_value=credentials),
+    ):
+        headers = _build_headers()
+
+    assert headers == {"Content-Type": "application/json", "X-API-Key": "local-secret"}
