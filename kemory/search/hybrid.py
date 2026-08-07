@@ -390,6 +390,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "session_id": row.session_id,
         "round_id": row.round_id,
         "valid_at": row.valid_at.isoformat() if row.valid_at else None,
+        "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
         "invalid_at": row.invalid_at.isoformat() if row.invalid_at else None,
         "decay_score": row.decay_score,
         "temporal_anchor": row.temporal_anchor,

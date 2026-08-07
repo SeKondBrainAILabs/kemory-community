@@ -24,7 +24,9 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Rolling session digest and raw-source rehydration (hosted PR #152) | Port and adapt | New `018` migration, local user scope, latest three exchanges raw, whole-item source expansion, no AAAK prompt context. |
 | MCP JSON-RPC transport and canonical names | Ported and adapted | Standard JSON-RPC 2.0 over HTTP and stdio; advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
-| Chat source chronology, timeline, content dates, namespace tags | Planned port | Keep local user scope and PostgreSQL; assign sequential community migrations. |
+| Source content dates for memories, chat turns, and artifacts | Ported and adapted | Migration `019`; source timestamps remain nullable, local uploads send `File.lastModified`, and reads fall back to ingest time without inventing source dates. Adapted from hosted `11f3322`, `cb7a33e`, `391b5c2`, `6480507`, and `3b73f70`. |
+| Memory timeline | Planned port | Keep local user scope and PostgreSQL; exclude hosted telemetry and organisation analytics. |
+| Namespace tags | Planned port | Keep local user scope and PostgreSQL; assign the next sequential community migration. |
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
 | Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
 | Python CLI and stdio bridge | Ported and adapted | Local endpoint plus API-key configuration only; OAuth device flow, Bearer forwarding, hosted environments, org/team commands, telemetry, and hosted release upgrades are removed. |
@@ -49,6 +51,10 @@ community adapters and Docker runtime constraints applied at each boundary.
   direct Groq client, and configurable 384-dimensional embedding providers. Voyage
   and Cohere opt-ins request their supported 512-dimensional Matryoshka output,
   then truncate and normalize it to the community schema's fixed 384 dimensions.
+- Nullable `occurred_at` source chronology across memories, chat turns, and artifacts;
+  source-aware date filters and MCP recall; file modified-date capture; and dashboard
+  Happened, Added, and Updated views. The hosted turn wire contract is retained as
+  `timestamp`, while authentication and tenancy remain community-local.
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,

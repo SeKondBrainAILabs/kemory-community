@@ -11,14 +11,19 @@ import { formatAbsoluteTime, formatRelativeTime } from '@/lib/utils'
 export function MemoryCard({
   memory,
   onClick,
-  timeField = 'created',
+  timeField = 'occurred',
 }: {
   memory: MemoryResponse
   onClick: (m: MemoryResponse) => void
-  timeField?: 'created' | 'updated'
+  timeField?: 'occurred' | 'created' | 'updated'
 }) {
   const rel = memory.similarity_score
-  const ts = timeField === 'created' ? memory.created_at : memory.updated_at
+  const ts =
+    timeField === 'occurred'
+      ? (memory.occurred_at ?? memory.created_at)
+      : timeField === 'created'
+        ? memory.created_at
+        : memory.updated_at
 
   return (
     <button

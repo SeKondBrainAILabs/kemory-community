@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -43,6 +44,18 @@ from backend.services.artifact_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 local_fs_router = APIRouter(tags=["artifacts"])
+
+
+def _parse_occurred_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="occurred_at must be a valid ISO-8601 timestamp",
+        ) from exc
 
 
 @router.get("/artifacts", summary="List local artifacts")
@@ -159,6 +172,10 @@ async def upload_artifact_endpoint(
         "audio | video). Inferred from Content-Type when omitted.",
     ),
     language: str | None = Form(None, description="Language hint for code artifacts."),
+    occurred_at: str | None = Form(
+        None,
+        description="ISO-8601 source file authored or modified date.",
+    ),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -204,6 +221,7 @@ async def upload_artifact_endpoint(
             memory_id=mem_uuid,
             artifact_type=artifact_type,
             language=language,
+            occurred_at=_parse_occurred_at(occurred_at),
             db=db,
         )
     except ValueError as exc:
@@ -370,6 +388,7 @@ async def upload_memory_artifact_endpoint(
     file: UploadFile = File(..., description="Binary payload (any type)."),
     artifact_type: str | None = Form(None),
     language: str | None = Form(None),
+    occurred_at: str | None = Form(None),
     auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -391,6 +410,7 @@ async def upload_memory_artifact_endpoint(
             memory_id=memory_id,
             artifact_type=artifact_type,
             language=language,
+            occurred_at=_parse_occurred_at(occurred_at),
             db=db,
         )
     except ValueError as exc:

@@ -99,7 +99,7 @@ function highlightMatch(text: string, query: string): ReactNode {
 // rebuilding the array on every keystroke while still tracking the query.
 function buildColumns(
   query: string,
-  timeField: 'created' | 'updated',
+  timeField: 'occurred' | 'created' | 'updated',
   onToggleTimeField: () => void,
 ): ColumnDef<MemoryResponse, unknown>[] {
   return [
@@ -166,32 +166,46 @@ function buildColumns(
   },
   { accessorKey: 'version', header: 'Ver' },
   {
-    // S9N-6166: Age column — relative time + absolute tooltip, sortable,
-    // with a header toggle between created_at and updated_at. Dates read
-    // newest-first, so the first sort click should be descending.
+    // Source chronology falls back to ingest time when no source date exists.
     id: 'age',
     sortDescFirst: true,
-    accessorFn: (row) => (timeField === 'created' ? row.created_at : row.updated_at),
+    accessorFn: (row) =>
+      timeField === 'occurred'
+        ? (row.occurred_at ?? row.created_at)
+        : timeField === 'created'
+          ? row.created_at
+          : row.updated_at,
     header: () => (
       <span className="inline-flex items-center gap-1">
-        {timeField === 'created' ? 'Created' : 'Updated'}
+        {timeField === 'occurred' ? 'Happened' : timeField === 'created' ? 'Added' : 'Updated'}
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation()
             onToggleTimeField()
           }}
-          title={`Show ${timeField === 'created' ? 'updated' : 'created'} time`}
-          aria-label={`Show ${timeField === 'created' ? 'updated' : 'created'} time`}
+          title={`Show ${timeField === 'occurred' ? 'added' : timeField === 'created' ? 'updated' : 'happened'} time`}
+          aria-label={`Show ${timeField === 'occurred' ? 'added' : timeField === 'created' ? 'updated' : 'happened'} time`}
           className="rounded p-0.5 text-content-tertiary hover:bg-surface-tertiary hover:text-content-primary"
         >
           <ArrowLeftRight size={11} />
         </button>
       </span>
     ),
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const v = getValue() as string
-      return <span title={formatAbsoluteTime(v)}>{formatRelativeTime(v)}</span>
+      const fellBackToAdded = timeField === 'occurred' && !row.original.occurred_at
+      return (
+        <span
+          title={
+            fellBackToAdded
+              ? `Added ${formatAbsoluteTime(v)} (source date unknown)`
+              : formatAbsoluteTime(v)
+          }
+        >
+          {formatRelativeTime(v)}
+        </span>
+      )
     },
   },
   ]
@@ -321,7 +335,7 @@ export function MemoryExplorerPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // S9N-6166: which timestamp the Age column shows/sorts by
-  const [timeField, setTimeField] = useState<'created' | 'updated'>('created')
+  const [timeField, setTimeField] = useState<'occurred' | 'created' | 'updated'>('occurred')
 
   // S9N-6164: detail panel v2 — tab, copy feedback, focus restore refs
   const [panelTab, setPanelTab] = useState<'details' | 'history'>('details')
@@ -360,7 +374,7 @@ export function MemoryExplorerPage() {
   const columns = useMemo(
     () =>
       buildColumns(query, timeField, () =>
-        setTimeField((f) => (f === 'created' ? 'updated' : 'created')),
+        setTimeField((f) => (f === 'occurred' ? 'created' : f === 'created' ? 'updated' : 'occurred')),
       ),
     [query, timeField],
   )
@@ -867,7 +881,10 @@ export function MemoryExplorerPage() {
                   ID: <code className="rounded bg-surface-tertiary px-1">{selected.memory_id}</code>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-content-tertiary">
-                  <span title={selected.created_at}>Created {formatRelativeTime(selected.created_at)}</span>
+                  {selected.occurred_at && (
+                    <span title={selected.occurred_at}>Happened {formatRelativeTime(selected.occurred_at)}</span>
+                  )}
+                  <span title={selected.created_at}>Added {formatRelativeTime(selected.created_at)}</span>
                   <span title={selected.updated_at}>Updated {formatRelativeTime(selected.updated_at)}</span>
                 </div>
                 {/* KMV-S15.3: Expanded memory health (status, weight, decay countdown) */}

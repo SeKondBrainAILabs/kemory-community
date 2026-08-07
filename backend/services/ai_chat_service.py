@@ -98,6 +98,10 @@ class ArtifactUpsert(BaseModel):
         description="Reserved for object storage. Leave NULL in v1.",
     )
     artifact_metadata: dict[str, Any] | None = None
+    occurred_at: datetime | None = Field(
+        None,
+        description="Source file authored or modified date; omit when unknown.",
+    )
 
 
 class TurnUpsert(BaseModel):
@@ -117,6 +121,10 @@ class TurnUpsert(BaseModel):
     tool_calls: list[dict[str, Any]] | None = None
     turn_metadata: dict[str, Any] | None = None
     sequence: int = Field(..., ge=0)
+    timestamp: datetime | None = Field(
+        None,
+        description="Original platform time of the message; omit when unknown.",
+    )
     artifacts: list[ArtifactUpsert] = Field(default_factory=list)
 
 
@@ -171,6 +179,7 @@ class ArtifactResponse(BaseModel):
     # Convenience fields extracted from artifact_metadata (populated on read).
     filename: str | None = None
     size_bytes: int | None = None
+    occurred_at: str | None = None
     created_at: str
 
 
@@ -186,6 +195,7 @@ class TurnResponse(BaseModel):
     tool_calls: list[dict[str, Any]] | None
     turn_metadata: dict[str, Any] | None
     sequence: int
+    occurred_at: str | None = None
     created_at: str
     artifacts: list[ArtifactResponse] = Field(default_factory=list)
 
@@ -288,6 +298,7 @@ def _canonical_turn_dict(turn: TurnUpsert) -> dict[str, Any]:
         "thinking_content": turn.thinking_content,
         "tool_calls": turn.tool_calls,
         "sequence": turn.sequence,
+        **({"timestamp": turn.timestamp.isoformat()} if turn.timestamp else {}),
         "artifacts": [
             {
                 "type": a.artifact_type,
@@ -557,6 +568,8 @@ async def _persist_turns(
             existing.turn_metadata = turn.turn_metadata
             existing.sequence = turn.sequence
             existing.parent_turn_id = turn.parent_turn_id
+            if turn.timestamp is not None:
+                existing.occurred_at = turn.timestamp
             # Replace artifacts on the turn — simpler and matches the
             # source-of-truth semantic the extension expects (the latest
             # push of a turn replaces any prior artifact list for it).
@@ -576,6 +589,7 @@ async def _persist_turns(
             tool_calls=turn.tool_calls,
             turn_metadata=turn.turn_metadata,
             sequence=turn.sequence,
+            occurred_at=turn.timestamp,
         )
         db.add(new_turn)
         await db.flush()
@@ -604,6 +618,7 @@ def _attach_artifact(chat: AIChat, turn: AIChatTurn, art: ArtifactUpsert, db: As
             content_url=art.content_url,
             content_sha256=_artifact_sha256(art),
             artifact_metadata=art.artifact_metadata,
+            occurred_at=art.occurred_at,
         )
     )
 
@@ -625,6 +640,52 @@ async def _replace_artifacts_for_turn(
         await db.delete(row)
     for art in artifacts:
         _attach_artifact(chat, turn, art, db)
+
+
+async def _backfill_artifact_dates(
+    chat: AIChat,
+    turns: list[TurnUpsert],
+    db: AsyncSession,
+) -> int:
+    """Fill unknown artifact source dates on an identical-content re-push."""
+    dated = [turn for turn in turns if any(art.occurred_at for art in turn.artifacts)]
+    if not dated:
+        return 0
+
+    rows = (
+        (await db.execute(select(AIChatTurn).where(AIChatTurn.chat_id == chat.chat_id)))
+        .scalars()
+        .all()
+    )
+    by_source = {row.source_turn_id: row for row in rows if row.source_turn_id}
+    by_content = {(row.role, row.sequence, row.content): row for row in rows}
+    updated = 0
+    for turn in dated:
+        row = (
+            by_source.get(turn.source_turn_id)
+            if turn.source_turn_id
+            else by_content.get((turn.role, turn.sequence, turn.content))
+        )
+        if row is None:
+            continue
+        stored = (
+            (
+                await db.execute(
+                    select(AIChatArtifact).where(AIChatArtifact.turn_id == row.turn_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_sha = {artifact.content_sha256: artifact for artifact in stored}
+        for artifact in turn.artifacts:
+            if artifact.occurred_at is None:
+                continue
+            existing = by_sha.get(_artifact_sha256(artifact))
+            if existing is not None and existing.occurred_at is None:
+                existing.occurred_at = artifact.occurred_at
+                updated += 1
+    return updated
 
 
 async def _sync_chat_artifact_namespace(chat: AIChat, db: AsyncSession) -> None:
@@ -721,6 +782,9 @@ async def upsert_chat(
 
     # Existing row — noop fast path.
     if existing.content_hash == new_hash:
+        dates_backfilled = await _backfill_artifact_dates(existing, payload.turns, db)
+        if dates_backfilled:
+            await db.flush()
         turn_count = await _count_turns(existing.chat_id, db)
         return _to_response(
             existing,
@@ -1170,6 +1234,7 @@ async def _load_turns(
                 tool_calls=r.tool_calls,
                 turn_metadata=r.turn_metadata,
                 sequence=r.sequence,
+                occurred_at=r.occurred_at.isoformat() if r.occurred_at else None,
                 created_at=r.created_at.isoformat() if r.created_at else "",
                 artifacts=[_artifact_to_response(a) for a in artifacts_by_turn.get(r.turn_id, [])],
             )
@@ -1222,6 +1287,7 @@ def _artifact_to_response(a: AIChatArtifact) -> ArtifactResponse:
         artifact_metadata=meta_dict,
         filename=(meta.get("filename") if isinstance(meta, dict) else None),
         size_bytes=(int(meta["size_bytes"]) if isinstance(meta, dict) and meta.get("size_bytes") else None),
+        occurred_at=a.occurred_at.isoformat() if a.occurred_at else None,
         created_at=a.created_at.isoformat() if a.created_at else "",
     )
 
