@@ -141,7 +141,7 @@ function dockerCompose(config) {
       TENANT_ENFORCEMENT: "off"
       WORKERS: "1"
     ports:
-      - "${config.apiPort}:${config.apiContainerPort}"
+      - "127.0.0.1:${config.apiPort}:${config.apiContainerPort}"
     volumes:
       - kemory_data:/app/.community
     depends_on:
@@ -157,7 +157,7 @@ function dockerCompose(config) {
       API_KEY: \${KEMORY_LOCAL_API_KEY}
       SKIP_AUTH: "true"
     ports:
-      - "${config.dashboardPort}:${config.dashboardContainerPort}"
+      - "127.0.0.1:${config.dashboardPort}:${config.dashboardContainerPort}"
     depends_on:
       - kemory-api
 
@@ -168,7 +168,7 @@ function dockerCompose(config) {
       POSTGRES_PASSWORD: kemory_local
       POSTGRES_DB: kemory_community
     ports:
-      - "${config.postgresPort}:${config.postgresContainerPort}"
+      - "127.0.0.1:${config.postgresPort}:${config.postgresContainerPort}"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
