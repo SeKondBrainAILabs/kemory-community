@@ -77,6 +77,9 @@ export async function uploadArtifact(
 ): Promise<ArtifactResponse> {
   const form = new FormData()
   form.append('file', params.file, params.file.name)
+  if (params.file.lastModified > 0) {
+    form.append('occurred_at', new Date(params.file.lastModified).toISOString())
+  }
   if (params.namespace) form.append('namespace', params.namespace)
   if (params.platform) form.append('platform', params.platform)
   if (params.projectId) form.append('project_id', params.projectId)
@@ -96,6 +99,9 @@ export async function uploadMemoryArtifact(
 ): Promise<ArtifactResponse> {
   const form = new FormData()
   form.append('file', file, file.name)
+  if (file.lastModified > 0) {
+    form.append('occurred_at', new Date(file.lastModified).toISOString())
+  }
   return api
     .post(`api/v1/memories/${encodeURIComponent(memoryId)}/artifacts/upload`, { body: form })
     .json()

@@ -182,6 +182,14 @@ class Memory(Base):
         nullable=True,
         comment="When the fact became true (bi-temporal model)",
     )
+    occurred_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment=(
+            "When the underlying content happened at its source; distinct "
+            "from created_at (ingest time) and valid_at (fact validity)"
+        ),
+    )
     invalid_at = Column(
         DateTime(timezone=True),
         nullable=True,

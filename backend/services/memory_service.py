@@ -35,7 +35,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,6 +76,10 @@ class MemoryCreate(BaseModel):
     session_id: str | None = Field(None, max_length=200, description="Session context identifier")
     round_id: str | None = Field(None, max_length=200, description="Round/turn identifier within session")
     valid_at: str | None = Field(None, description="ISO-8601 timestamp when the fact became true")
+    occurred_at: str | None = Field(
+        None,
+        description="ISO-8601 timestamp when the content happened at its source",
+    )
     visibility: str = Field(
         default="user-private", description="agent-private, user-private, team, org-public"
     )
@@ -95,6 +99,17 @@ class MemoryCreate(BaseModel):
             "as-requested even if similar ones exist."
         ),
     )
+
+    @field_validator("valid_at", "occurred_at")
+    @classmethod
+    def validate_iso_timestamp(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("must be a valid ISO-8601 timestamp") from exc
+        return value
 
 
 class MemoryUpdate(BaseModel):
@@ -138,6 +153,7 @@ class MemoryResponse(BaseModel):
     session_id: str | None = None
     round_id: str | None = None
     valid_at: str | None = None
+    occurred_at: str | None = None
     invalid_at: str | None = None
     decay_score: float | None = None
     temporal_anchor: str | None = None
@@ -498,13 +514,16 @@ async def create_memory(
     if request.ttl_seconds:
         expires_at = now + timedelta(seconds=request.ttl_seconds)
 
-    # Parse valid_at if provided
-    valid_at_dt = None
-    if request.valid_at:
-        try:
-            valid_at_dt = datetime.fromisoformat(request.valid_at.replace("Z", "+00:00"))
-        except ValueError:
-            pass
+    valid_at_dt = (
+        datetime.fromisoformat(request.valid_at.replace("Z", "+00:00"))
+        if request.valid_at
+        else None
+    )
+    occurred_at_dt = (
+        datetime.fromisoformat(request.occurred_at.replace("Z", "+00:00"))
+        if request.occurred_at
+        else None
+    )
 
     # PR #17: org_id is NOT NULL on kemory_memories. Use the auth
     # context's org_id, falling back to the migration legacy sentinel
@@ -566,6 +585,7 @@ async def create_memory(
         session_id=request.session_id,
         round_id=request.round_id,
         valid_at=valid_at_dt,
+        occurred_at=occurred_at_dt,
         decay_score=1.0,
         # MV3-E01: Visibility
         visibility=request.visibility,
@@ -954,11 +974,11 @@ async def search_memories(
     if request.date_from:
         dt_from = _resolve_date(request.date_from, now)
         if dt_from:
-            query = query.where(Memory.created_at >= dt_from)
+            query = query.where(func.coalesce(Memory.occurred_at, Memory.created_at) >= dt_from)
     if request.date_to:
         dt_to = _resolve_date(request.date_to, now)
         if dt_to:
-            query = query.where(Memory.created_at <= dt_to)
+            query = query.where(func.coalesce(Memory.occurred_at, Memory.created_at) <= dt_to)
 
     # F12 compression_tier filter is applied client-side via _tier_from_meta()
     # after the SQL pass — keeps it consistent across both fts and hybrid paths.
@@ -998,6 +1018,7 @@ async def search_memories(
                         session_id=r.get("session_id"),
                         round_id=r.get("round_id"),
                         valid_at=r.get("valid_at"),
+                        occurred_at=r.get("occurred_at"),
                         invalid_at=r.get("invalid_at"),
                         decay_score=r.get("decay_score"),
                         temporal_anchor=r.get("temporal_anchor"),
@@ -1533,6 +1554,7 @@ def _to_response(memory: Memory) -> MemoryResponse:
         session_id=memory.session_id,
         round_id=memory.round_id,
         valid_at=memory.valid_at.isoformat() if memory.valid_at else None,
+        occurred_at=memory.occurred_at.isoformat() if memory.occurred_at else None,
         invalid_at=memory.invalid_at.isoformat() if memory.invalid_at else None,
         decay_score=memory.decay_score,
         temporal_anchor=memory.temporal_anchor,
@@ -1566,6 +1588,7 @@ def _memory_to_dict(memory: Memory, include_embedding: bool = True) -> dict:
         "content_type": memory.content_type,
         "created_at": memory.created_at.isoformat() if memory.created_at else "",
         "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,
+        "occurred_at": memory.occurred_at.isoformat() if memory.occurred_at else None,
         "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,
         "metadata": memory.meta,
         "source_agent": str(memory.source_agent_id) if memory.source_agent_id else "",

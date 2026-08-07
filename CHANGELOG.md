@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Source chronology for memories, chat turns, and artifacts, including migration `019`,
+  source-date filtering, MCP output, file modified dates, and Happened/Added/Updated views.
 - Rolling, token-budgeted session context with the latest three exchanges kept raw.
 - Read-only digest provenance expansion through `kemory_rehydrate_session_sources`.
 - Hosted-to-community delta ledger for explicit port/adapt/exclude decisions.

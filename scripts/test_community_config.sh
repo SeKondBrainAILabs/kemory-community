@@ -180,8 +180,8 @@ fi
 echo "Verifying Alembic revision inside the API container"
 alembic_revision="$("${COMPOSE[@]}" exec -T api python -m alembic -c alembic.ini current)"
 echo "$alembic_revision"
-if [[ "$alembic_revision" != *"018 (head)"* ]]; then
-  echo "Expected Alembic revision 018 (head)" >&2
+if [[ "$alembic_revision" != *"019 (head)"* ]]; then
+  echo "Expected Alembic revision 019 (head)" >&2
   exit 1
 fi
 
@@ -267,9 +267,16 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
             "namespace": "community:smoke",
             "content": "Community config smoke test memory for pgvector and local identity.",
             "content_type": "text",
+            "occurred_at": "2025-02-03T04:05:00Z",
         },
     )
-    check("memory write succeeds with local API key", memory.status_code in (200, 201), str(memory.status_code))
+    memory_body = memory.json() if memory.status_code in (200, 201) else {}
+    check(
+        "memory source date round-trips",
+        memory.status_code in (200, 201)
+        and memory_body.get("occurred_at") == "2025-02-03T04:05:00+00:00",
+        f"status={memory.status_code} occurred_at={memory_body.get('occurred_at')}",
+    )
 
     search = client.post(
         "/api/v1/memories/search",
@@ -282,7 +289,11 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
     artifact = client.post(
         "/api/v1/artifacts/upload",
         headers={"X-API-Key": api_key},
-        data={"namespace": "community:smoke", "artifact_type": "text"},
+        data={
+            "namespace": "community:smoke",
+            "artifact_type": "text",
+            "occurred_at": "2025-02-03T04:05:00Z",
+        },
         files={"file": ("community.txt", b"community local_fs artifact\n", "text/plain")},
     )
     body = artifact.json() if artifact.status_code in (200, 201) else {}
@@ -291,6 +302,7 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
         "artifact upload succeeds on local_fs",
         artifact.status_code in (200, 201)
         and body.get("namespace") == "community:smoke"
+        and body.get("occurred_at") == "2025-02-03T04:05:00+00:00"
         and bool(body.get("content_url"))
         and bool(metadata.get("storage_key")),
         f"status={artifact.status_code} url={bool(body.get('content_url'))}",

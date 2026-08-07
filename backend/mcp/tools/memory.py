@@ -67,6 +67,10 @@ DEFINITIONS: list[MCPToolDefinition] = [
                     "type": "integer",
                     "description": "Optional time-to-live in seconds (min 60, max 31536000)",
                 },
+                "occurred_at": {
+                    "type": "string",
+                    "description": "Optional ISO-8601 source time when the content happened",
+                },
             },
             "required": ["namespace", "content"],
         },
@@ -152,6 +156,7 @@ async def _handle_store_memory(args, user_id, agent_id, db):
         content_type=args.get("content_type", "text"),
         metadata=args.get("metadata"),
         ttl_seconds=args.get("ttl_seconds"),
+        occurred_at=args.get("occurred_at"),
     )
     # WS-2: pull the request-scoped org_id (set by require_auth) so the row
     # is tagged with the caller's tenant rather than falling through to the
@@ -207,6 +212,7 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
             f"Namespace: {item.namespace}\n"
             f"Type: {item.content_type}\n"
             f"Content: {item.content[:500]}{'...' if len(item.content) > 500 else ''}\n"
+            f"Happened: {item.occurred_at or 'Unknown'} | Added: {item.created_at}\n"
             f"Version: {item.version} | Quality: {item.quality_score or 'N/A'}\n"
         )
 

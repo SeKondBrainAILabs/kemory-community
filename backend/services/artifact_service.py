@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import mimetypes
 import uuid
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -91,6 +92,7 @@ async def upload_artifact(
     # Caller-supplied type override; inferred from MIME if not given.
     artifact_type: str | None = None,
     language: str | None = None,
+    occurred_at: datetime | None = None,
     extra_metadata: dict[str, Any] | None = None,
     db: AsyncSession,
 ) -> ArtifactResponse:
@@ -189,6 +191,7 @@ async def upload_artifact(
         content_url=None,
         content_sha256=put_result.sha256,
         artifact_metadata=meta,
+        occurred_at=occurred_at,
     )
     db.add(row)
     await db.flush()

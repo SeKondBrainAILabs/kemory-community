@@ -42,6 +42,7 @@ export interface MemoryCreate {
   content_type?: string
   metadata?: Record<string, unknown>
   ttl_seconds?: number
+  occurred_at?: string
 }
 
 export interface MemoryUpdate {
@@ -69,6 +70,7 @@ export interface MemoryResponse {
   session_id: string | null
   round_id: string | null
   valid_at: string | null
+  occurred_at: string | null
   invalid_at: string | null
   decay_score: number | null
   temporal_anchor: string | null
@@ -89,6 +91,8 @@ export interface MemorySearchRequest {
   tags?: string[]
   limit?: number
   offset?: number
+  date_from?: string
+  date_to?: string
   // F12: Filter by compression tier
   compression_tier?: 'L1' | 'L2' | 'L3.1'
   // Backend rejects search_mode='fts' + empty query with 422 (Memory Explorer

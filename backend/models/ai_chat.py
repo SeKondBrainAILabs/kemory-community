@@ -210,6 +210,11 @@ class AIChatTurn(Base):
     tool_calls = Column(JSONType(), nullable=True)
     turn_metadata = Column(JSONType(), nullable=True)
     sequence = Column(Integer(), nullable=False)
+    occurred_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Original platform timestamp of the message; NULL if unknown.",
+    )
 
     created_at = Column(
         DateTime(timezone=True),
@@ -303,6 +308,11 @@ class AIChatArtifact(Base):
     content_url = Column(String(1000), nullable=True)
     content_sha256 = Column(String(64), nullable=False)
     artifact_metadata = Column(JSONType(), nullable=True)
+    occurred_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Source file authored or modified date; NULL if unknown.",
+    )
 
     created_at = Column(
         DateTime(timezone=True),

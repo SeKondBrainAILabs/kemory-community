@@ -39,6 +39,7 @@ export interface ArtifactResponse {
   // Convenience fields extracted server-side from artifact_metadata.
   filename: string | null
   size_bytes: number | null
+  occurred_at: string | null
   created_at: string
 }
 
@@ -54,6 +55,7 @@ export interface TurnResponse {
   tool_calls: Array<Record<string, unknown>> | null
   turn_metadata: Record<string, unknown> | null
   sequence: number
+  occurred_at: string | null
   created_at: string
   artifacts: ArtifactResponse[]
 }
