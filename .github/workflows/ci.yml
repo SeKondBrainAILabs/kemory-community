@@ -23,7 +23,7 @@ jobs:
           ruff check backend kemory kemory_cli tests
           python -m compileall backend kemory kemory_cli
       - name: Python unit tests
-        run: pytest -q -o addopts= tests/unit
+        run: PYTHONPATH=. pytest -q -o addopts= tests/unit
       - name: Dashboard build
         working-directory: dashboard
         run: npm ci && npm run build
