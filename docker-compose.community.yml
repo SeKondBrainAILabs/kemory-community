@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: kora
       POSTGRES_PASSWORD: kora_secret
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - community_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -62,7 +62,7 @@ services:
     expose:
       - "8000"
     ports:
-      - "8111:8000"
+      - "127.0.0.1:8111:8000"
     volumes:
       - community_api_data:/app/.community
     healthcheck:
@@ -84,7 +84,7 @@ services:
       API_PUBLIC_URL: http://127.0.0.1:8111
       SKIP_AUTH: "true"
     ports:
-      - "5175:5173"
+      - "127.0.0.1:5175:5173"
 
 volumes:
   community_api_data:
