@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Unified, keyset-paginated namespace timeline interleaving source-ordered chats and memories.
 - Source chronology for memories, chat turns, and artifacts, including migration `019`,
   source-date filtering, MCP output, file modified dates, and Happened/Added/Updated views.
 - Rolling, token-budgeted session context with the latest three exchanges kept raw.
