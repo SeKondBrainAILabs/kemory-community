@@ -22,7 +22,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Cohort | Decision | Community treatment |
 | --- | --- | --- |
 | Rolling session digest and raw-source rehydration (hosted PR #152) | Port and adapt | New `018` migration, local user scope, latest three exchanges raw, whole-item source expansion, no AAAK prompt context. |
-| MCP JSON-RPC transport and canonical names | Port and adapt | Advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
+| MCP JSON-RPC transport and canonical names | Ported and adapted | Standard JSON-RPC 2.0 over HTTP and stdio; advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
 | Chat source chronology, timeline, content dates, namespace tags | Planned port | Keep local user scope and PostgreSQL; assign sequential community migrations. |
 | Memory, chat, and namespace dashboard UX | Planned selective port | Keep the current local API-key shell and Tailwind 3; exclude private design-system packages. |
@@ -39,6 +39,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 - Canonical-only MCP discovery with legacy dispatch aliases
 - Pgvector ANN retrieval, transactional vector upsert, ordered batch encoding,
   deterministic RRF, concept boost, and configurable result-score floor
+- Standard MCP JSON-RPC methods at `/mcp/v1`, with stdio bridge parity
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,
