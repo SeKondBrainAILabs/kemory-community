@@ -26,6 +26,20 @@ export DOCKER_BUILDKIT=1
 echo "Validating docker-compose.community.yml"
 "${COMPOSE[@]}" config >/dev/null
 
+echo "Checking reserved community ports"
+compose_json="$("${COMPOSE[@]}" config --format json)"
+COMPOSE_JSON="$compose_json" python3 - <<'PY'
+import json
+import os
+
+services = json.loads(os.environ["COMPOSE_JSON"])["services"]
+expected = {"api": 8111, "dashboard": 5175, "postgres": 5434}
+for service, published in expected.items():
+    actual = {int(port["published"]) for port in services[service].get("ports", [])}
+    if published not in actual:
+        raise SystemExit(f"{service} must publish reserved port {published}; got {sorted(actual)}")
+PY
+
 if command -v shellcheck >/dev/null 2>&1; then
   echo "Running shellcheck"
   shellcheck scripts/test_community_config.sh
@@ -54,8 +68,8 @@ if [ -n "$LEAKS" ]; then
   exit 1
 fi
 
-echo "Building community API image"
-"${COMPOSE[@]}" build api
+echo "Building community API and dashboard images"
+"${COMPOSE[@]}" build api dashboard
 
 echo "Starting community data services"
 "${COMPOSE[@]}" up -d postgres redis
@@ -123,8 +137,43 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
+echo "Starting and probing community dashboard"
+"${COMPOSE[@]}" up -d dashboard
+dashboard_ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS http://127.0.0.1:5175/ >/dev/null 2>&1; then
+    dashboard_ready=1
+    break
+  fi
+  sleep 2
+done
+if [[ "$dashboard_ready" -ne 1 ]]; then
+  "${COMPOSE[@]}" logs --no-color dashboard >&2 || true
+  echo "Dashboard did not become ready on reserved port 5175" >&2
+  exit 1
+fi
+
 echo "Verifying Alembic revision inside the API container"
-"${COMPOSE[@]}" exec -T api python -m alembic -c alembic.ini current
+alembic_revision="$("${COMPOSE[@]}" exec -T api python -m alembic -c alembic.ini current)"
+echo "$alembic_revision"
+if [[ "$alembic_revision" != *"018 (head)"* ]]; then
+  echo "Expected Alembic revision 018 (head)" >&2
+  exit 1
+fi
+
+echo "Verifying canonical MCP discovery surface"
+"${COMPOSE[@]}" exec -T api python - <<'PY'
+from backend.mcp.tools import TOOL_DEFINITIONS
+
+names = [tool.name for tool in TOOL_DEFINITIONS]
+required = {"kemory_get_session_context", "kemory_rehydrate_session_sources"}
+if len(names) != 16 or len(names) != len(set(names)):
+    raise SystemExit(f"expected 16 unique MCP tools, got {names}")
+if any(not name.startswith("kemory_") for name in names):
+    raise SystemExit(f"non-canonical MCP tool advertised: {names}")
+if not required.issubset(names):
+    raise SystemExit(f"session context tools missing: {sorted(required - set(names))}")
+PY
 
 echo "Running qa_full_test.py inside the API container"
 set +e
@@ -136,6 +185,10 @@ if [[ "$qa_status" -eq 0 ]]; then
   echo "qa_full_test.py passed in community Docker mode"
 else
   echo "qa_full_test.py exited $qa_status; checking for local_single_user Bearer-token mismatch"
+  if ! grep -q "Results" "$QA_LOG" || grep -q "Traceback (most recent call last)" "$QA_LOG"; then
+    echo "qa_full_test.py crashed instead of completing its hosted-auth compatibility run" >&2
+    exit "$qa_status"
+  fi
   bearer_probe="$("${COMPOSE[@]}" exec -T api curl -sS -H "Authorization: Bearer community-probe" http://127.0.0.1:8000/api/v1/agents || true)"
   if [[ "$bearer_probe" != *"jwt_requires_hosted_kemory"* ]]; then
     echo "qa_full_test.py failed for a reason other than the expected community Bearer-token rejection" >&2
@@ -177,6 +230,17 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
 
     agents = client.get("/api/v1/agents", headers=headers)
     check("local API key authenticates", agents.status_code == 200, str(agents.status_code))
+
+    tool_list = client.post("/mcp/v1/tools/list", headers=headers, json={})
+    tool_names = [tool["name"] for tool in tool_list.json().get("tools", [])]
+    check(
+        "MCP HTTP discovery advertises 16 canonical tools",
+        tool_list.status_code == 200
+        and len(tool_names) == 16
+        and len(tool_names) == len(set(tool_names))
+        and all(name.startswith("kemory_") for name in tool_names),
+        str(tool_names),
+    )
 
     for scope in ("memory:read", "memory:write", "memory:delete"):
         response = client.post(

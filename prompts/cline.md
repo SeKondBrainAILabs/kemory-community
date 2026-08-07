@@ -2,10 +2,10 @@
 
 ## TL;DR
 
-1. Add the s9nmem MCP server to Cline's MCP settings.
+1. Add the Kemory MCP server to Cline's MCP settings.
 2. Reload VS Code window.
 3. Paste the **System Prompt block** below into Cline's **Custom Instructions**.
-4. Open Cline — verify `s9nmem` tools appear in the MCP servers panel.
+4. Open Cline — verify `kemory` tools appear in the MCP servers panel.
 
 ---
 
@@ -34,14 +34,14 @@ This opens `cline_mcp_settings.json`. Add under `mcpServers`:
 ```
 
 Save → reload VS Code window (`Cmd+Shift+P` → "Reload Window"). The
-Cline MCP panel should show `s9nmem` as connected with its 14 tools.
+Cline MCP panel should show `kemory` as connected with its 16 tools.
 
 ---
 
 ## System Prompt block — paste into Cline's Custom Instructions
 
 ```markdown
-You have the `s9nmem` MCP tools (Kemory — persistent cross-session
+You have the `kemory` MCP tools (Kemory — persistent cross-session
 memory). Use them for ALL persistent memory. VS Code workspace state
 and Cline's per-task context don't survive a window reload; Kemory
 does.
@@ -50,8 +50,8 @@ does.
 
 1. Call `list_namespaces`.
 2. Call `get_context(topic=<current task>)`.
-3. For each namespace you'll touch, call `get_namespace_summary(namespace)`
-   to read the rolling L3.1 / L3.0 cross-session summary.
+3. Call `get_session_context` to restore the rolling digest. Use
+   `rehydrate_session_sources` only for source details you need.
 
 ## When to write — call store_memory immediately
 
@@ -107,9 +107,9 @@ One-line confirmation per write: "stored to Kemory `<namespace>` because <reason
 User: continue the namespace migration
 
 Cline:
-[s9nmem.list_namespaces]
-[s9nmem.get_context(topic="namespace migration")]
-[s9nmem.get_namespace_summary("project:kemory")]
+[calls list_namespaces]
+[calls get_context(topic="namespace migration")]
+[calls get_session_context]
 
 "Project rollup says v3.17.0 already shipped the matcher and
 consolidated_summary; the pending follow-up is migrating the 4 legacy

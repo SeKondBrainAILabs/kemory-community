@@ -2,12 +2,12 @@
 
 ## TL;DR
 
-1. Add the s9nmem MCP server to `~/.claude/settings.json` (one-time, see Setup below).
+1. Add the Kemory MCP server to `~/.claude/settings.json` (one-time, see Setup below).
 2. Restart Claude Code (⌘Q + relaunch — not just a new chat).
 3. Paste the **System Prompt block** at the bottom of this file into either:
    - Project root `CLAUDE.md` (project-specific), or
    - `~/.claude/CLAUDE.md` (applies to every project).
-4. Open a new chat. Ask Claude to "list my Kemory namespaces" — it should call `mcp__s9nmem__list_namespaces` and return your buckets.
+4. Open a new chat. Ask Claude to "list my Kemory namespaces" — it should call `mcp__kemory__list_namespaces` and return your buckets.
 
 ---
 
@@ -40,18 +40,20 @@ After ⌘Q + relaunch, the next session will have these tools:
 
 | Tool | Purpose |
 |---|---|
-| `mcp__s9nmem__list_namespaces` | Discover what memory buckets exist |
-| `mcp__s9nmem__get_context` | Search across namespaces for memories relevant to a topic |
-| `mcp__s9nmem__get_namespace_summary` | Read the rolling cross-session summary (L3.1 / L3.0 fallback) for a namespace |
-| `mcp__s9nmem__store_memory` | Write a new memory |
-| `mcp__s9nmem__recall_memory` | Hybrid search with namespace / type / tag filters |
-| `mcp__s9nmem__find_similar` | Cosine-similarity search for near-duplicates |
-| `mcp__s9nmem__delete_memory` | Soft-delete a memory by id |
-| `mcp__s9nmem__check_access` | Ask the Gatekeeper if you have a permission |
-| `mcp__s9nmem__get_history` | Provenance trail for a memory |
-| `mcp__s9nmem__consolidate_session` | Force a Reflector run on a session |
-| `mcp__s9nmem__list_skills` / `store_skill` | Learned procedures |
-| `mcp__s9nmem__get_raw` / `get_compressed` | L1 raw / L2 AAAK / L3.1 concept / L4 cognition reads |
+| `mcp__kemory__list_namespaces` | Discover what memory buckets exist |
+| `mcp__kemory__get_context` | Search across namespaces for memories relevant to a topic |
+| `mcp__kemory__get_session_context` | Read the rolling cross-session digest and source references |
+| `mcp__kemory__rehydrate_session_sources` | Resolve selected digest references back to raw memories |
+| `mcp__kemory__get_user_context` | Build a cross-namespace session-start summary |
+| `mcp__kemory__store_memory` | Write a new memory |
+| `mcp__kemory__recall_memory` | Hybrid search with namespace / type / tag filters |
+| `mcp__kemory__find_similar` | Cosine-similarity search for near-duplicates |
+| `mcp__kemory__delete_memory` | Soft-delete a memory by id |
+| `mcp__kemory__check_access` | Ask the Gatekeeper if you have a permission |
+| `mcp__kemory__get_history` | Provenance trail for a memory |
+| `mcp__kemory__consolidate_session` | Force a Reflector run on a session |
+| `mcp__kemory__list_skills` / `store_skill` | Learned procedures |
+| `mcp__kemory__get_raw` / `get_compressed` | L1 raw / L2 AAAK / L3.1 concept / L4 cognition reads |
 
 ---
 
@@ -60,7 +62,7 @@ After ⌘Q + relaunch, the next session will have these tools:
 ```markdown
 ## Memory — Kemory MCP first, files only with permission
 
-You MUST use the `mcp__s9nmem__*` MCP tools for ALL persistent memory.
+You MUST use the `mcp__kemory__*` MCP tools for ALL persistent memory.
 NEVER silently read or write files under `~/.claude/projects/*/memory/`.
 If the Kemory MCP path fails for any reason (server not connected, API
 down, permission denied), STOP and ask the user "the Kemory MCP path
@@ -69,9 +71,10 @@ for an explicit yes. Never silently fall back.
 
 ### Session bootstrap (BEFORE reading any other files)
 
-1. `mcp__s9nmem__list_namespaces` — discover available buckets.
-2. `mcp__s9nmem__get_context` with the current task topic — pull relevant memories.
-3. For any namespace you'll touch, `mcp__s9nmem__get_namespace_summary` — read the rolling L3.1 / L3.0 summary.
+1. `mcp__kemory__list_namespaces` — discover available buckets.
+2. `mcp__kemory__get_context` with the current task topic — pull relevant memories.
+3. `mcp__kemory__get_session_context` — restore the rolling digest, then use
+   `mcp__kemory__rehydrate_session_sources` only for source details you need.
 
 ### When to write (call store_memory immediately)
 
@@ -86,7 +89,8 @@ for an explicit yes. Never silently fall back.
 - Topic / conversational context: `get_context(topic, namespace?)`.
 - Specific filter (namespace, content_type, tags): `recall_memory`.
 - Looking for near-duplicates of a fact: `find_similar`.
-- Checking if you've seen this namespace before: `list_namespaces` + read its `consolidated_summary`.
+- Session continuity: `get_session_context`, then `rehydrate_session_sources`
+  for selected source details.
 
 ### Namespaces
 
@@ -117,7 +121,7 @@ Tell the user what you're storing and why, in one sentence.
 
 ## Anti-patterns
 
-- ❌ Calling `Read` on `~/.claude/projects/*/memory/MEMORY.md` instead of `mcp__s9nmem__get_context`.
+- ❌ Calling `Read` on `~/.claude/projects/*/memory/MEMORY.md` instead of `mcp__kemory__get_context`.
 - ❌ Writing a `feedback_*.md` file when the user corrects you (use `store_memory` to `user:feedback`).
 - ❌ Skipping session bootstrap because "the user already told me what they want" — they told you in a previous session, and that session's facts are in Kemory, not in your context.
 - ❌ Silently falling back to local files because Kemory returned an error — STOP and ask first.
@@ -128,12 +132,12 @@ Tell the user what you're storing and why, in one sentence.
 ```
 User: help me ship the namespace feature
 
-Claude: [calls mcp__s9nmem__list_namespaces]
+Claude: [calls mcp__kemory__list_namespaces]
 → ['shared', 'user:preferences', 'user:feedback', 'project:kemory', ...]
-[calls mcp__s9nmem__get_context(topic="namespace feature kemory")]
+[calls mcp__kemory__get_context(topic="namespace feature kemory")]
 → Returns 3 prior memories about KMV-NS-E1 + the rolling project:kemory summary.
-[calls mcp__s9nmem__get_namespace_summary("project:kemory")]
-→ Returns the L3.1 rollup with current state.
+[calls mcp__kemory__get_session_context]
+→ Returns the rolling digest with references to source memories.
 
 "Picking up from KMV-NS-E1 — last session shipped v3.17.0 with the
 namespace matcher and consolidated_summary. The PR #16 docs follow-up

@@ -315,6 +315,7 @@ TENANT_SCOPED_MODEL_NAMES: tuple[str, ...] = (
     "AIChatArtifact",
     "ChatNamespaceMapping",
     "MemoryVector",
+    "SessionDigest",
 )
 
 

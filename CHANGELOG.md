@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Rolling, token-budgeted session context with the latest three exchanges kept raw.
+- Read-only digest provenance expansion through `kemory_rehydrate_session_sources`.
+- Hosted-to-community delta ledger for explicit port/adapt/exclude decisions.
 - Initial repo scaffolding (Apache-2.0 license, README, docs, CI, npm package shell). Backend code lands in v0.1.0.
 - npm setup CLI for Docker-first community runtime configuration.
 - Community backend/dashboard import with Docker compose for API, dashboard, Redis, and pgvector.

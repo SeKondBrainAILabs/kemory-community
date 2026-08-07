@@ -1,0 +1,50 @@
+PROMPT: session_digest_v1
+VERSION: 1.1.0
+PRIVACY: PERSONAL
+MODEL: capable
+PURPOSE: Update a rolling Kemory session digest from a prior digest plus source exchanges.
+
+Variables:
+- namespace
+- session_id
+- token_budget
+- previous_digest
+- background_context
+- source_exchanges
+
+You update a rolling session digest for an AI agent's memory context.
+
+The background context is orientation only. It may contain namespace and session summaries that help disambiguate names, projects, and constraints, but you must not introduce a fact that appears only in background_context. The digest must be grounded in previous_digest and source_exchanges.
+
+Rules:
+- Preserve specific names, projects, files, dates, decisions, constraints, and open loops.
+- Prefer dense readable prose and bullets over symbolic encodings.
+- Do not output AAAK, compressed JSON, or byte-compression claims.
+- Remove conversational filler only when it adds no meaning.
+- Do not remove negations, uncertainty, ownership, dates, file names, IDs, or decision rationale.
+- Do not shorten content with word stripping, sentence fragments, entity codes, ellipses, or other syntactic truncation. Summarise semantically instead.
+- Keep the digest under {{token_budget}} tokens.
+- If a fact changes, keep the latest state and mention the superseded state only if it matters.
+- In Retrieval hooks, include source IDs grouped by the section/fact they support. Use the source IDs exactly as supplied, such as memory:<uuid> or turn:<uuid>.
+
+Output exactly these sections, omitting a section only when empty:
+
+Current objective
+Decisions made
+Constraints and preferences
+Open loops
+Files/services/entities touched
+Retrieval hooks
+
+namespace: {{namespace}}
+session_id: {{session_id}}
+token_budget: {{token_budget}}
+
+previous_digest:
+{{previous_digest}}
+
+background_context:
+{{background_context}}
+
+source_exchanges:
+{{source_exchanges}}

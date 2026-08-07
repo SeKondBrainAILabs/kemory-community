@@ -20,7 +20,8 @@ Builds a structured, token-budgeted context string for agent system prompts.
   4. If hash changed → rebuild and update cache.
 
 **Token budget** (character approximation at 4 chars/token):
-  50% reflections, 30% observations, 20% procedural.
+  50% reflections, 30% observations, 20% procedural. Entries that do not
+  fit are omitted whole; context builders must not emit syntactic fragments.
 
 Story: KMV-V2-E09 — Stable Context (vault_context v2)
 """
@@ -135,24 +136,18 @@ def _sort_procedural(eps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def _truncate_to_chars(text: str, max_chars: int) -> str:
-    """Truncate text to max_chars, appending '...' if truncated."""
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3] + "..."
-
-
 def _format_section(
     label: str,
     episodes: list[dict[str, Any]],
     max_chars: int,
 ) -> str:
-    """Format a single context section, respecting the character budget."""
+    """Format a context section, omitting whole entries over budget."""
     if not episodes:
         return f"### {label}\n_(none)_\n"
 
     lines: list[str] = [f"### {label}"]
     remaining = max_chars
+    omitted = 0
 
     for ep in episodes:
         content = ep.get("content", "").strip()
@@ -166,17 +161,16 @@ def _format_section(
         # Each line costs its length + newline
         line_cost = len(line) + 1
         if remaining <= 0:
+            omitted += 1
             break
         if line_cost > remaining:
-            # Truncate the content to fit
-            available = remaining - (len(f"- [{created}] ") + 1 if created else len("- ") + 1)
-            if available > 10:
-                short = _truncate_to_chars(content, available)
-                line = f"- [{created}] {short}" if created else f"- {short}"
-                lines.append(line)
+            omitted += 1
             break
         lines.append(line)
         remaining -= line_cost
+
+    if omitted and remaining >= len("- [additional entries omitted to fit budget]\n"):
+        lines.append("- [additional entries omitted to fit budget]")
 
     return "\n".join(lines) + "\n"
 

@@ -2,11 +2,11 @@
 
 ## TL;DR
 
-1. Add the s9nmem MCP server to Windsurf's MCP config.
+1. Add the Kemory MCP server to Windsurf's MCP config.
 2. Restart Windsurf.
 3. Add the **Rules block** below to your project's Windsurf rules
    (or to Cascade's global Memory).
-4. Open Cascade — verify `s9nmem` tools appear under the available MCP
+4. Open Cascade — verify `kemory` tools appear under the available MCP
    servers.
 
 ---
@@ -34,8 +34,8 @@ Windsurf → **Settings** → **Cascade** → **MCP Servers** → **Add server**
 }
 ```
 
-Restart Windsurf. The MCP panel in Cascade should show `s9nmem` as
-connected with its 14 tools.
+Restart Windsurf. The MCP panel in Cascade should show `kemory` as
+connected with its 16 tools.
 
 ---
 
@@ -44,7 +44,7 @@ connected with its 14 tools.
 ```markdown
 # Kemory — persistent memory across Windsurf sessions
 
-You have the `s9nmem` MCP tools. Use them for ALL persistent memory.
+You have the `kemory` MCP tools. Use them for ALL persistent memory.
 Cascade's built-in Memory is per-workspace and doesn't sync across
 machines or repos; Kemory does.
 
@@ -52,8 +52,8 @@ machines or repos; Kemory does.
 
 1. Call `list_namespaces`.
 2. Call `get_context(topic=<current task>)`.
-3. For any namespace you'll touch, call `get_namespace_summary(namespace)`
-   to read the rolling L3.1 / L3.0 cross-session summary.
+3. Call `get_session_context` to restore the rolling digest. Use
+   `rehydrate_session_sources` only for source details you need.
 
 ## When to write — call store_memory immediately
 
@@ -109,9 +109,9 @@ One-line confirmation per write: "stored to Kemory `<namespace>` because <reason
 User: pick up where we left off on the kemory namespace work
 
 Cascade:
-[s9nmem.list_namespaces]
-[s9nmem.get_context(topic="kemory namespace work")]
-[s9nmem.get_namespace_summary("project:kemory")]
+[calls list_namespaces]
+[calls get_context(topic="kemory namespace work")]
+[calls get_session_context]
 
 "Reading the project:kemory L3.1 summary — last activity was
 v3.17.0 deploy on 2026-04-20 (namespace matcher + consolidated_summary

@@ -17,6 +17,8 @@ Included:
 - Session prewarm
 - Hybrid recall (vector cosine union BM25, reciprocal rank fusion)
 - MCP server over HTTP at `/mcp` with all `kemory_*` tools
+- Rolling L2.1 session digest context with latest-three raw exchanges
+- Drill-to-raw source rehydration with whole-item token budgeting
 - Full chats-v1 capture (`POST /api/v1/chats`, ChatGPT/Claude export ingestion)
 - Artifacts with local filesystem blob storage
 - Export endpoint (JSONL bundle) + import endpoint
@@ -75,3 +77,5 @@ Mem0/Letta/Zep, HN + Product Hunt launch.
 ## Questions?
 
 Open a Discussion. Watch this repo to be notified when v0.1 ships.
+
+Hosted changes are triaged in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
