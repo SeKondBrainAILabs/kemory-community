@@ -1,11 +1,7 @@
-"""
-Kemory CLI — MCP stdio bridge.
+"""Kemory Community MCP stdio bridge.
 
-Replaces the standalone ``mcp_bridge/server.py`` with one that:
-  * Reads ``~/.kemory/credentials`` instead of an env-var API key.
-  * Falls back to ``KEMORY_API_KEY`` (or the legacy aliases
-    ``S9NMV_API_KEY`` / ``KORA_API_KEY``) if set, so existing API-key-based
-    setups keep working unchanged.
+Reads the local community credential or an API-key environment variable and
+always forwards ``X-API-Key``. Bearer tokens are not accepted by this edition.
 
 The bridge subscribes to two stdio MCP methods (list_tools, call_tool) and
 forwards them as JSON-RPC 2.0 to ``$KEMORY_URL/mcp/v1``.
@@ -30,13 +26,6 @@ logger = logging.getLogger("kemory.mcp_bridge")
 _legacy_alias_warned = False
 _request_ids = itertools.count(1)
 
-# Active environment for this bridge process. Set by ``serve(env)`` from the
-# ``kemory --env <env> mcp serve`` invocation the MCP host runs; credential
-# lookups below load ``credentials-<env>``. Defaults to the active env
-# (KEMORY_ENV or prod) when serve() isn't given one.
-_ENV: str | None = None
-
-
 def _resolve_url() -> str:
     """Resolve the kemory base URL.
 
@@ -47,19 +36,18 @@ def _resolve_url() -> str:
     """
     if env := os.environ.get("KEMORY_URL"):
         return env
-    creds = Credentials.load(_ENV)
+    creds = Credentials.load()
     if creds and creds.kemory_url:
         return creds.kemory_url
-    return "http://localhost:8111"
+    return "http://127.0.0.1:8111"
 
 
 def _build_headers() -> dict[str, str]:
     """Pick the right auth header.
 
-    1. ``KEMORY_API_KEY`` (or legacy aliases ``S9NMV_API_KEY``, ``KORA_API_KEY``) → X-API-Key
-    2. local ``~/.kemory/credentials`` access_token -> X-API-Key
-    3. non-local cached access_token -> Authorization: Bearer (compatibility)
-    4. neither -> empty (calls will fail with a clear message)
+    1. ``KEMORY_LOCAL_API_KEY`` / ``KEMORY_API_KEY`` (or legacy aliases)
+    2. local ``~/.kemory-community/credentials.json`` API key
+    3. neither -> empty (calls fail with a clear message)
 
     P1 #9: KEMORY_API_KEY is the canonical name. Legacy aliases are
     accepted (with a one-time deprecation log on first use) so existing
@@ -67,10 +55,13 @@ def _build_headers() -> dict[str, str]:
     """
     headers: dict[str, str] = {"Content-Type": "application/json"}
     api_key = (
-        os.environ.get("KEMORY_API_KEY") or os.environ.get("S9NMV_API_KEY") or os.environ.get("KORA_API_KEY")
+        os.environ.get("KEMORY_LOCAL_API_KEY")
+        or os.environ.get("KEMORY_API_KEY")
+        or os.environ.get("S9NMV_API_KEY")
+        or os.environ.get("KORA_API_KEY")
     )
     # Warn once if the caller is on a legacy alias.
-    if api_key and not os.environ.get("KEMORY_API_KEY"):
+    if api_key and not (os.environ.get("KEMORY_LOCAL_API_KEY") or os.environ.get("KEMORY_API_KEY")):
         global _legacy_alias_warned
         if not _legacy_alias_warned:
             logger.warning(
@@ -81,12 +72,9 @@ def _build_headers() -> dict[str, str]:
     if api_key:
         headers["X-API-Key"] = api_key
         return headers
-    creds = Credentials.load(_ENV)
+    creds = Credentials.load()
     if creds:
-        if creds.issuer == "local" or creds.client_id == "local":
-            headers["X-API-Key"] = creds.access_token
-        else:
-            headers["Authorization"] = f"Bearer {creds.access_token}"
+        headers["X-API-Key"] = creds.api_key
     return headers
 
 
@@ -178,7 +166,7 @@ async def list_tools() -> list[Any]:
                     name="kemory_unreachable",
                     description=(
                         f"Kemory at {_resolve_url()} is not reachable. "
-                        "Run `kemory login` (if you haven't yet) or check the URL."
+                        "Run `kemory configure` (if you haven't yet) or check the URL."
                     ),
                     inputSchema={"type": "object", "properties": {}},
                 )
@@ -189,13 +177,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
     from mcp.types import TextContent
 
     headers = _build_headers()
-    if "Authorization" not in headers and "X-API-Key" not in headers:
+    if "X-API-Key" not in headers:
         return [
             TextContent(
                 type="text",
                 text=(
-                    "Kemory has no credentials. Run `kemory login` to authenticate, "
-                    "or set KEMORY_API_KEY for API-key auth."
+                    "Kemory has no credentials. Run `kemory configure`, or set "
+                    "KEMORY_LOCAL_API_KEY."
                 ),
             )
         ]
@@ -275,11 +263,8 @@ async def _main() -> None:
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-def serve(env: str | None = None) -> None:
-    """Entry point invoked by ``kemory mcp serve``. ``env`` selects which
-    ``credentials-<env>`` the bridge forwards (default: active env)."""
-    global _ENV
-    _ENV = env
+def serve() -> None:
+    """Entry point invoked by ``kemory mcp serve``."""
     asyncio.run(_main())
 
 
