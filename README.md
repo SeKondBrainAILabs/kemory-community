@@ -9,8 +9,8 @@
 
 ## Status
 
-v0.1.0 community build is in progress. The Docker runtime is the default
-setup path for local use and QA.
+v0.1.0 is available. The Docker runtime is the default setup path for local
+use and QA; current development selectively ports compatible hosted features.
 
 ## Quick Start
 
@@ -30,6 +30,8 @@ Kemory, so memories are portable.
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the full table.
 See [docs/PORT_REGISTRY.md](docs/PORT_REGISTRY.md) for the local Docker
 ports.
+See [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md) for the
+hosted-to-community port policy and current sync status.
 
 ## Questions / feedback
 

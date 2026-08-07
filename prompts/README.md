@@ -24,7 +24,7 @@ the AI tools — these prompts give it the *behaviour*.**
 ## What every prompt teaches the AI
 
 1. **Identity & connection** — where Kemory lives, how to authenticate.
-2. **Tool reference** — all 14 `mcp__s9nmem__*` tools and when to call each.
+2. **Tool reference** — all 16 `mcp__kemory__*` tools and when to call each.
 3. **Namespace convention** — `shared`, `user:preferences`, `user:feedback`, `project:*`, `agent:*`.
 4. **Memory policy** — Kemory-first; STOP and ask the user before any local-file fallback; never store secrets.
 5. **Session bootstrap** — call `list_namespaces` + `get_context` BEFORE anything else.

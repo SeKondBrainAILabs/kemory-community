@@ -19,6 +19,7 @@ from backend.models.memory_event import MemoryEvent
 from backend.models.memory_vector import MemoryVector
 from backend.models.namespace_policy import NamespacePolicy
 from backend.models.permission import PermissionRule
+from backend.models.session_digest import SessionDigest
 from backend.models.session_summary import SessionSummary
 from backend.models.team import Team, TeamMember  # WS-4 + WS-9
 
@@ -35,6 +36,7 @@ __all__ = [
     "MemoryEvent",
     "MemoryVector",
     "NamespacePolicy",
+    "SessionDigest",
     "SessionSummary",
     "Team",
     "TeamMember",

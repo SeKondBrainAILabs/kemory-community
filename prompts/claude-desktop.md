@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-1. Add the s9nmem MCP server to Claude Desktop's config (path differs by OS — see Setup).
+1. Add the Kemory MCP server to Claude Desktop's config (path differs by OS — see Setup).
 2. Quit Claude Desktop completely (⌘Q on macOS, right-click tray icon → Quit on Windows) and relaunch.
 3. Paste the **System Prompt block** below into your Claude Desktop **Project Knowledge** (per-project) or **Custom Instructions** (global).
 
@@ -38,7 +38,7 @@ Add under `mcpServers`:
 ```
 
 After relaunch, click the tools/plug icon in the Claude Desktop input bar
-to verify `s9nmem` is listed with its 14 tools.
+to verify `kemory` is listed with its 16 tools.
 
 ---
 
@@ -47,7 +47,7 @@ to verify `s9nmem` is listed with its 14 tools.
 ```markdown
 ## Memory — Kemory MCP first, files only with permission
 
-Use the `s9nmem` MCP tools for ALL persistent memory across sessions.
+Use the `kemory` MCP tools for ALL persistent memory across sessions.
 DO NOT rely on conversation context alone for facts the user shares —
 those will be lost when this conversation ends. STORE them in Kemory.
 
@@ -55,7 +55,8 @@ those will be lost when this conversation ends. STORE them in Kemory.
 
 1. Call `list_namespaces` — discover what memory buckets exist for this user.
 2. Call `get_context` with the conversation topic — pull relevant prior memories.
-3. For any namespace you'll touch heavily, call `get_namespace_summary` — read the rolling L3.1 cross-session summary.
+3. Call `get_session_context` to restore the rolling digest. Use
+   `rehydrate_session_sources` only for source details you need.
 
 ### When to write — call store_memory immediately
 
@@ -112,9 +113,8 @@ Tell the user what you're storing in Kemory and why, in one sentence.
 User: where were we on the kemory namespace work?
 
 Claude: [calls list_namespaces, sees 'project:kemory']
-[calls get_namespace_summary('project:kemory')]
-→ Reads the L3.1 rollup: "v3.17.0 shipped 2026-04-20 with namespace
-   matcher + consolidated_summary; PR #16 open for CLAUDE.md docs."
+[calls get_session_context]
+→ Reads the rolling digest and its source references.
 
 "You shipped v3.17.0 last week — namespace matcher and consolidated
 summary went live. PR #16 with the CLAUDE.md docs update is still

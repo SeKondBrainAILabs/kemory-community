@@ -2,11 +2,11 @@
 
 ## TL;DR
 
-1. Add the s9nmem MCP server to Cursor's MCP config.
+1. Add the Kemory MCP server to Cursor's MCP config.
 2. Restart Cursor.
 3. Add the **Rules block** below to your project's `.cursorrules` (or
    user-level Rules for Cursor).
-4. Open Composer / Chat — verify `mcp_s9nmem_*` appears in the available
+4. Open Composer / Chat — verify `mcp_kemory_*` appears in the available
    tools.
 
 ---
@@ -35,7 +35,7 @@ Cursor → **Settings** → **Cursor Settings** → **MCP** → **Add new MCP se
 ```
 
 Restart Cursor. The MCP panel should show the s9nmem server as
-**connected** with 14 tools.
+**connected** with 16 tools.
 
 ---
 
@@ -44,7 +44,7 @@ Restart Cursor. The MCP panel should show the s9nmem server as
 ```markdown
 # Kemory — persistent memory across Cursor sessions
 
-You have the `s9nmem` MCP tools available. Use them for ALL persistent
+You have the `kemory` MCP tools available. Use them for ALL persistent
 memory. Cursor's per-chat context resets between sessions; Kemory
 doesn't.
 
@@ -52,8 +52,8 @@ doesn't.
 
 1. Call `list_namespaces` — discover what buckets exist.
 2. Call `get_context(topic=<current task>)` — pull relevant prior memories.
-3. For any namespace you'll touch, call `get_namespace_summary(namespace)`
-   to read the rolling L3.1 / L3.0 cross-session summary.
+3. Call `get_session_context` to restore the rolling digest. Use
+   `rehydrate_session_sources` only for source details you need.
 
 ## When to write — call store_memory immediately
 
@@ -116,8 +116,8 @@ Cursor [Composer]:
 → ['shared', 'user:preferences', 'project:core_kora', 'project:peoplefinder', ...]
 [calls get_context(topic="auth module refactor")]
 → Returns 4 prior memories about Keycloak integration patterns.
-[calls get_namespace_summary("project:core_kora")]
-→ Reads the L3.1 rollup: "Auth uses Keycloak SSO; never use OpenAI; ..."
+[calls get_session_context]
+→ Reads the rolling digest and its source references.
 
 "Picking up — this repo uses Keycloak SSO and prior sessions established
 that auth tokens flow through `core_backend.organizations.id` per

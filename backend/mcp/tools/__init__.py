@@ -21,13 +21,12 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config.settings import settings
 from backend.mcp.tools import consolidation, memory, meta, namespaces, skills
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 
 # ─── Aggregate ────────────────────────────────────────────────────────────
 
-_LEGACY_TOOL_DEFINITIONS: list[MCPToolDefinition] = [
+_SOURCE_TOOL_DEFINITIONS: list[MCPToolDefinition] = [
     *memory.DEFINITIONS,
     *namespaces.DEFINITIONS,
     *consolidation.DEFINITIONS,
@@ -36,9 +35,9 @@ _LEGACY_TOOL_DEFINITIONS: list[MCPToolDefinition] = [
 ]
 
 
-def _kemory_alias(tool: MCPToolDefinition) -> MCPToolDefinition | None:
+def _canonical_tool(tool: MCPToolDefinition) -> MCPToolDefinition:
     if not tool.name.startswith("s9nmem_"):
-        return None
+        return tool
     return tool.model_copy(
         update={
             "name": "kemory_" + tool.name.removeprefix("s9nmem_"),
@@ -48,8 +47,7 @@ def _kemory_alias(tool: MCPToolDefinition) -> MCPToolDefinition | None:
 
 
 TOOL_DEFINITIONS: list[MCPToolDefinition] = [
-    *[alias for tool in _LEGACY_TOOL_DEFINITIONS if (alias := _kemory_alias(tool)) is not None],
-    *_LEGACY_TOOL_DEFINITIONS,
+    *[_canonical_tool(tool) for tool in _SOURCE_TOOL_DEFINITIONS],
 ]
 
 # Family handlers merge into a single dispatch dict. New tools added in any
@@ -69,18 +67,15 @@ del _name, _handler
 
 
 # ─── WS-6: scope hint for LLMs ────────────────────────────────────────────
-# Appended to every tool description at load time so the calling LLM
-# understands the multi-tenant boundary without having to re-train on
-# product copy. Idempotent — re-import does not double-append because each
-# tool only gets the hint when its description doesn't already contain it.
-_TENANT_SCOPE_HINT = (
-    "\n\nScope: memories are isolated per-organisation and per-user. You "
-    "cannot read or write outside your org, and (by default) you cannot "
-    "see other users' private memories within your org. Use the "
-    "visibility option (private/team/org) to share with teammates."
+# Appended to every tool description at load time so callers see the
+# Community runtime boundary. Idempotent across module reloads.
+_COMMUNITY_SCOPE_HINT = (
+    "\n\nScope: this Kemory Community instance is a local single-user vault "
+    "authenticated with X-API-Key. Data stays in the configured local "
+    "Postgres/pgvector database and local artifact storage."
     "\n\nWhat to store (good vs bad examples):"
     "\n  GOOD: 'User prefers TypeScript with strict mode and pnpm.'"
-    "\n  GOOD: 'Project uses Postgres 16, FalkorDB 1.4, deploy via Tilt.'"
+    "\n  GOOD: 'Project uses Postgres 16 with pgvector and runs via Docker Compose.'"
     "\n  GOOD: 'User asked to refactor to async; in progress on branch X.'"
     "\n  BAD : 'The user said hello.'  (transient — not worth storing)"
     "\n  BAD : 'API key abc123.'       (NEVER store credentials)"
@@ -88,8 +83,8 @@ _TENANT_SCOPE_HINT = (
 )
 
 for _tool in TOOL_DEFINITIONS:
-    if _TENANT_SCOPE_HINT not in _tool.description:
-        _tool.description = _tool.description.rstrip() + _TENANT_SCOPE_HINT
+    if _COMMUNITY_SCOPE_HINT not in _tool.description:
+        _tool.description = _tool.description.rstrip() + _COMMUNITY_SCOPE_HINT
 del _tool
 
 
@@ -105,12 +100,11 @@ async def handle_tool_call(
 ) -> MCPToolResult:
     """Dispatch a tool call to the appropriate family handler.
 
-    All tools are permission-checked via the Gatekeeper inside the handler.
-    Backwards-compat: legacy `kora_` prefix is rewritten to `s9nmem_`.
+    Legacy ``s9nmem_*`` and ``kora_*`` names remain dispatch aliases.
     """
     if tool_name.startswith("kora_"):
-        tool_name = "s9nmem_" + tool_name[5:]
-    if settings.kmv_identity == "local_single_user" and tool_name.startswith("s9nmem_"):
+        tool_name = "kemory_" + tool_name.removeprefix("kora_")
+    if tool_name.startswith("s9nmem_"):
         tool_name = "kemory_" + tool_name.removeprefix("s9nmem_")
 
     handler = HANDLERS.get(tool_name)

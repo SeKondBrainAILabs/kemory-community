@@ -2,9 +2,11 @@
 MCP tools — namespace listing and contextual retrieval.
 
 Tools in this module:
-  s9nmem_list_namespaces   — enumerate namespaces + memory counts
-  s9nmem_get_context       — topic-relevant memories with optional LLM synthesis
-  s9nmem_get_user_context  — cross-namespace summary for session-start injection
+  kemory_list_namespaces — enumerate namespaces + memory counts
+  kemory_get_context — topic-relevant memories with optional LLM synthesis
+  kemory_get_session_context — rolling digest plus latest raw exchanges
+  kemory_rehydrate_session_sources — expand digest provenance to raw sources
+  kemory_get_user_context — cross-namespace summary for session-start injection
 """
 
 from __future__ import annotations
@@ -19,7 +21,56 @@ from backend.services.memory_service import (
     list_namespaces,
     search_memories,
 )
+from backend.services.session_digest_service import get_session_context, rehydrate_session_sources
 from backend.services.user_context_service import get_user_context
+
+_SESSION_CONTEXT_DEFINITION = MCPToolDefinition(
+    name="kemory_get_session_context",
+    description=(
+        "Get prompt-ready context for one namespace session. Older exchanges are "
+        "folded into a readable rolling digest while the latest exchanges remain "
+        "raw. AAAK is never returned because it is a storage/export format."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "session_id": {"type": "string"},
+            "chat_id": {"type": "string"},
+            "topic": {"type": "string"},
+            "raw_tail_count": {"type": "integer", "default": 3},
+            "token_budget": {"type": "integer", "default": 900},
+            "max_relevant_memories": {"type": "integer", "default": 5},
+            "model": {"type": "string"},
+            "include_expansion_hooks": {"type": "boolean", "default": False},
+        },
+        "required": ["namespace", "session_id"],
+    },
+)
+
+_REHYDRATE_SESSION_SOURCES_DEFINITION = MCPToolDefinition(
+    name="kemory_rehydrate_session_sources",
+    description=(
+        "Expand rolling-digest provenance IDs to exact raw memories or chat turns. "
+        "The operation is read-only and includes whole items only; it never returns AAAK."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "session_id": {"type": "string"},
+            "source_exchange_ids": {"type": "array", "items": {"type": "string"}},
+            "source_memory_ids": {"type": "array", "items": {"type": "string"}},
+            "source_turn_ids": {"type": "array", "items": {"type": "string"}},
+            "query": {"type": "string"},
+            "trigger": {"type": "string", "enum": ["explicit", "heuristic"], "default": "explicit"},
+            "token_budget": {"type": "integer", "default": 700},
+            "max_items": {"type": "integer", "default": 3},
+            "model": {"type": "string"},
+        },
+        "required": ["namespace", "session_id"],
+    },
+)
 
 _USER_CONTEXT_DEFINITION = MCPToolDefinition(
     name="s9nmem_get_user_context",
@@ -105,6 +156,8 @@ DEFINITIONS: list[MCPToolDefinition] = [
             "required": ["topic"],
         },
     ),
+    _SESSION_CONTEXT_DEFINITION,
+    _REHYDRATE_SESSION_SOURCES_DEFINITION,
     _USER_CONTEXT_DEFINITION,
 ]
 
@@ -255,8 +308,93 @@ async def _handle_get_user_context(args, user_id, agent_id, db):
     )
 
 
+async def _handle_get_session_context(args, user_id, agent_id, db):
+    namespace = args.get("namespace")
+    session_id = args.get("session_id")
+    if not namespace or not session_id:
+        missing = "namespace" if not namespace else "session_id"
+        return MCPToolResult(
+            content=[{"type": "text", "text": f"Validation error: {missing} is required."}],
+            isError=True,
+        )
+
+    result = await get_session_context(
+        user_id,
+        agent_id,
+        namespace,
+        session_id,
+        db,
+        chat_id=args.get("chat_id"),
+        topic=args.get("topic"),
+        raw_tail_count=args.get("raw_tail_count", 3),
+        token_budget=args.get("token_budget", 900),
+        max_relevant_memories=args.get("max_relevant_memories", 5),
+        model=args.get("model"),
+        include_expansion_hooks=bool(args.get("include_expansion_hooks", False)),
+    )
+    digest = result["digest"]
+    context = result["context"]
+    rehydration = result.get("rehydration") or {}
+    footer = (
+        "\n\nContext metadata:\n"
+        f"- source_exchanges={result['source_exchange_count']}\n"
+        f"- digest_compacted_exchanges={digest['compacted_exchange_count']}\n"
+        f"- digest_tokens={digest['token_count']}/{digest['token_budget']} "
+        f"({digest['token_count_method']})\n"
+        f"- context_tokens={context['token_count']} ({context['token_count_method']})\n"
+        f"- rehydration_suggested={rehydration.get('suggested', False)}"
+    )
+    hooks = result.get("expansion_hooks")
+    if hooks:
+        digest_hook = hooks.get("digest", {})
+        footer += (
+            "\n\nExpansion hooks:\n"
+            "- tool=kemory_rehydrate_session_sources\n"
+            f"- source_exchange_ids={digest_hook.get('source_exchange_ids', [])}\n"
+            f"- source_memory_ids={digest_hook.get('source_memory_ids', [])}\n"
+            f"- source_turn_ids={digest_hook.get('source_turn_ids', [])}"
+        )
+    return MCPToolResult(content=[{"type": "text", "text": context["text"] + footer}])
+
+
+async def _handle_rehydrate_session_sources(args, user_id, agent_id, db):
+    namespace = args.get("namespace")
+    session_id = args.get("session_id")
+    if not namespace or not session_id:
+        missing = "namespace" if not namespace else "session_id"
+        return MCPToolResult(
+            content=[{"type": "text", "text": f"Validation error: {missing} is required."}],
+            isError=True,
+        )
+
+    result = await rehydrate_session_sources(
+        user_id,
+        namespace,
+        session_id,
+        db,
+        source_memory_ids=args.get("source_memory_ids"),
+        source_turn_ids=args.get("source_turn_ids"),
+        source_exchange_ids=args.get("source_exchange_ids"),
+        query=args.get("query"),
+        token_budget=args.get("token_budget", 700),
+        max_items=args.get("max_items", 3),
+        model=args.get("model"),
+        trigger=args.get("trigger", "explicit"),
+    )
+    header = (
+        f"Rehydrated session sources for namespace='{namespace}' session_id='{session_id}'\n"
+        f"trigger={result['trigger']['mode']} expanded={result['expanded_count']} "
+        f"omitted={result['omitted_count']} tokens={result['token_count']}/{result['token_budget']}\n"
+        "AAAK is not returned; raw sources are exact and read-only.\n"
+    )
+    text = result.get("text") or "(no raw sources fit the requested token budget)"
+    return MCPToolResult(content=[{"type": "text", "text": header + "\n" + text}])
+
+
 HANDLERS: dict[str, object] = {
     "s9nmem_list_namespaces": _handle_list_namespaces,
     "s9nmem_get_context": _handle_get_context,
+    "kemory_get_session_context": _handle_get_session_context,
+    "kemory_rehydrate_session_sources": _handle_rehydrate_session_sources,
     "s9nmem_get_user_context": _handle_get_user_context,
 }

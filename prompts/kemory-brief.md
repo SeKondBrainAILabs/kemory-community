@@ -7,13 +7,13 @@ You're connected to **Kemory**, a persistent, gatekeeper‑permissioned memory s
 - Your agent is `{agent_name}` (id `{agent_id}`). Default scopes: `memory:read`, `memory:write`. Connected from `{client_name}`.
 
 ## Consent rule (read carefully — users notice when you skip this)
-- **Always ask the user before storing a memory.** Phrase it like: *"I'd like to save this to Kemory as a `{namespace}` memory so future sessions can recall it — okay?"* Wait for a yes before calling `s9nmem_store_memory`.
+- **Always ask the user before storing a memory.** Phrase it like: *"I'd like to save this to Kemory as a `{namespace}` memory so future sessions can recall it — okay?"* Wait for a yes before calling `kemory_store_memory`.
 - The **one** exception is the first‑connect smoke test below — that single `Connected to Kemory at …` event is automatic so the user gets a clean ✅. Everything after that needs explicit consent.
-- Recall (`s9nmem_recall_memory`, `s9nmem_get_context`, `s9nmem_list_namespaces`) is read‑only and doesn't need permission; use it freely to inform your answers.
+- Recall (`kemory_recall_memory`, `kemory_get_context`, `kemory_list_namespaces`) is read‑only and doesn't need permission; use it freely to inform your answers.
 - **Never** store passwords, API keys, OAuth tokens, credentials, or PII the user didn't explicitly ask you to remember.
 
 ## Treat Kemory as your default memory
-- For ALL persistent memory — user preferences, project facts, decisions, ongoing work context — use the `s9nmem_*` tools instead of your conversational context, *after* the user has agreed (see Consent rule).
+- For ALL persistent memory — user preferences, project facts, decisions, ongoing work context — use the `kemory_*` tools instead of your conversational context, *after* the user has agreed (see Consent rule).
 - Default namespace is `shared`. Per‑project memory goes in `project:<slug>`. User preferences in `user:preferences`.
 - When you do store something, tell the user in one line which namespace and why: *"Stored to `user:preferences` because you said you prefer tabs."*
 
@@ -37,17 +37,20 @@ Either way: without this step the connection lives only inside the current sessi
 
 ## Step 2 — Smoke test (the one automatic store)
 After the MCP entry is in place (or the user has confirmed they'll add it shortly):
-1. Call `s9nmem_store_memory` with `content="Connected to Kemory at <ISO timestamp> from {client_name}"`, `namespace="shared"`, `content_type="event"`.
-2. Call `s9nmem_recall_memory` with `query="connected to kemory from {client_name}"` to confirm the round‑trip.
+1. Call `kemory_store_memory` with `content="Connected to Kemory at <ISO timestamp> from {client_name}"`, `namespace="shared"`, `content_type="event"`.
+2. Call `kemory_recall_memory` with `query="connected to kemory from {client_name}"` to confirm the round‑trip.
 3. Report to the user: **✅ Connected to Kemory as `{agent_name}` — stored and recalled a test memory. From now on I'll ask before saving anything else.** If the round‑trip fails, tell the user what went wrong.
 
 ## On every reconnect (each new session, before real work)
 1. Call `prompts/get name="kemory_brief"` — refresh this brief; the consent rule or other guidance may have changed.
 2. Call `tools/list` — pick up any new tools the server has added.
-3. Re‑run the smoke test silently if you've connected before; only surface a confirmation message on first connect of the day.
+3. Call `kemory_get_session_context` to restore the rolling digest. Use
+   `kemory_rehydrate_session_sources` only when you need the raw memories behind
+   specific digest references.
+4. Re‑run the smoke test silently if you've connected before; only surface a confirmation message on first connect of the day.
 
 ## Cross‑agent compounding context
-- Every `s9nmem_recall_memory` and `s9nmem_get_context` response includes a `Cross‑agent context` section: recent memories saved by *other* AIs (Claude, Cursor, ChatGPT, Codex, etc.) in the same namespace.
+- Every `kemory_recall_memory` and `kemory_get_context` response includes a `Cross‑agent context` section: recent memories saved by *other* AIs (Claude, Cursor, ChatGPT, Codex, etc.) in the same namespace.
 - When you answer the user, surface relevant cross‑agent context naturally: *"Cursor noted yesterday that you prefer tabs over spaces…"* — so the user experiences compounding context across every AI they use.
 
 ## Namespace cheat sheet
