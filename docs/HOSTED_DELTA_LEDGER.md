@@ -26,7 +26,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
 | Source content dates for memories, chat turns, and artifacts | Ported and adapted | Migration `019`; source timestamps remain nullable, local uploads send `File.lastModified`, and reads fall back to ingest time without inventing source dates. Adapted from hosted `11f3322`, `cb7a33e`, `391b5c2`, `6480507`, and `3b73f70`. |
 | Memory timeline | Ported and adapted | Unified chat/memory source chronology with local-user keyset pagination and provenance; no Gatekeeper, hosted telemetry, or organisation analytics. Adapted from hosted `f4aad73` and `8325d9f`, with `occurred_at` support from the later chronology cohort. |
-| Namespace tags | Planned port | Keep local user scope and PostgreSQL; assign the next sequential community migration. |
+| Namespace tags | Ported and adapted | Migration `020`; local-user profiles, direct user-key Groq naming, deterministic entity/embedding/era matching, dry-run Docker backfill and promotion tools, and dashboard chips. No hosted Gatekeeper, audit, provenance, or organisation workflows. Adapted from hosted `554a427`, `50052ce`, `0086767`, `8bf0fc4`, `eeed4c6`, and `01b6883`. |
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
 | Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
 | Python CLI and stdio bridge | Ported and adapted | Local endpoint plus API-key configuration only; OAuth device flow, Bearer forwarding, hosted environments, org/team commands, telemetry, and hosted release upgrades are removed. |
@@ -58,6 +58,10 @@ community adapters and Docker runtime constraints applied at each boundary.
 - Unified namespace timeline with server-side chat/memory merge ordering, opaque
   keyset cursors, source-platform attribution, provenance counts, and a filtered
   dashboard stream.
+- Automatic namespace tag profiles and ingest assignment, local-user tag reads,
+  dry-run backfill and promotion tools, timeline/search/MCP attribution, and
+  responsive dashboard chips. Tags partition views while recall continues to
+  search the parent namespace.
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,

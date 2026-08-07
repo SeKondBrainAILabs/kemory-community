@@ -28,6 +28,7 @@ class TimelineEntry(BaseModel):
     occurred_at: str
     namespace: str
     platform: str
+    namespace_tag: str | None = None
 
     title: str | None = None
     turn_count: int | None = None
@@ -180,9 +181,7 @@ async def get_namespace_timeline(
     items: list[TimelineEntry] = []
     for row in page:
         occurred_at = (
-            row.occurred_at.isoformat()
-            if isinstance(row.occurred_at, datetime)
-            else str(row.occurred_at)
+            row.occurred_at.isoformat() if isinstance(row.occurred_at, datetime) else str(row.occurred_at)
         )
         if row.kind == "chat":
             chat = chats.get(row.id)
@@ -264,6 +263,7 @@ async def _hydrate_chats(db: AsyncSession, chat_ids: list[uuid.UUID]) -> dict[st
             "turn_count": int(turn_counts.get(chat.chat_id, 0)),
             "artifact_count": int(artifact_counts.get(chat.chat_id, 0)),
             "memory_count": int(memory_counts.get(chat.chat_id, 0)),
+            "namespace_tag": chat.namespace_tag,
         }
         for chat in rows
     }
@@ -285,6 +285,7 @@ async def _hydrate_memories(
                 Memory.content_type,
                 Memory.source_chat_id,
                 Memory.source_turn_id,
+                Memory.namespace_tag,
                 AgentRegistry.agent_name,
                 AIChat.platform.label("source_chat_platform"),
             )
@@ -313,5 +314,6 @@ async def _hydrate_memories(
             "memory_type": row.content_type,
             "source_chat_id": str(row.source_chat_id) if row.source_chat_id else None,
             "source_turn_id": str(row.source_turn_id) if row.source_turn_id else None,
+            "namespace_tag": row.namespace_tag,
         }
     return output

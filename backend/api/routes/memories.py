@@ -105,7 +105,9 @@ async def get_memory_endpoint(
 ):
     """Get a single memory by ID. Gatekeeper checks memory:read permission."""
     try:
-        return await get_memory(memory_id, auth.user_id, auth.agent_id, db, skip_gatekeeper=_skip_gatekeeper())
+        return await get_memory(
+            memory_id, auth.user_id, auth.agent_id, db, skip_gatekeeper=_skip_gatekeeper()
+        )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -356,6 +358,24 @@ async def get_namespace_timeline_endpoint(
         cursor=cursor,
         types=types,
     )
+
+
+@router.get(
+    "/namespaces/{namespace}/tags",
+    summary="List a namespace's second-tier segments (S9N-6612)",
+)
+async def list_namespace_tags_endpoint(
+    namespace: str,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only. The automatic ``namespace:tag`` segments (entity anchors,
+    era window, member counts) that partition this namespace's timeline view.
+    Search/recall are unaffected by tags — they span the whole namespace."""
+    from backend.services.namespace_tag_service import list_namespace_tags
+
+    items = await list_namespace_tags(auth.user_id, namespace, db)
+    return {"namespace": namespace, "items": [i.model_dump() for i in items]}
 
 
 @router.get(

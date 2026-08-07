@@ -110,6 +110,16 @@ function TimelineRow({ entry, namespace }: { entry: TimelineEntry; namespace: st
             <span className="rounded bg-black/[0.04] px-1 text-[10px] font-semibold uppercase text-content-tertiary">
               {isChat ? 'chat' : entry.memory_type || 'memory'}
             </span>
+            {/* S9N-6612: second-tier segment chip — shows WHICH context inside
+                the namespace this item belongs to (namespace:tag). */}
+            {entry.namespace_tag && (
+              <span
+                className="max-w-[14rem] truncate rounded bg-brand-primary/10 px-1 text-[10px] font-medium text-brand-primaryDark"
+                title={`${entry.namespace}:${entry.namespace_tag}`}
+              >
+                :{entry.namespace_tag}
+              </span>
+            )}
             <span
               className="ml-auto shrink-0 text-[11px] text-content-tertiary"
               title={formatAbsoluteTime(entry.occurred_at)}

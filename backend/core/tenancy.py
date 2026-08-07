@@ -315,6 +315,8 @@ TENANT_SCOPED_MODEL_NAMES: tuple[str, ...] = (
     "AIChatArtifact",
     "ChatNamespaceMapping",
     "MemoryVector",
+    # S9N-6612 — second-tier tag profiles. Default org_id-equality predicate.
+    "NamespaceTag",
     "SessionDigest",
 )
 

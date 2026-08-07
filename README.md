@@ -25,6 +25,27 @@ Local Docker API at `http://127.0.0.1:8111`, dashboard at
 `http://127.0.0.1:5175`. Same REST + MCP wire protocol as hosted
 Kemory, so memories are portable.
 
+### Namespace tags
+
+Kemory can automatically segment a broad namespace into view-only
+`namespace:tag` groups. Search and recall still span the parent namespace.
+Existing content can be previewed and tagged from the running API container:
+
+```bash
+docker compose -f docker-compose.community.yml exec api \
+  python scripts/backfill_namespace_tags.py
+docker compose -f docker-compose.community.yml exec api \
+  python scripts/backfill_namespace_tags.py --apply
+```
+
+Promoting a tag to its own namespace is also dry-run by default:
+
+```bash
+docker compose -f docker-compose.community.yml exec api \
+  python scripts/promote_namespace_tag.py \
+  --namespace project:example --tag client-work --to-namespace project:client-work
+```
+
 ## What ships in v0.1
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the full table.

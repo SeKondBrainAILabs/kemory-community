@@ -180,8 +180,8 @@ fi
 echo "Verifying Alembic revision inside the API container"
 alembic_revision="$("${COMPOSE[@]}" exec -T api python -m alembic -c alembic.ini current)"
 echo "$alembic_revision"
-if [[ "$alembic_revision" != *"019 (head)"* ]]; then
-  echo "Expected Alembic revision 019 (head)" >&2
+if [[ "$alembic_revision" != *"020 (head)"* ]]; then
+  echo "Expected Alembic revision 020 (head)" >&2
   exit 1
 fi
 
@@ -314,6 +314,19 @@ with httpx.Client(base_url=base, timeout=120.0) as client:
         f"status={chat.status_code}",
     )
 
+    tags = client.get(
+        "/api/v1/namespaces/community%3Asmoke/tags",
+        headers=headers,
+    )
+    tags_body = tags.json() if tags.status_code == 200 else {}
+    check(
+        "namespace tag profiles are available to the local user",
+        tags.status_code == 200
+        and tags_body.get("namespace") == "community:smoke"
+        and isinstance(tags_body.get("items"), list),
+        f"status={tags.status_code}",
+    )
+
     timeline = client.get(
         "/api/v1/namespaces/community%3Asmoke/timeline",
         headers=headers,
@@ -324,6 +337,7 @@ with httpx.Client(base_url=base, timeout=120.0) as client:
         "namespace timeline interleaves chats and memories by source time",
         timeline.status_code == 200
         and len(timeline_items) == 2
+        and all("namespace_tag" in item for item in timeline_items)
         and timeline_items[0].get("kind") == "chat"
         and timeline_items[0].get("occurred_at") == "2025-03-03T04:05:00+00:00"
         and timeline_items[1].get("kind") == "memory"
@@ -359,6 +373,7 @@ env_expectations = {
     "KMV_IDENTITY": "local_single_user",
     "KMV_TELEMETRY": "noop",
     "KMV_COGNITION_ENTERPRISE": "false",
+    "NAMESPACE_TAGS_ENABLED": "true",
 }
 for key, expected in env_expectations.items():
     check(f"{key}={expected}", os.environ.get(key) == expected, os.environ.get(key, ""))
