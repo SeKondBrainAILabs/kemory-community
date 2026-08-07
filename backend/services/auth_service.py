@@ -67,7 +67,7 @@ async def _bg_touch_last_active(agent_id: uuid.UUID) -> None:
 # allow_legacy_bcrypt and are transparently re-hashed to HMAC on next use
 # (verify-then-upgrade) — no forced re-issue.
 _BCRYPT_ROUNDS = 12  # legacy: rounds kemory used; kept for the migration test
-_hasher: "ApiKeyHasher" | None = None
+_hasher: ApiKeyHasher | None = None
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class ApiKeyHasher:
         self._on_event = on_event
 
     @classmethod
-    def single(cls, pepper: str, *, allow_legacy_bcrypt: bool, on_event=None) -> "ApiKeyHasher":
+    def single(cls, pepper: str, *, allow_legacy_bcrypt: bool, on_event=None) -> ApiKeyHasher:
         return cls(pepper, allow_legacy_bcrypt=allow_legacy_bcrypt, on_event=on_event)
 
     def generate(self, prefix: str) -> tuple[str, str, str]:
@@ -200,7 +200,7 @@ def _get_hasher() -> ApiKeyHasher:
 # ─── Auth Cache ──────────────────────────────────────────────────
 # Cache verified API keys for 5 minutes to avoid repeated hash verification.
 # Key: SHA-256 of the plaintext API key → Value: (AuthContext, expiry_time)
-_auth_cache: dict[str, tuple["AuthContext", float]] = {}
+_auth_cache: dict[str, tuple[AuthContext, float]] = {}
 # Reverse index: agent_id (str) → set of cache keys for that agent.
 # Lets us invalidate one agent's entries on key rotation in O(1) without
 # walking the whole cache (the previous implementation wiped everything,
@@ -436,7 +436,7 @@ async def clear_auth_cache_for_agent(agent_id: uuid.UUID | str) -> None:
             _auth_cache.pop(ck, None)
 
 
-async def _cache_auth_context(cache_key: str, ctx: "AuthContext", expiry: float) -> None:
+async def _cache_auth_context(cache_key: str, ctx: AuthContext, expiry: float) -> None:
     """Store an AuthContext and update the reverse index.
 
     P1 #8: locks the cross-dict insert pair so a concurrent expiry-eviction
