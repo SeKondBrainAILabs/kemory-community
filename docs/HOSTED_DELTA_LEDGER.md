@@ -4,6 +4,25 @@ This ledger tracks the downstream relationship between hosted Kemory and
 Kemory Community. The community repository receives selected subtree changes;
 it is not a mirror of the hosted product.
 
+## Repository Relationship
+
+`SeKondBrainAILabs/kemory-community` is an independent public repository, not
+a GitHub fork. Hosted Kemory is the upstream product and design source; the
+community repository preserves its own release history, Docker runtime, npm
+installer, local-user security boundary, and Apache-2.0 distribution surface.
+
+Updates are intentionally replayed by feature cohort rather than merged as a
+whole upstream tree. For each hosted baseline:
+
+1. List every hosted commit after the last inspected hash.
+2. Classify it as port, adapt, or exclude against the community boundaries.
+3. Replay compatible behavior in a `community/` pull request with Docker tests.
+4. Record source commits, adaptations, exclusions, and the new baseline here.
+
+This avoids reintroducing hosted authentication, billing, telemetry, storage,
+analytics, or organisation workflows while keeping compatible memory behavior
+and wire contracts current.
+
 ## Baseline
 
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
