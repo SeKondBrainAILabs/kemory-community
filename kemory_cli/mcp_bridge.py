@@ -3,29 +3,24 @@ Kemory CLI — MCP stdio bridge.
 
 Replaces the standalone ``mcp_bridge/server.py`` with one that:
   * Reads ``~/.kemory/credentials`` instead of an env-var API key.
-  * Auto-refreshes the access token when it nears expiry.
   * Falls back to ``KEMORY_API_KEY`` (or the legacy aliases
     ``S9NMV_API_KEY`` / ``KORA_API_KEY``) if set, so existing API-key-based
     setups keep working unchanged.
 
 The bridge subscribes to two stdio MCP methods (list_tools, call_tool) and
-forwards them to ``$KEMORY_URL/mcp/v1/*``. Identical wire shape to the
-old standalone bridge so no other code needs to change.
+forwards them as JSON-RPC 2.0 to ``$KEMORY_URL/mcp/v1``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import os
 from typing import Any
 
 import httpx
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
 
-from kemory_cli.auth import get_valid_credentials
 from kemory_cli.config import Credentials
 
 logger = logging.getLogger("kemory.mcp_bridge")
@@ -33,8 +28,7 @@ logger = logging.getLogger("kemory.mcp_bridge")
 # Process-local flag so the legacy-alias deprecation log fires once per
 # bridge process, not once per MCP tool call.
 _legacy_alias_warned = False
-
-server = Server("kemory")
+_request_ids = itertools.count(1)
 
 # Active environment for this bridge process. Set by ``serve(env)`` from the
 # ``kemory --env <env> mcp serve`` invocation the MCP host runs; credential
@@ -49,22 +43,23 @@ def _resolve_url() -> str:
     Priority:
       1. KEMORY_URL env var
       2. ~/.kemory/credentials kemory_url
-      3. http://localhost:8100 (local dev)
+      3. http://localhost:8111 (community Docker default)
     """
     if env := os.environ.get("KEMORY_URL"):
         return env
     creds = Credentials.load(_ENV)
     if creds and creds.kemory_url:
         return creds.kemory_url
-    return "http://localhost:8100"
+    return "http://localhost:8111"
 
 
 def _build_headers() -> dict[str, str]:
     """Pick the right auth header.
 
     1. ``KEMORY_API_KEY`` (or legacy aliases ``S9NMV_API_KEY``, ``KORA_API_KEY``) → X-API-Key
-    2. ``~/.kemory/credentials`` access_token → Authorization: Bearer
-    3. neither → empty (calls will fail with a clear message)
+    2. local ``~/.kemory/credentials`` access_token -> X-API-Key
+    3. non-local cached access_token -> Authorization: Bearer (compatibility)
+    4. neither -> empty (calls will fail with a clear message)
 
     P1 #9: KEMORY_API_KEY is the canonical name. Legacy aliases are
     accepted (with a one-time deprecation log on first use) so existing
@@ -86,10 +81,60 @@ def _build_headers() -> dict[str, str]:
     if api_key:
         headers["X-API-Key"] = api_key
         return headers
-    creds = get_valid_credentials(_ENV)
+    creds = Credentials.load(_ENV)
     if creds:
-        headers["Authorization"] = f"Bearer {creds.access_token}"
+        if creds.issuer == "local" or creds.client_id == "local":
+            headers["X-API-Key"] = creds.access_token
+        else:
+            headers["Authorization"] = f"Bearer {creds.access_token}"
     return headers
+
+
+class _JsonRpcError(Exception):
+    """A JSON-RPC error object returned by an otherwise successful request."""
+
+    def __init__(self, code: int, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}")
+
+
+async def _jsonrpc(
+    client: httpx.AsyncClient,
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Send one JSON-RPC request to the canonical MCP endpoint."""
+    request_id = next(_request_ids)
+    payload: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+    }
+    if params is not None:
+        payload["params"] = params
+
+    response = await client.post("/mcp/v1", json=payload)
+    response.raise_for_status()
+    body = response.json()
+
+    if not isinstance(body, dict) or body.get("jsonrpc") != "2.0":
+        raise _JsonRpcError(-32603, "Invalid JSON-RPC response")
+    if body.get("id") != request_id:
+        raise _JsonRpcError(-32603, "Mismatched JSON-RPC response id")
+    if "error" in body:
+        error = body.get("error") or {}
+        code = error.get("code", -32603)
+        if not isinstance(code, int) or isinstance(code, bool):
+            code = -32603
+        raise _JsonRpcError(
+            code,
+            str(error.get("message", "Unknown JSON-RPC error")),
+        )
+    result = body.get("result")
+    if not isinstance(result, dict):
+        raise _JsonRpcError(-32603, "JSON-RPC response is missing an object result")
+    return result
 
 
 def _client() -> httpx.AsyncClient:
@@ -112,22 +157,21 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
+async def list_tools() -> list[Any]:
+    from mcp.types import Tool
+
     async with _client() as client:
         try:
-            resp = await client.post("/mcp/v1/tools/list")
-            resp.raise_for_status()
-            data = resp.json()
+            result = await _jsonrpc(client, "tools/list")
             return [
                 Tool(
                     name=t["name"],
                     description=t["description"],
                     inputSchema=t["inputSchema"],
                 )
-                for t in data["tools"]
+                for t in result["tools"]
             ]
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, _JsonRpcError, KeyError, TypeError) as exc:
             logger.warning("list_tools failed: %s", exc)
             return [
                 Tool(
@@ -141,8 +185,9 @@ async def list_tools() -> list[Tool]:
             ]
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+    from mcp.types import TextContent
+
     headers = _build_headers()
     if "Authorization" not in headers and "X-API-Key" not in headers:
         return [
@@ -157,19 +202,25 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
     async with _client() as client:
         try:
-            resp = await client.post(
-                "/mcp/v1/tools/call",
-                json={"name": name, "arguments": arguments},
+            result = await _jsonrpc(
+                client,
+                "tools/call",
+                {"name": name, "arguments": arguments},
             )
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("isError"):
-                return [TextContent(type="text", text=f"Vault error: {data['content'][0]['text']}")]
+            if result.get("isError"):
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Vault error: {result['content'][0]['text']}",
+                    )
+                ]
             return [
                 TextContent(type="text", text=item["text"])
-                for item in data["content"]
+                for item in result["content"]
                 if item.get("type") == "text"
             ]
+        except _JsonRpcError as exc:
+            return [TextContent(type="text", text=f"Vault error: {exc}")]
         except httpx.HTTPStatusError as exc:
             return [TextContent(type="text", text=f"HTTP {exc.response.status_code}: {exc.response.text}")]
         except httpx.ConnectError:
@@ -196,8 +247,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     text=(
                         f"Bridge timeout after {_resolve_url()} did not respond in time "
                         f"({type(exc).__name__}). The server MAY have completed the "
-                        f"operation — for writes, verify with s9nmem_list_namespaces "
-                        f"or s9nmem_recall_memory BEFORE retrying so you don't create a "
+                        f"operation — for writes, verify with kemory_list_namespaces "
+                        f"or kemory_recall_memory BEFORE retrying so you don't create a "
                         f"duplicate. Raise KEMORY_HTTP_TIMEOUT (seconds) if this is "
                         f"recurring."
                     ),
@@ -208,6 +259,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def _main() -> None:
+    try:
+        from mcp.server import Server
+        from mcp.server.stdio import stdio_server
+    except ImportError as exc:
+        raise RuntimeError(
+            "The MCP stdio bridge requires the CLI extra. "
+            "Install it with: pip install 'kemory-community[cli]'"
+        ) from exc
+
+    server = Server("kemory")
+    server.list_tools()(list_tools)
+    server.call_tool()(call_tool)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

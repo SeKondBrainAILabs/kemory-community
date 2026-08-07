@@ -7,9 +7,12 @@ Subcommands:
   logout        Delete the cached credentials
   whoami        Hit /v1/me and print user/org/teams
   doctor        Run end-to-end health checks (network, auth, MCP host config)
-  keys          Manage API keys (list, create, rotate, revoke)
+  keys          Manage API keys (list, create, rotate)
+  orgs / use    List org memberships / switch the active org (ADR-012)
+  upgrade       Self-update to the latest cli-v* GitHub Release
+  telemetry     Opt-in anonymous usage telemetry (off by default)
   mcp install   Write an MCP server entry into supported MCP hosts
-                (Claude Code, Claude Desktop, Cursor, Continue.dev)
+                (Claude Code, Claude Desktop, Cursor, Continue.dev, Warp)
   mcp serve     Run the stdio MCP bridge (called by the MCP host, not humans)
 """
 
