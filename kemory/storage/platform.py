@@ -22,7 +22,6 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 from uuid import UUID
 
 from backend.adapters.vector_store import VectorStore, create_vector_store, resolve_vector_backend

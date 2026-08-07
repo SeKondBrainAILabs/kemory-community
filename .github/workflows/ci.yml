@@ -16,8 +16,14 @@ jobs:
           node-version: "20"
       - name: Root CLI tests
         run: npm install --package-lock=false && npm test && npm run prepublishOnly
-      - name: Python syntax check
-        run: python -m compileall backend kemory kemory_cli
+      - name: Install Python test dependencies
+        run: python -m pip install --disable-pip-version-check '.[backend,platform,local,dev]' 'ruff==0.7.4'
+      - name: Python lint and syntax
+        run: |
+          ruff check backend kemory kemory_cli tests
+          python -m compileall backend kemory kemory_cli
+      - name: Python unit tests
+        run: PYTHONPATH=. pytest -q -o addopts= tests/unit
       - name: Dashboard build
         working-directory: dashboard
         run: npm ci && npm run build

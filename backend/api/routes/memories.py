@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config.settings import settings
 from backend.core.auth import AuthContext, is_admin, require_auth
 from backend.core.database import get_db
 from backend.services.memory_service import (
@@ -41,7 +42,6 @@ from backend.services.memory_service import (
     update_memory,
 )
 from backend.services.namespace_matcher import RelatedNamespaceConflict
-from backend.config.settings import settings
 
 router = APIRouter(prefix="/api/v1", tags=["Memories"])
 

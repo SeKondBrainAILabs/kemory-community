@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 
+from backend.config.settings import settings
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 from backend.services.cross_agent_context import (
     format_cross_agent_section,
@@ -28,7 +29,6 @@ from backend.services.memory_service import (
     delete_memory,
     search_memories,
 )
-from backend.config.settings import settings
 
 
 def _skip_gatekeeper() -> bool:
