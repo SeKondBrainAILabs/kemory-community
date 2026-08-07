@@ -210,9 +210,9 @@ export function NamespaceSummaryHeader({
           <div className="flex items-start gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
             <Brain size={12} className="mt-0.5 shrink-0" />
             <span>
-              <strong>Memory Vault</strong> holds short-term working memory.
-              {' '}<strong>Cognition OS</strong> holds long-term semantic memory.
-              Memories decay daily and are archived after {policy.data?.retention_days ?? 10} days.
+              <strong>Kemory Community</strong> keeps working memory and local
+              concept summaries together. Memories decay daily and are archived
+              locally after {policy.data?.retention_days ?? 10} days.
             </span>
           </div>
 

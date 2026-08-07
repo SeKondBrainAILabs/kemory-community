@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 
 /**
  * Smoke Tests: Basic app reachability and navigation structure.
- * These tests run in unauthenticated mode (Keycloak check-sso returns false).
+ * These tests run against the local API-key community dashboard.
  * The app redirects to /login when unauthenticated.
  */
 

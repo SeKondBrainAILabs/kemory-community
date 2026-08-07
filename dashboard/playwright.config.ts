@@ -2,10 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 /**
  * Playwright E2E Test Configuration
- * Target: https://app.memory.dxb-gw.basanti.ai
- *
- * The app is publicly accessible with NO authentication required.
- * SSL errors are bypassed (self-signed / CN-mismatch cert on the DXB gateway).
+ * Target: the local community Docker dashboard.
  */
 export default defineConfig({
   testDir: './tests/e2e',
@@ -22,7 +19,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: process.env.PW_BASE_URL ?? 'https://app.memory.dxb-gw.basanti.ai',
+    baseURL: process.env.PW_BASE_URL ?? 'http://127.0.0.1:5175',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'off',

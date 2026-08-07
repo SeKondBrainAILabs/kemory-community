@@ -232,7 +232,7 @@ export function McpClientWizard({ descriptor, onClose }: Props) {
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <span>
               {regError === 'missing_org_claim'
-                ? 'Your account is missing an org_id claim. This usually means TENANT_ENFORCEMENT is set to "enforce" but Keycloak has not provisioned an org for your user. Ask your admin to set TENANT_ENFORCEMENT=off, or provision the org_id claim in Keycloak.'
+                ? 'This hosted-only agent registration response is not supported by the community runtime.'
                 : regError}
             </span>
           </div>

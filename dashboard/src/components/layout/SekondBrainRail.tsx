@@ -1,5 +1,4 @@
-import { Brain, Sparkles, FileText, User, LogOut } from 'lucide-react'
-import { useAuth } from '@/context/AuthContext'
+import { Brain, Sparkles, FileText, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -70,13 +69,6 @@ function AppTile({ app }: { app: BrainApp }) {
 }
 
 export function SekondBrainRail() {
-  const { isAuthenticated, user, login, logout } = useAuth()
-  const initials = user
-    ? `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? ''}`.toUpperCase() ||
-      user.email?.[0]?.toUpperCase() ||
-      'U'
-    : null
-
   return (
     <aside
       aria-label="SekondBrain apps"
@@ -108,44 +100,13 @@ export function SekondBrainRail() {
         </nav>
       </div>
 
-      {/* Profile / auth */}
-      {isAuthenticated && user ? (
-        <button
-          type="button"
-          onClick={logout}
-          aria-label={`Sign out ${user.firstName ?? user.email}`}
-          title={`Sign out ${user.firstName ?? user.email}`}
-          className="group relative flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-white transition-colors hover:bg-white/20"
-        >
-          <span aria-hidden>{initials}</span>
-          <LogOut
-            size={11}
-            className="absolute -right-0.5 -top-0.5 rounded-full bg-[#0b0b10] p-0.5 text-white/70"
-          />
-          <span
-            className="pointer-events-none absolute left-[52px] top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-black/85 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
-            role="tooltip"
-          >
-            Sign out
-          </span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={login}
-          aria-label="Sign in"
-          title="Sign in"
-          className="group relative flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
-        >
-          <User size={16} />
-          <span
-            className="pointer-events-none absolute left-[52px] top-1/2 -translate-y-1/2 rounded-md bg-black/85 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
-            role="tooltip"
-          >
-            Sign in
-          </span>
-        </button>
-      )}
+      <div
+        aria-label="Local community user"
+        title="Local community user"
+        className="group relative flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/70"
+      >
+        <User size={16} />
+      </div>
     </aside>
   )
 }

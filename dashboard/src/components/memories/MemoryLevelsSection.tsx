@@ -1,10 +1,10 @@
 /**
- * MemoryLevelsSection — per-memory L2 / L3 / L3.1 / L4 view for the Memory
+ * MemoryLevelsSection — per-memory L2 / L3 / L3.1 view for the Memory
  * Detail panel.
  *
  * Architectural note:
- *   L2 (AAAK), L3 (Groq narrative summary), L3.1 (concept synthesis), and
- *   L4 (Cognition OS graph-augmented) are all *namespace-level* artefacts,
+ *   L2 (AAAK), L3 (Groq narrative summary), and L3.1 (concept synthesis)
+ *   are all *namespace-level* artefacts,
  *   not per-memory ones. So we show the namespace-wide view for each, but
  *   highlight this memory's contribution where possible: for L3.1, concepts
  *   whose `source_memory_ids` include the selected memory_id are called out
@@ -31,7 +31,7 @@ function SectionHeader({
   open,
   onToggle,
 }: {
-  tier: 'L1' | 'L2' | 'L3' | 'L3.1' | 'L4'
+  tier: 'L1' | 'L2' | 'L3' | 'L3.1'
   title: string
   subtitle?: string
   open: boolean
@@ -103,11 +103,10 @@ function L3NarrativeView({ namespace }: { namespace: string }) {
       </p>
     )
   }
-  if (tier === 'L3.1' || tier === 'L4') {
+  if (tier && tier !== 'L3') {
     return (
       <p className="text-xs italic text-content-tertiary">
-        Superseded by {tier}. Open the {tier} section below to view the
-        current consolidated summary.
+        Superseded by the current concept synthesis. Open L3.1 below to view it.
       </p>
     )
   }
@@ -125,57 +124,6 @@ function L3NarrativeView({ namespace }: { namespace: string }) {
       </div>
       <div className="rounded-lg border border-border bg-white p-2 whitespace-pre-wrap text-content-primary">
         {summary}
-      </div>
-    </div>
-  )
-}
-
-function L4View({ namespace }: { namespace: string }) {
-  const { data, isLoading, isError } = useMemoryLevel(namespace, 'cognition')
-  if (isLoading) return <LoadingSkeleton lines={3} />
-  if (isError) return <p className="text-xs text-status-danger">Failed to load cognition entities.</p>
-  if (!data) return null
-  const entities = (data.graph_entities ?? []) as Array<{
-    entity_id: string
-    title: string
-    content: string
-    score: number
-    source: string
-  }>
-  if (!data.cognition_os_available) {
-    return (
-      <p className="text-xs italic text-content-tertiary">
-        Cognition OS is not available — L4 falls back to L3.1 concepts only.
-      </p>
-    )
-  }
-  if (entities.length === 0) {
-    return (
-      <p className="text-xs italic text-content-tertiary">
-        No graph entities linked yet for this namespace.
-      </p>
-    )
-  }
-  return (
-    <div className="space-y-2 text-xs">
-      <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700">
-        {entities.length} graph entit{entities.length === 1 ? 'y' : 'ies'}
-      </span>
-      <div className="space-y-1.5">
-        {entities.slice(0, 5).map((e) => (
-          <div key={e.entity_id} className="rounded-lg border border-border bg-white p-2">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold text-content-primary">{e.title}</div>
-              <span className="text-content-tertiary">score {(e.score || 0).toFixed(2)}</span>
-            </div>
-            {e.content && (
-              <div className="mt-0.5 line-clamp-2 text-content-secondary">{e.content}</div>
-            )}
-          </div>
-        ))}
-        {entities.length > 5 && (
-          <p className="text-content-tertiary">+{entities.length - 5} more</p>
-        )}
       </div>
     </div>
   )
@@ -301,7 +249,7 @@ function L3View({ namespace, memoryId }: { namespace: string; memoryId: string }
   )
 }
 
-type OpenSection = 'l2' | 'l3' | 'l3_1' | 'l4' | null
+type OpenSection = 'l2' | 'l3' | 'l3_1' | null
 
 export function MemoryLevelsSection({ namespace, memoryId }: MemoryLevelsSectionProps) {
   const [open, setOpen] = useState<OpenSection>(null)
@@ -354,19 +302,6 @@ export function MemoryLevelsSection({ namespace, memoryId }: MemoryLevelsSection
         </div>
       )}
 
-      <SectionHeader
-        tier="L4"
-        title="Cognition OS"
-        subtitle="concepts + graph entities"
-        open={open === 'l4'}
-        onToggle={() => toggle('l4')}
-      />
-      {open === 'l4' && (
-        <div className="pl-1">
-          <L4View namespace={namespace} />
-        </div>
-      )}
-
       <div className="mt-2 space-y-1 rounded-md bg-white/60 p-2 text-[10px] leading-snug text-content-tertiary ring-1 ring-black/[0.04]">
         <div>
           <strong className="text-content-secondary">L2</strong> · AAAK,
@@ -384,13 +319,8 @@ export function MemoryLevelsSection({ namespace, memoryId }: MemoryLevelsSection
           least one cluster of near-duplicates (cosine ≥0.85). Writes
           searchable concept rows, unlike L3.
         </div>
-        <div>
-          <strong className="text-content-secondary">L4</strong> · L3.1
-          augmented with Cognition OS graph entities. Skipped when Cognition
-          OS is offline.
-        </div>
         <div className="pt-1 italic">
-          All four are namespace-wide views. This memory's Tier badge above
+          All three are namespace-wide views. This memory's Tier badge above
           shows its own compression state.
         </div>
       </div>

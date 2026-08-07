@@ -68,7 +68,6 @@ const MEMORY_LEVELS: { mode: MemoryReadMode; label: string; description: string 
   { mode: 'raw',       label: 'Raw (L1)',      description: 'Every active memory as raw dicts' },
   { mode: 'aaak',      label: 'Compress (L2)', description: 'Lossless AAAK encoding with compression metrics' },
   { mode: 'concept',   label: 'Compacted (L3)', description: 'LLM-synthesized concepts' },
-  { mode: 'cognition', label: 'Cognition (L4)', description: 'Concepts + Cognition OS graph entities' },
 ]
 
 // S9N-6163: wrap query terms in the content column with <mark>. Each
@@ -286,93 +285,6 @@ function MemoryConceptView({ namespace }: { namespace: string }) {
           ))}
         </div>
       )}
-    </div>
-  )
-}
-
-// ── KMV-S12.3: Cognition (L4) View ───────────────────────────────────────────
-function MemoryCognitionView({ namespace }: { namespace: string }) {
-  const { data, isLoading, isError } = useMemoryLevel(namespace, 'cognition')
-  if (isLoading) return <LoadingSkeleton lines={6} />
-  if (isError) return <p className="text-xs text-status-danger">Failed to load cognition synthesis.</p>
-  if (!data) return null
-  const concepts = data.concepts ?? []
-  const graphEntities = data.graph_entities ?? []
-  const cogAvailable = data.cognition_os_available ?? false
-  return (
-    <div className="space-y-4">
-      {/* Status bar */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded bg-surface-tertiary px-2 py-0.5 text-content-tertiary">
-          {data.source_count} source {data.source_count === 1 ? 'memory' : 'memories'}
-        </span>
-        <span className={cn(
-          'rounded px-2 py-0.5 font-medium',
-          cogAvailable
-            ? 'bg-status-success/10 text-status-success'
-            : 'bg-surface-tertiary text-content-tertiary',
-        )}>
-          Cognition OS: {cogAvailable ? 'connected' : 'unavailable'}
-        </span>
-        <span className="text-content-tertiary">source: {data.source}</span>
-      </div>
-
-      {/* Synthesized Concepts */}
-      <div>
-        <h4 className="mb-2 text-xs font-semibold text-content-secondary uppercase tracking-wide">
-          Synthesized Concepts ({concepts.length})
-        </h4>
-        {concepts.length === 0 ? (
-          <p className="text-xs text-content-tertiary italic">No concepts synthesized yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {concepts.map((c, i) => (
-              <div key={i} className="rounded-lg border border-border bg-white p-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-content-primary">
-                    {String((c as Record<string, unknown>).name ?? `Concept ${i + 1}`)}
-                  </span>
-                  {Boolean((c as Record<string, unknown>).directional) && (
-                    <span className="rounded bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">directional</span>
-                  )}
-                </div>
-                <p className="text-xs text-content-secondary">
-                  {String((c as Record<string, unknown>).synthesis ?? '—')}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Cognition OS Graph Entities */}
-      <div>
-        <h4 className="mb-2 text-xs font-semibold text-content-secondary uppercase tracking-wide">
-          Cognition OS Graph Entities ({graphEntities.length})
-        </h4>
-        {!cogAvailable ? (
-          <p className="text-xs text-content-tertiary italic">
-            Cognition OS is not connected. Configure it in the Connectors page to enable L4 graph augmentation.
-          </p>
-        ) : graphEntities.length === 0 ? (
-          <p className="text-xs text-content-tertiary italic">No related graph entities found.</p>
-        ) : (
-          <div className="space-y-2">
-            {graphEntities.map((e, i) => (
-              <div key={i} className="rounded-lg border border-border bg-surface-secondary p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-content-primary">{e.title}</span>
-                  <span className="rounded bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">
-                    {(e.score * 100).toFixed(0)}% match
-                  </span>
-                </div>
-                <p className="line-clamp-2 text-xs text-content-secondary">{e.content}</p>
-                <div className="mt-1 text-xs text-content-tertiary font-mono">{e.entity_id}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -673,7 +585,6 @@ export function MemoryExplorerPage() {
             {memoryLevel === 'raw'       && <MemoryRawView namespace={namespace} />}
             {memoryLevel === 'aaak'      && <MemoryAaakView namespace={namespace} />}
             {memoryLevel === 'concept'   && <MemoryConceptView namespace={namespace} />}
-            {memoryLevel === 'cognition' && <MemoryCognitionView namespace={namespace} />}
           </div>
         </div>
       )}

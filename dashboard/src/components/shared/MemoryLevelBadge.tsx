@@ -6,13 +6,12 @@
  *   L2   — AAAK lossless encoding (blue)
  *   L3   — Groq narrative summary (sky) — faithful prose, namespace-wide
  *   L3.1 — LLM-synthesized concept (violet) — opinionated merge
- *   L4   — Cognition OS graph-augmented (indigo) — concepts + graph entities
  *
  * Story: F12-US-001 + v0.13.1 (L3 narrative)
  */
 import { cn } from '@/lib/utils'
 
-type Tier = 'L1' | 'L2' | 'L3' | 'L3.1' | 'L4'
+type Tier = 'L1' | 'L2' | 'L3' | 'L3.1'
 
 interface TierStyle {
   bg: string
@@ -56,14 +55,6 @@ const TIER_STYLES: Record<Tier, TierStyle> = {
     label: 'L3.1',
     description: 'Concept synthesis — LLM-merged, opinionated position from similar memories',
   },
-  L4: {
-    bg: 'bg-indigo-50',
-    text: 'text-indigo-700',
-    border: 'border-indigo-200',
-    dot: 'bg-indigo-500',
-    label: 'L4',
-    description: 'Cognition OS graph-augmented — concepts enriched with graph entities',
-  },
 }
 
 interface MemoryLevelBadgeProps {
@@ -104,7 +95,7 @@ export function MemoryLevelLegend() {
   return (
     <div className="flex items-center gap-2 text-xs text-content-tertiary">
       <span className="font-medium">Tier:</span>
-      {(['L1', 'L2', 'L3', 'L3.1', 'L4'] as Tier[]).map((t) => (
+      {(['L1', 'L2', 'L3', 'L3.1'] as Tier[]).map((t) => (
         <span key={t} className="flex items-center gap-1">
           <MemoryLevelBadge tier={t} />
           <span className="hidden sm:inline">{TIER_STYLES[t].description.split(' — ')[0]}</span>

@@ -7,7 +7,6 @@ import {
   Terminal,
   Monitor,
   Bot,
-  Brain,
   Webhook,
   Plug,
   Check,
@@ -39,7 +38,6 @@ export type ConnectorId =
   | 'warp'
   | 'custom-mcp'
   | 'custom-agent'
-  | 'cognition-os'
   | 'webhook'
 
 interface ConnectorDef {
@@ -138,13 +136,6 @@ const connectors: ConnectorDef[] = [
     description: 'Register a new agent with API key authentication',
     category: 'Agents',
     icon: Bot,
-  },
-  {
-    id: 'cognition-os',
-    name: 'Cognition OS',
-    description: 'Bridge to the SeKondBrain concept graph',
-    category: 'Bridges',
-    icon: Brain,
   },
   {
     id: 'webhook',

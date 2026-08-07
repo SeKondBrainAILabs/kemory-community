@@ -3,7 +3,6 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { SekondBrainRail } from './SekondBrainRail'
 import { Header } from './Header'
-import { AnimatedBackground } from './AnimatedBackground'
 
 /**
  * Root app shell.
@@ -15,8 +14,8 @@ import { AnimatedBackground } from './AnimatedBackground'
  *           header opens the sidebar as a drawer over a backdrop; main
  *           uses the full width.
  *
- * The animated gradient background is rendered behind the inner sidebar
- * and main column (the outer rail is opaque dark and sits on top).
+ * The inner sidebar and main column use a quiet neutral work surface; the
+ * outer app rail remains opaque for clear navigation separation.
  */
 export function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -28,9 +27,7 @@ export function AppShell() {
   }, [location.pathname])
 
   return (
-    <div className="relative min-h-screen">
-      <AnimatedBackground />
-
+    <div className="relative min-h-screen bg-slate-50">
       <SekondBrainRail />
       <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 

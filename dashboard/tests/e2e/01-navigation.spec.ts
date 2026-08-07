@@ -101,7 +101,7 @@ test.describe('Sidebar Navigation', () => {
 
   test('BUG-001: /connectors route is inaccessible — redirects to /', async ({ page }) => {
     // BUG: ConnectorsPage is defined in App.tsx router but navigating to /connectors
-    // redirects to / (the catch-all or RequireAuth redirect is intercepting it).
+    // redirects to / through the catch-all route.
     // Additionally, there is NO sidebar link to /connectors.
     // Expected: /connectors should render the ConnectorsPage component
     // Actual: redirects to / (Dashboard)

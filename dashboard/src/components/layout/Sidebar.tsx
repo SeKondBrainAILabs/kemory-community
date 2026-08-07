@@ -3,30 +3,18 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Brain,
   LayoutDashboard,
-  Bot,
   Database,
   FolderTree,
   Heart,
-  ScrollText,
-  Shield,
-  Network,
-  Bell,
-  BarChart3,
-  AlertTriangle,
-  Plug,
-  GitGraph,
   Settings,
   MessageCircle,
-  // chats-v1
   MessagesSquare,
   Link as LinkIcon,
-  Smartphone,
   X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { getLiveness } from '@/api/health'
 import { cn } from '@/lib/utils'
-import { useAuth } from '@/context/AuthContext'
 
 declare const __FE_VERSION__: string
 
@@ -49,7 +37,6 @@ type NavItem = {
   to: string
   icon: LucideIcon
   label: string
-  requiredRole?: string
 }
 
 // Primary: the Kemory core workspaces.
@@ -58,37 +45,13 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
   { to: '/memories', icon: Database, label: 'Memories' },
-  // chats-v1: raw conversation capture (Kanvas Chrome Extension)
   { to: '/chats', icon: MessagesSquare, label: 'Chats' },
   { to: '/namespaces', icon: FolderTree, label: 'Namespaces' },
-  { to: '/agents', icon: Bot, label: 'Agents' },
-  { to: '/access', icon: Network, label: 'Access Map' },
 ]
 
-// chats-v1: chat-related operations live in opsNav (settings-ish surfaces).
-const chatsOpsNav: NavItem[] = [
-  { to: '/chat-mappings', icon: LinkIcon, label: 'Chat Mappings' },
-  { to: '/devices', icon: Smartphone, label: 'Devices' },
-]
-
-// Operations / control plane (matches post-rebrand baseline routes).
 const opsNav: NavItem[] = [
   { to: '/system-health', icon: Heart, label: 'Health' },
-  { to: '/permissions', icon: Shield, label: 'Permissions' },
-  { to: '/consent', icon: Bell, label: 'Consent Queue' },
-  { to: '/audit', icon: ScrollText, label: 'Audit Log' },
-  { to: '/access-graph', icon: GitGraph, label: 'Access Graph' },
-  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/connectors', icon: Plug, label: 'Connectors' },
-  // chats-v1 ops surfaces, slotted next to Connectors so they sit
-  // together in the "things you wire up once" pile.
-  ...chatsOpsNav,
-  {
-    to: '/security',
-    icon: AlertTriangle,
-    label: 'Content Inspector',
-    requiredRole: 'super_admin',
-  },
+  { to: '/chat-mappings', icon: LinkIcon, label: 'Chat Mappings' },
 ]
 
 function NavRow({ to, icon: Icon, label }: NavItem) {
@@ -127,11 +90,7 @@ export function Sidebar({
   mobileOpen?: boolean
   onClose?: () => void
 }) {
-  const { hasRole } = useAuth()
   const { data: liveness } = useQuery({ queryKey: ['health-live'], queryFn: getLiveness, staleTime: 60_000 })
-  const visibleOps = opsNav.filter(
-    (item) => !item.requiredRole || hasRole(item.requiredRole),
-  )
 
   return (
     <aside
@@ -145,7 +104,7 @@ export function Sidebar({
     >
       {/* App header: Kemory app tile + name + version block */}
       <div className="flex items-start gap-3 border-b border-black/[0.05] px-4 pb-4 pt-5 md:justify-center md:px-2 lg:justify-start lg:px-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-sm">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-primary text-white shadow-sm">
           <Brain size={20} strokeWidth={2} />
         </div>
         <div className="min-w-0 flex-1 md:hidden lg:block">
@@ -181,7 +140,7 @@ export function Sidebar({
         <div className="mt-4">
           <SectionLabel>Operations</SectionLabel>
           <div className="space-y-0.5">
-            {visibleOps.map((item) => (
+            {opsNav.map((item) => (
               <NavRow key={item.to} {...item} />
             ))}
           </div>

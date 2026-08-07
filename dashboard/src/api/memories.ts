@@ -139,8 +139,8 @@ export async function updateNamespacePolicy(
   return api.put(`api/v1/namespaces/${namespace}/policy`, { json: policy }).json()
 }
 
-// KMV-S12.4: Multi-level memory read (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)
-export type MemoryReadMode = 'raw' | 'aaak' | 'concept' | 'cognition'
+// KMV-S12.4: Community memory read levels (L1 raw / L2 AAAK / L3.1 concept)
+export type MemoryReadMode = 'raw' | 'aaak' | 'concept'
 export type MemoryMergeMode = 'current' | 'aggregate'
 
 export interface MemoryLevelPayload {
@@ -157,15 +157,6 @@ export interface MemoryLevelPayload {
   content?: string
   // L3.1 concept
   concepts?: Record<string, unknown>[]
-  // L4 cognition
-  graph_entities?: {
-    entity_id: string
-    title: string
-    content: string
-    score: number
-    source: string
-  }[]
-  cognition_os_available?: boolean
 }
 
 export async function getMemoryLevel(

@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/keycloak', () => ({
+vi.mock('@/lib/runtimeConfig', () => ({
   getConfig: vi.fn(),
-  getToken: vi.fn(() => undefined),
 }))
 
-import { getConfig } from '@/lib/keycloak'
+import { getConfig } from '@/lib/runtimeConfig'
 import { applyApiUrl } from '../client'
 
 const mockedGetConfig = getConfig as unknown as ReturnType<typeof vi.fn>
@@ -17,10 +16,7 @@ describe('applyApiUrl', () => {
 
   it('returns the original request when API_URL is not configured', () => {
     mockedGetConfig.mockReturnValue({
-      KEYCLOAK_URL: '/auth',
-      KEYCLOAK_REALM: 'r',
-      KEYCLOAK_CLIENT_ID: 'c',
-      SKIP_AUTH: 'true',
+      API_KEY: 'local-key',
     })
     const req = new Request(`${window.location.origin}/api/v1/agents`)
     const out = applyApiUrl(req)
@@ -29,10 +25,7 @@ describe('applyApiUrl', () => {
 
   it('rewrites same-origin requests to the configured API_URL', () => {
     mockedGetConfig.mockReturnValue({
-      KEYCLOAK_URL: '/auth',
-      KEYCLOAK_REALM: 'r',
-      KEYCLOAK_CLIENT_ID: 'c',
-      SKIP_AUTH: 'true',
+      API_KEY: 'local-key',
       API_URL: 'https://api.memory.example.com',
     })
     const req = new Request(`${window.location.origin}/api/v1/agents?status=active`)
@@ -42,10 +35,7 @@ describe('applyApiUrl', () => {
 
   it('strips a trailing slash from API_URL before joining', () => {
     mockedGetConfig.mockReturnValue({
-      KEYCLOAK_URL: '/auth',
-      KEYCLOAK_REALM: 'r',
-      KEYCLOAK_CLIENT_ID: 'c',
-      SKIP_AUTH: 'true',
+      API_KEY: 'local-key',
       API_URL: 'https://api.memory.example.com/',
     })
     const req = new Request(`${window.location.origin}/api/v1/agents`)
@@ -55,10 +45,7 @@ describe('applyApiUrl', () => {
 
   it('leaves cross-origin requests untouched', () => {
     mockedGetConfig.mockReturnValue({
-      KEYCLOAK_URL: '/auth',
-      KEYCLOAK_REALM: 'r',
-      KEYCLOAK_CLIENT_ID: 'c',
-      SKIP_AUTH: 'true',
+      API_KEY: 'local-key',
       API_URL: 'https://api.memory.example.com',
     })
     const req = new Request('https://other.example.com/something')

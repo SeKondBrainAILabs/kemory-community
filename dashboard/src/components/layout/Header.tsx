@@ -1,6 +1,5 @@
 import { useLocation } from 'react-router-dom'
-import { LogOut, User, Code2, Menu } from 'lucide-react'
-import { useAuth } from '@/context/AuthContext'
+import { User, Code2, Menu } from 'lucide-react'
 import { useAdvancedView } from '@/contexts/AdvancedViewContext'
 import { cn } from '@/lib/utils'
 
@@ -22,7 +21,6 @@ const pageTitles: Record<string, string> = {
 
 export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   const location = useLocation()
-  const { user, logout } = useAuth()
   const { advanced, toggle } = useAdvancedView()
   const basePath = '/' + (location.pathname.split('/')[1] ?? '')
   const title = pageTitles[basePath] ?? 'Kemory'
@@ -59,22 +57,10 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
           <Code2 className="h-3.5 w-3.5" />
           {advanced ? 'Advanced' : 'Plain'}
         </button>
-        {user && (
-          <>
-            <div className="hidden items-center gap-2 text-sm text-content-secondary sm:flex">
-              <User className="h-4 w-4" />
-              <span>{user.firstName} {user.lastName}</span>
-            </div>
-            <button
-              onClick={logout}
-              aria-label="Sign out"
-              className="flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-content-secondary transition-colors hover:bg-surface-secondary sm:px-3"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Sign out</span>
-            </button>
-          </>
-        )}
+        <div className="hidden items-center gap-2 text-sm text-content-secondary sm:flex">
+          <User className="h-4 w-4" />
+          <span>Local user</span>
+        </div>
       </div>
     </header>
   )

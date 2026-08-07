@@ -3,7 +3,7 @@
  *
  * Wraps the v3.31.0 REST endpoints under /api/v1/chats. The Kanvas
  * Chrome Extension writes; the dashboard reads. Auth is the existing
- * Bearer-token path on the shared ky client (see ./client.ts).
+ * X-API-Key path on the shared ky client (see ./client.ts).
  *
  * Backend reference: backend/api/routes/ai_chats.py
  * Schemas mirror backend/services/ai_chat_service.py response models.
