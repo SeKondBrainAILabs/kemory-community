@@ -26,6 +26,7 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
 | Chat source chronology, timeline, content dates, namespace tags | Planned port | Keep local user scope and PostgreSQL; assign sequential community migrations. |
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
+| Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
 | Keycloak, OIDC, OAuth, DCR, teams, Gatekeeper, trusted org delegation | Excluded | Removed dashboard identity/Bearer paths and hosted admin navigation; community boot does not import or mount agent JWT, pairing, identity/team, permission, or Gatekeeper routers, and memory reads bypass rule evaluation under `local_single_user`. |
 | Weaviate, FalkorDB, MinIO, PostHog, Kafka, KMS, Core Backend billing | Exclude | Community boot remains pgvector, local filesystem, noop telemetry, and user-supplied local services only. |
 | Hosted L5/CogOS push and executive analytics | Exclude | Hosted-only cognition and operational product surfaces. |
@@ -43,6 +44,10 @@ community adapters and Docker runtime constraints applied at each boundary.
 - Selective memory explorer and namespace dashboard UX with responsive and accessible states
 - Community-only dashboard runtime config, X-API-Key client, routes, health surface, and memory levels
 - Community backend route allowlist, explicit local Gatekeeper bypass, noop telemetry boot, and no CogOS compression path
+- Community Artifacts workspace, Doctor health route, persisted runtime Settings UI,
+  direct Groq client, and configurable 384-dimensional embedding providers. Voyage
+  and Cohere opt-ins request their supported 512-dimensional Matryoshka output,
+  then truncate and normalize it to the community schema's fixed 384 dimensions.
 - Focused service and MCP-contract tests
 
 Future cohorts must update this ledger with source commit or PR, classification,

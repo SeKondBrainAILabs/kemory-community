@@ -16,7 +16,8 @@ const pageTitles: Record<string, string> = {
   '/connectors': 'Connectors',
   '/security': 'Security Alerts',
   '/settings': 'Settings',
-
+  '/artifacts': 'Artifacts',
+  '/doctor': 'Doctor',
 }
 
 export function Header({ onMenuClick }: { onMenuClick?: () => void }) {

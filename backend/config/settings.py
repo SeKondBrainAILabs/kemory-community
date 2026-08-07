@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     kmv_blob_local_root: str = "~/.kemory-community/artifacts"
     kmv_telemetry: str = "noop"
     kmv_cognition_enterprise: bool = False
+    kemory_embedding_provider: str = "fastembed"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    kmv_synthesis_model: str = "llama-3.3-70b-versatile"
+    kemory_artifact_max_bytes: int = 50 * 1024 * 1024
 
     # Retained only so hosted-origin modules remain import-compatible. Community
     # boot never reads or initializes JWT/API-key-registry secrets.

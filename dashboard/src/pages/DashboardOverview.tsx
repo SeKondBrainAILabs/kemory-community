@@ -51,14 +51,14 @@ export function DashboardOverview() {
         {health.isLoading ? (
           <CardSkeleton />
         ) : health.isError ? (
-          <ErrorCard icon={Heart} label="System" to="/system-health" />
+          <ErrorCard icon={Heart} label="System" to="/doctor" />
         ) : (
           <StatCard
             icon={Heart}
             label="System"
             value={health.data?.status === 'healthy' ? 'Healthy' : 'Degraded'}
             sub={`${Object.keys(health.data?.checks ?? {}).length} services`}
-            to="/system-health"
+            to="/doctor"
           />
         )}
       </div>

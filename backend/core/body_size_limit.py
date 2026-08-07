@@ -32,13 +32,14 @@ logger = structlog.get_logger(__name__)
 # need larger bodies than the global 1 MB cap. We allow up to 50 MB on
 # the chat-artifact upload path specifically; everything else stays
 # under the default global cap.
-_LARGE_BODY_PATH_RE = re.compile(r"^/api/v1/chats/[^/]+/artifacts/upload/?$")
-_LARGE_BODY_LIMIT_BYTES = 50 * 1024 * 1024  # 50 MB
+_LARGE_BODY_PATH_RE = re.compile(
+    r"^/api/v1/(?:artifacts/upload|memories/[^/]+/artifacts/upload|chats/[^/]+/artifacts/upload)/?$"
+)
 
 
 def _limit_for(path: str) -> int:
     if _LARGE_BODY_PATH_RE.match(path):
-        return _LARGE_BODY_LIMIT_BYTES
+        return settings.kemory_artifact_max_bytes
     return settings.max_request_body_bytes
 
 

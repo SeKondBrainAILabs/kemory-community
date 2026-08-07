@@ -8,12 +8,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteArtifact,
+  listArtifacts,
   listMemoryArtifacts,
   listNamespaceArtifacts,
   uploadArtifact,
   uploadMemoryArtifact,
   type UploadArtifactParams,
 } from '@/api/artifacts'
+
+export function useArtifacts(params: { namespace?: string; limit?: number; offset?: number } = {}) {
+  return useQuery({
+    queryKey: ['artifacts', 'all', params.namespace ?? '', params.limit ?? 50, params.offset ?? 0],
+    queryFn: () => listArtifacts(params),
+    staleTime: 15_000,
+    placeholderData: (previous) => previous,
+  })
+}
 
 // ─── List ──────────────────────────────────────────────────────────
 
@@ -46,6 +56,7 @@ export function useUploadArtifact() {
   return useMutation({
     mutationFn: (params: UploadArtifactParams) => uploadArtifact(params),
     onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['artifacts', 'all'] })
       // Invalidate the namespace list so the file grid refreshes.
       if (variables.namespace) {
         qc.invalidateQueries({ queryKey: ['artifacts', 'namespace', variables.namespace] })

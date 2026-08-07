@@ -20,7 +20,7 @@ generation pass.
 The fix follows the standard "tool-use" decomposition:
 
     1. **Recall**  — hybrid search returns candidate memories.
-    2. **Extract** — LLM (via ``core-ai-backend``) extracts a structured
+    2. **Extract** — Groq extracts a structured
        list, one entry per relevant fact, as JSON. Each entry carries
        its source memory_id so we keep provenance.
     3. **Aggregate** — Python ``len()`` / ``sum()`` / dedupe operates
@@ -29,11 +29,9 @@ The fix follows the standard "tool-use" decomposition:
     4. **Format**  — LLM produces a natural-language final answer
        conditioned on the Python-computed aggregate.
 
-The LLM call goes through ``core-ai-backend`` exclusively (same
-pattern as ``kemory/search/reranker.py``). Memory Vault never calls
-Groq / OpenAI / Anthropic directly. If the backend is unset the
-aggregator returns ``None`` and the caller is expected to fall back
-to a plain ``hybrid_search`` response (no aggregation block).
+The LLM call uses the local user's ``GROQ_API_KEY``. If the key is unset, the
+aggregator returns ``None`` and the caller falls back to a plain
+``hybrid_search`` response.
 
 Story: KMV-AGG-01 (LongMemEval-S motivated; multi-session counting
        category was 75% with bare synthesis, target ≥85% with this
@@ -47,7 +45,6 @@ import os
 import re
 from typing import Any
 
-import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -56,10 +53,7 @@ logger = structlog.get_logger(__name__)
 # ── Config ───────────────────────────────────────────────────────────
 
 
-# core-ai-backend base URL. Same env var contract as ``reranker.py``.
-_AI_BACKEND_URL: str = (os.getenv("CORE_AI_BACKEND_URL") or os.getenv("AI_BACKEND_URL", "")).rstrip("/")
-
-# Model that core-ai-backend should use for extraction + formatting.
+# Groq model used for extraction + formatting.
 # Default matches the reranker so the two services share a model;
 # overridable via env when a benchmark needs a stronger reader.
 _AGG_MODEL: str = os.getenv(
@@ -187,10 +181,6 @@ async def aggregate(
     """
     if not candidates:
         logger.debug("aggregator.no_candidates", query=query)
-        return None
-
-    if not _AI_BACKEND_URL:
-        logger.info("aggregator.backend_unconfigured")
         return None
 
     capped = candidates[:max_candidates]
@@ -348,33 +338,22 @@ async def _chat_completion(
     max_tokens: int,
     temperature: float,
 ) -> str | None:
-    """OpenAI-compatible chat completion against core-ai-backend.
+    """OpenAI-compatible chat completion against Groq.
 
     Returns the assistant content, or None on any error. Same envelope
     as ``reranker._call_ai_backend`` so the two skills share infra
     expectations.
     """
-    if not _AI_BACKEND_URL:
-        return None
-    url = f"{_AI_BACKEND_URL}/v1/chat/completions"
+    from kemory.llm import assistant_text, chat_completion
+
     payload = {
-        "model": _AGG_MODEL,
+        "model": os.getenv("KMV_AGG_MODEL", os.getenv("KMV_SYNTHESIS_MODEL", _AGG_MODEL)),
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-            r = await client.post(url, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            choices = data.get("choices") or []
-            if not choices:
-                return None
-            content = (choices[0].get("message") or {}).get("content")
-            if not content:
-                return None
-            return content.strip()
+        return assistant_text(await chat_completion(payload, timeout_seconds=_TIMEOUT_S))
     except Exception as exc:
         logger.warning("aggregator.backend_error", error=str(exc))
         return None

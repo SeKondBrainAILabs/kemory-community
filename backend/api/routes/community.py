@@ -14,6 +14,12 @@ from backend.config.settings import settings
 from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
 from backend.models.memory import Memory
+from backend.services.community_settings_service import (
+    CommunityRuntimeSettings,
+    CommunityRuntimeSettingsUpdate,
+    get_community_runtime_settings,
+    update_community_runtime_settings,
+)
 from backend.services.memory_service import MemoryCreate, create_memory
 
 router = APIRouter(prefix="/api/v1/community", tags=["Community"])
@@ -33,6 +39,7 @@ class ImportBundle(BaseModel):
 
 @router.get("/settings")
 async def community_settings(auth: AuthContext = Depends(require_auth)):
+    runtime = get_community_runtime_settings()
     return {
         "edition": "community",
         "version": settings.app_version,
@@ -43,7 +50,16 @@ async def community_settings(auth: AuthContext = Depends(require_auth)):
         "blob_backend": settings.kmv_blob_backend,
         "telemetry": settings.kmv_telemetry,
         "tenant_enforcement": settings.tenant_enforcement,
+        "runtime": runtime.model_dump(),
     }
+
+
+@router.put("/settings", response_model=CommunityRuntimeSettings)
+async def update_community_settings(
+    update: CommunityRuntimeSettingsUpdate,
+    auth: AuthContext = Depends(require_auth),
+):
+    return update_community_runtime_settings(update)
 
 
 @router.get("/export")
