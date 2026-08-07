@@ -3,7 +3,7 @@
  *
  * Fix KMV-QA-006: The page previously filtered audit logs for entries
  * containing a consent_id in their details field.  Since the admin's
- * Keycloak UUID does not match the user_id stored in audit records the
+ * When an external identity does not match the user_id stored in audit records the
  * audit log was always empty, so the consent queue always appeared blank.
  *
  * The page now fetches consent requests directly from the ConsentRequest

@@ -97,7 +97,7 @@ export function healthSentence(
   daysToFloor: number | null,
 ): string {
   if (status === 'archived') {
-    return 'This memory has been moved to long-term memory in Cognition OS.'
+    return 'This memory has been moved to the local archive.'
   }
   if (status === 'consolidating') {
     return 'This memory is currently being synced to long-term memory.'

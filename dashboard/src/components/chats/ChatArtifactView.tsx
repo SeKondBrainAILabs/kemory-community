@@ -8,10 +8,10 @@
  *   code   → <pre> with the inline content
  *   html / react / svg → <pre> too — no syntax highlighter dep
  *   file   → header + Download button; if content_url is set, opens
- *            the signed minio URL; otherwise an empty placeholder
+ *            the signed artifact URL; otherwise an empty placeholder
  *
  * Filename / mimetype / size_bytes come from artifact_metadata
- * (populated by the minio upload endpoint or the extension).
+ * (populated by the local artifact upload endpoint or the extension).
  */
 import {
   Code,
@@ -69,7 +69,7 @@ export function ChatArtifactView({ artifact }: Props) {
 
   // chats-v1 v3.33.0: audio + video render with native HTML controls
   // when we have a content_url (which the backend signs on read for
-  // minio-backed bodies). file falls through to a download button.
+  // locally stored bodies). file falls through to a download button.
   const isAudio = artifact.artifact_type === 'audio'
   const isVideo = artifact.artifact_type === 'video'
   const isImage = artifact.artifact_type === 'image'

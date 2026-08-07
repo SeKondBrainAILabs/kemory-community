@@ -1,14 +1,7 @@
 import ky from 'ky'
-import { getConfig, getToken } from '@/lib/keycloak'
+import { getConfig } from '@/lib/runtimeConfig'
 
 const API_KEY_STORAGE_KEY = 's9nmv_api_key'
-
-/** Check skip-auth from runtime config.json (preferred) or build-time env. */
-function isSkipAuth(): boolean {
-  const config = getConfig()
-  if (config?.SKIP_AUTH === true || config?.SKIP_AUTH === 'true') return true
-  return import.meta.env.VITE_SKIP_AUTH === 'true'
-}
 
 /**
  * API key helpers for community local_single_user auth.
@@ -51,16 +44,7 @@ export const api = ky.create({
       (request) => {
         const rewritten = applyApiUrl(request)
 
-        // 1. Hosted Bearer token, disabled in community skip-auth mode.
-        if (!isSkipAuth()) {
-          const token = getToken()
-          if (token) {
-            rewritten.headers.set('Authorization', `Bearer ${token}`)
-            return rewritten
-          }
-        }
-
-        // 2. API key from localStorage or config.json.
+        // Community authentication is API-key only.
         const apiKey = getApiKey() || getConfig()?.API_KEY || ''
         if (apiKey) {
           rewritten.headers.set('X-API-Key', apiKey)

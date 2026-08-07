@@ -4,7 +4,6 @@ import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConnectorId } from './ConnectorsPage'
 import { AgentWizard } from './wizards/AgentWizard'
-import { CognitionBridgeWizard } from './wizards/CognitionBridgeWizard'
 import { WebhookWizard } from './wizards/WebhookWizard'
 import { QuickConnectContent } from './QuickConnectPanel'
 
@@ -14,8 +13,7 @@ interface Props {
 }
 
 // Human‑readable label used to pre‑fill the pair prompt's `client_name`
-// for AI/MCP clients. Non‑AI connectors (webhook, cognition bridge,
-// custom agent) keep their dedicated wizards.
+// for AI/MCP clients. Webhooks and custom agents keep dedicated wizards.
 const aiClientHint: Partial<Record<ConnectorId, string>> = {
   'claude-code': 'Claude Code',
   'claude-desktop': 'Claude Desktop',
@@ -52,7 +50,6 @@ const titles: Record<ConnectorId, string> = {
   warp: 'Connect Warp',
   'custom-mcp': 'Connect a Custom MCP Client',
   'custom-agent': 'Register Custom Agent',
-  'cognition-os': 'Configure Cognition OS Bridge',
   webhook: 'Configure Webhook',
 }
 
@@ -78,8 +75,6 @@ export function ConnectorWizard({ connectorId, onClose }: Props) {
               <QuickConnectContent clientHint={clientHint} cliHost={cliHostFor[connectorId]} embedded />
             ) : connectorId === 'custom-agent' ? (
               <AgentWizard onClose={onClose} />
-            ) : connectorId === 'cognition-os' ? (
-              <CognitionBridgeWizard onClose={onClose} />
             ) : connectorId === 'webhook' ? (
               <WebhookWizard onClose={onClose} />
             ) : null}

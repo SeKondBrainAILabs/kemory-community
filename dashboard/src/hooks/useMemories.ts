@@ -123,7 +123,7 @@ export function useDeleteMemory() {
   })
 }
 
-// KMV-S12.4: Multi-level memory read hook (L1 raw / L2 AAAK / L3.1 concept / L4 cognition)
+// KMV-S12.4: Community memory read hook (L1 raw / L2 AAAK / L3.1 concept)
 export function useMemoryLevel(
   namespace: string | null | undefined,
   mode: MemoryReadMode = 'concept',
@@ -134,7 +134,7 @@ export function useMemoryLevel(
     queryFn: () => getMemoryLevel(namespace!, mode, mergeMode),
     // Only fetch when a namespace is selected
     enabled: !!namespace,
-    // Cache for 30s — concept/cognition synthesis is expensive
+    // Cache concept synthesis for 30 seconds.
     staleTime: 30_000,
     // Keep previous data while new level loads to avoid blank flash
     placeholderData: (prev) => prev,

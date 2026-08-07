@@ -2,46 +2,26 @@ import { PageShell } from '@/components/layout/PageShell'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { CardSkeleton } from '@/components/shared/LoadingSkeleton'
 import { useDeepHealth } from '@/hooks/useHealth'
-import { useAgents } from '@/hooks/useAgents'
 import { useNamespaces } from '@/hooks/useMemories'
-import { useAuditLogs } from '@/hooks/useAudit'
-import { formatRelativeTime, formatLatency } from '@/lib/utils'
+import { formatLatency } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 import {
-  Bot,
   Database,
+  FolderTree,
   Heart,
-  ScrollText,
-  ArrowRight,
   AlertTriangle,
 } from 'lucide-react'
 
 export function DashboardOverview() {
   const health = useDeepHealth()
-  const agents = useAgents()
   const namespaces = useNamespaces()
-  const recentAudit = useAuditLogs({ limit: 5 })
 
   const totalMemories = namespaces.data?.reduce((sum, ns) => sum + ns.count, 0) ?? 0
-  const activeAgents = agents.data?.filter((a) => a.status === 'active').length ?? 0
 
   return (
     <PageShell>
       {/* Stat cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {agents.isLoading ? (
-          <CardSkeleton />
-        ) : agents.isError ? (
-          <ErrorCard icon={Bot} label="Agents" to="/agents" />
-        ) : (
-          <StatCard
-            icon={Bot}
-            label="Agents"
-            value={agents.data?.length ?? 0}
-            sub={`${activeAgents} active`}
-            to="/agents"
-          />
-        )}
+      <div className="grid gap-4 sm:grid-cols-3">
         {namespaces.isLoading ? (
           <CardSkeleton />
         ) : namespaces.isError ? (
@@ -55,30 +35,30 @@ export function DashboardOverview() {
             to="/memories"
           />
         )}
+        {namespaces.isLoading ? (
+          <CardSkeleton />
+        ) : namespaces.isError ? (
+          <ErrorCard icon={FolderTree} label="Namespaces" to="/namespaces" />
+        ) : (
+          <StatCard
+            icon={FolderTree}
+            label="Namespaces"
+            value={namespaces.data?.length ?? 0}
+            sub="local memory groups"
+            to="/namespaces"
+          />
+        )}
         {health.isLoading ? (
           <CardSkeleton />
         ) : health.isError ? (
-          <ErrorCard icon={Heart} label="System" to="/health" />
+          <ErrorCard icon={Heart} label="System" to="/system-health" />
         ) : (
           <StatCard
             icon={Heart}
             label="System"
             value={health.data?.status === 'healthy' ? 'Healthy' : 'Degraded'}
             sub={`${Object.keys(health.data?.checks ?? {}).length} services`}
-            to="/health"
-          />
-        )}
-        {recentAudit.isLoading ? (
-          <CardSkeleton />
-        ) : recentAudit.isError ? (
-          <ErrorCard icon={ScrollText} label="Audit" to="/audit" />
-        ) : (
-          <StatCard
-            icon={ScrollText}
-            label="Audit"
-            value={recentAudit.data?.total ?? 0}
-            sub="total events"
-            to="/audit"
+            to="/system-health"
           />
         )}
       </div>
@@ -107,7 +87,7 @@ export function DashboardOverview() {
                 </div>
               ))
             : health.isError
-              ? ['postgres', 'redis', 'falkordb', 'weaviate'].map((name) => (
+              ? ['postgres', 'redis'].map((name) => (
                   <div
                     key={name}
                     className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-4"
@@ -121,7 +101,7 @@ export function DashboardOverview() {
                     <div className="mt-2 text-xs text-content-tertiary">No data</div>
                   </div>
                 ))
-              : Array.from({ length: 4 }).map((_, i) => (
+              : Array.from({ length: 2 }).map((_, i) => (
                   <div
                     key={i}
                     className="skeleton h-20 rounded-lg"
@@ -130,44 +110,6 @@ export function DashboardOverview() {
         </div>
       </div>
 
-      {/* Recent activity */}
-      <div className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-content-primary">Recent Activity</h2>
-          <Link
-            to="/audit"
-            className="flex items-center gap-1 text-xs font-medium text-brand-primary hover:underline"
-          >
-            View all <ArrowRight size={12} />
-          </Link>
-        </div>
-        <div className="space-y-2">
-          {recentAudit.data?.items.map((entry) => (
-            <div
-              key={entry.audit_id}
-              className="flex items-center justify-between rounded-lg border border-border bg-white px-4 py-3"
-            >
-              <div className="flex items-center gap-3">
-                <StatusBadge status={entry.outcome} />
-                <span className="text-sm text-content-primary">{entry.action}</span>
-                {entry.agent_id && (
-                  <span className="text-xs text-content-tertiary">
-                    by {entry.agent_id.slice(0, 8)}...
-                  </span>
-                )}
-              </div>
-              <span className="text-xs text-content-tertiary">
-                {formatRelativeTime(entry.created_at)}
-              </span>
-            </div>
-          ))}
-          {recentAudit.data?.items.length === 0 && (
-            <div className="rounded-lg border border-border bg-white px-4 py-8 text-center text-sm text-content-tertiary">
-              No audit events yet
-            </div>
-          )}
-        </div>
-      </div>
     </PageShell>
   )
 }
@@ -177,7 +119,7 @@ function ErrorCard({
   label,
   to,
 }: {
-  icon: typeof Bot
+  icon: typeof Database
   label: string
   to: string
 }) {
@@ -210,7 +152,7 @@ function StatCard({
   sub,
   to,
 }: {
-  icon: typeof Bot
+  icon: typeof Database
   label: string
   value: string | number
   sub: string

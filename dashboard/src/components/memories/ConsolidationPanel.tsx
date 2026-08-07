@@ -4,9 +4,8 @@
  * Displays per-namespace consolidation stats, policy configuration,
  * and a manual trigger button for the Admin Dashboard.
  *
- * Architecture note (displayed in UI):
- *   Memory Vault = short-term working memory (pending memories)
- *   Cognition OS = long-term semantic memory (archived memories)
+ * Community consolidation remains local: pending memories become concepts or
+ * archived rows without an external graph service.
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -80,14 +79,14 @@ export function ConsolidationPanel({ namespace }: ConsolidationPanelProps) {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['consolidation-stats', namespace] })
       const s = data.summary
-      const pushed = Object.values(s.consolidated ?? {}).reduce(
+      const consolidated = Object.values(s.consolidated ?? {}).reduce(
         (acc: number, v: unknown) => acc + ((v as { pushed?: number }).pushed ?? 0), 0
       )
       const archived = Object.values(s.auto_archived ?? {}).reduce(
         (acc: number, v: unknown) => acc + ((v as { auto_archived?: number }).auto_archived ?? 0), 0
       )
       setTriggerResult(
-        `Epoch ${s.epoch_date}: ${pushed} pushed to Cognition OS, ${archived} auto-archived.` +
+        `Epoch ${s.epoch_date}: ${consolidated} consolidated, ${archived} archived locally.` +
         (s.errors?.length ? ` ${s.errors.length} error(s).` : '')
       )
     },
@@ -119,8 +118,7 @@ export function ConsolidationPanel({ namespace }: ConsolidationPanelProps) {
 
       {/* Architecture note */}
       <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-        <strong>Memory Vault</strong> is short-term working memory.{' '}
-        <strong>Cognition OS</strong> is long-term semantic memory.
+        Kemory keeps working memory, concepts, and archives in the local database.
         Pending memories decay daily and are archived after {policy.data?.retention_days ?? 10} days.
       </div>
 
