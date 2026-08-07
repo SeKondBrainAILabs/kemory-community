@@ -112,14 +112,13 @@ def _core_backend_headers() -> dict[str, str]:
 
 
 def _signing_key() -> bytes:
-    """Reuse JWT_SECRET_KEY so we don't introduce a second long-lived secret."""
+    """Use the same local signing key as the LocalFS blob adapter."""
     from backend.config.settings import settings
 
-    return (
-        settings.jwt_secret_key.encode("utf-8")
-        if isinstance(settings.jwt_secret_key, str)
-        else bytes(settings.jwt_secret_key)
-    )
+    key = settings.kemory_local_blob_signing_key
+    if not key:
+        raise RuntimeError("KEMORY_LOCAL_BLOB_SIGNING_KEY is required for artifact URLs.")
+    return key.encode("utf-8")
 
 
 def make_signed_token(chat_id: str, artifact_id: str, expires_at: int) -> str:

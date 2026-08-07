@@ -6,16 +6,10 @@ cd "$ROOT_DIR"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kemory-community-config}"
 COMPOSE=(docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.community.yml)
-QA_LOG="$(mktemp -t kemory-community-qa.XXXXXX.log)"
 
 cleanup() {
   local status=$?
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  if [[ $status -eq 0 ]]; then
-    rm -f "$QA_LOG"
-  else
-    echo "QA log retained at $QA_LOG" >&2
-  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -86,6 +80,7 @@ forbidden = (
     "weaviate",
     "python-keycloak",
     "posthog",
+    "python-jose",
     "falkordb",
     "neo4j",
     "kafka-python",
@@ -204,27 +199,8 @@ if not required.issubset(names):
     raise SystemExit(f"session context tools missing: {sorted(required - set(names))}")
 PY
 
-echo "Running qa_full_test.py inside the API container"
-set +e
-"${COMPOSE[@]}" exec -T api python scripts/qa_full_test.py --api http://127.0.0.1:8000 2>&1 | tee "$QA_LOG"
-qa_status=${PIPESTATUS[0]}
-set -e
-
-if [[ "$qa_status" -eq 0 ]]; then
-  echo "qa_full_test.py passed in community Docker mode"
-else
-  echo "qa_full_test.py exited $qa_status; checking for local_single_user Bearer-token mismatch"
-  if ! grep -q "Results" "$QA_LOG" || grep -q "Traceback (most recent call last)" "$QA_LOG"; then
-    echo "qa_full_test.py crashed instead of completing its hosted-auth compatibility run" >&2
-    exit "$qa_status"
-  fi
-  bearer_probe="$("${COMPOSE[@]}" exec -T api curl -sS -H "Authorization: Bearer community-probe" http://127.0.0.1:8000/api/v1/agents || true)"
-  if [[ "$bearer_probe" != *"jwt_requires_hosted_kemory"* ]]; then
-    echo "qa_full_test.py failed for a reason other than the expected community Bearer-token rejection" >&2
-    exit "$qa_status"
-  fi
-  echo "Confirmed local_single_user rejects Bearer JWTs; running community API-key probe"
-  "${COMPOSE[@]}" exec -T api python - <<'PY'
+echo "Running community API-key probe"
+"${COMPOSE[@]}" exec -T api python - <<'PY'
 import os
 import sys
 
@@ -247,18 +223,31 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
     ready = client.get("/health/ready")
     check("readiness is healthy", ready.status_code == 200, str(ready.status_code))
 
-    no_creds = client.get("/api/v1/agents")
+    no_creds = client.get("/api/v1/namespaces")
     check("no credentials rejected", no_creds.status_code == 401, str(no_creds.status_code))
 
-    bearer = client.get("/api/v1/agents", headers={"Authorization": "Bearer local-jwt-probe"})
+    bearer = client.get("/api/v1/namespaces", headers={"Authorization": "Bearer local-jwt-probe"})
     check(
-        "Bearer JWT rejected with hosted-upgrade response",
-        bearer.status_code == 401 and bearer.json().get("error") == "jwt_requires_hosted_kemory",
+        "Bearer JWT is not accepted",
+        bearer.status_code == 401 and "X-API-Key" in bearer.json().get("detail", ""),
         bearer.text[:120],
     )
 
-    agents = client.get("/api/v1/agents", headers=headers)
-    check("local API key authenticates", agents.status_code == 200, str(agents.status_code))
+    namespaces = client.get("/api/v1/namespaces", headers=headers)
+    check("local API key authenticates", namespaces.status_code == 200, str(namespaces.status_code))
+
+    for hosted_path in (
+        "/api/v1/agents",
+        "/api/v1/audit/logs",
+        "/api/v1/gatekeeper/evaluate",
+        "/api/v1/graph/edges",
+        "/api/v1/me",
+        "/api/v1/pair/start",
+        "/api/v1/permissions",
+        "/api/v1/teams",
+    ):
+        response = client.get(hosted_path, headers=headers)
+        check(f"hosted route absent: {hosted_path}", response.status_code == 404, str(response.status_code))
 
     tool_list = client.post("/mcp/v1/tools/list", headers=headers, json={})
     tool_names = [tool["name"] for tool in tool_list.json().get("tools", [])]
@@ -270,14 +259,6 @@ with httpx.Client(base_url=base, timeout=30.0) as client:
         and all(name.startswith("kemory_") for name in tool_names),
         str(tool_names),
     )
-
-    for scope in ("memory:read", "memory:write", "memory:delete"):
-        response = client.post(
-            "/api/v1/permissions",
-            headers=headers,
-            json={"scope": scope, "action": "allow", "priority": 10, "namespace_filter": "*"},
-        )
-        check(f"permission {scope} created", response.status_code in (200, 201), str(response.status_code))
 
     memory = client.post(
         "/api/v1/memories",
@@ -332,6 +313,5 @@ if failures:
         print(f" - {name}")
     sys.exit(1)
 PY
-fi
 
 echo "Community config Docker verification passed"

@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.identity_provider.base import IdentityProvider
-from backend.services.auth_service import AuthContext
+from backend.core.auth_context import AuthContext
 
 _UPGRADE_URL = "https://kemory.s9n.ai"
 

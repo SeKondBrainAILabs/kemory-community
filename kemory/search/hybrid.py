@@ -114,39 +114,7 @@ async def hybrid_search(
         sparse=len(sparse_results),
     )
 
-    # Merge via RRF and carry one seen-set through every injection point.
-    merged, seen = _rrf_merge_with_seen(dense_results, sparse_results)
-
-    # S9N-COGOS: Graph-augmented recall via Cognition OS
-    # Expands results with cross-session entity relationships from the concept graph.
-    try:
-        from backend.services.cognition_bridge import get_cognition_bridge
-
-        bridge = get_cognition_bridge()
-        if bridge.enabled and query:
-            graph_results = await bridge.expand_recall(query, top_k=10)
-            if graph_results:
-                # Inject graph results with a graph_proximity boost.
-                for gr in graph_results:
-                    mid = gr.get("entity_id") or gr.get("id", "")
-                    if not mid or mid in seen:
-                        continue
-                    seen.add(mid)
-                    merged.append(
-                        {
-                            "memory_id": mid,
-                            "content": gr.get("content", ""),
-                            "namespace": namespace or "",
-                            "content_type": "text",
-                            "metadata": gr.get("metadata", {}),
-                            "source_type": "cognition_os",
-                            "score": gr.get("score", 0.5),
-                            "graph_proximity": 1.0,
-                        }
-                    )
-                logger.debug("hybrid_search.cogos_expand", added=len(graph_results))
-    except Exception as exc:
-        logger.debug("hybrid_search.cogos_skipped", reason=str(exc))
+    merged, _ = _rrf_merge_with_seen(dense_results, sparse_results)
 
     # Apply multi-signal re-ranking
     reranked = _dedupe_by_memory_id(rank_results(merged))

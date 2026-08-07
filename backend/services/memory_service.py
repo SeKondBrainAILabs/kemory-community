@@ -45,8 +45,6 @@ from backend.models.memory import Memory
 from backend.services.audit_service import log_audit_event
 from backend.services.gatekeeper_service import (
     EvaluationRequest,
-    PermissionRuleCreate,
-    create_rule,
     evaluate,
 )
 from backend.services.provenance_service import emit_event
@@ -219,15 +217,10 @@ class MemorySearchRequest(BaseModel):
         None,
         description="Filter by memory compression tier: L1 / L2 / L3.1",
     )
-    # KMV-S8.3: Graph-augmented recall — expand results via Cognition OS concept graph
+    # Kept for wire compatibility; community recall is always local.
     use_graph: bool = Field(
         default=False,
-        description=(
-            "When True, expand search results via Cognition OS concept graph traversal. "
-            "Related entities are retrieved from the graph and merged with local vault results. "
-            "Gracefully degrades to standard search if Cognition OS is unavailable. "
-            "Story: KMV-S8.3"
-        ),
+        description="Compatibility field. Community recall always uses Postgres/pgvector.",
     )
 
     @model_validator(mode="after")
@@ -626,57 +619,6 @@ async def create_memory(
         after_state={"namespace": memory.namespace, "content_type": memory.content_type},
     )
 
-    # S9N-3096: Auto-grant memory:delete to the creating agent so the creator
-    # can always delete their own memories without a separate permission rule.
-    # This rule is scoped to the specific namespace to maintain isolation.
-    try:
-        await create_rule(
-            user_id=user_id,
-            request=PermissionRuleCreate(
-                agent_id=str(agent_id),
-                scope="memory:delete",
-                action="allow",
-                priority=50,  # Higher priority than default rules
-                namespace_filter=request.namespace,
-            ),
-            db=db,
-            org_id=org_id,
-        )
-        logger.debug(
-            "memory.create.auto_grant_delete",
-            memory_id=str(memory.memory_id),
-            agent_id=str(agent_id),
-            namespace=request.namespace,
-        )
-    except Exception as e:
-        # Non-fatal: log but don't fail the create operation
-        logger.warning(
-            "memory.create.auto_grant_delete_failed",
-            agent_id=str(agent_id),
-            namespace=request.namespace,
-            error=str(e),
-        )
-
-    # KMV-E8 S8.1: Write-through hook — publish to Cognition OS (fire-and-forget)
-    # Cognition bridge is HTTP, no DB dependency, safe to schedule directly.
-    try:
-        from backend.services.cognition_bridge import get_cognition_bridge
-
-        bridge = get_cognition_bridge()
-        if bridge.enabled:
-            asyncio.create_task(
-                bridge.publish_memory_event(
-                    memory_id=str(memory.memory_id),  # PK is memory_id, not id
-                    content=memory.content,
-                    namespace=memory.namespace,
-                    user_id=str(user_id),
-                    content_type=memory.content_type,
-                    source_agent=str(agent_id),
-                )
-            )
-    except Exception:
-        logger.debug("cognition_bridge.hook_skipped", reason="import_or_init_error")
-
     # F14: Background tasks must NOT reuse the request-scoped `db` session —
     # FastAPI's Depends(get_db) closes it as soon as create_memory returns,
     # which means any later use throws InvalidRequestError silently and the
@@ -1072,19 +1014,6 @@ async def search_memories(
                 )
             except Exception:
                 pass
-        # KMV-S8.3: Graph-augmented recall for hybrid path
-        if request.use_graph and request.query:
-            graph_items = await _expand_with_graph(
-                query=request.query,
-                existing_ids={item.memory_id for item in items},
-            )
-            items = items + graph_items
-            logger.debug(
-                "memory.search.hybrid.graph_expanded",
-                vault_count=len(items) - len(graph_items),
-                graph_count=len(graph_items),
-            )
-
         # F12: filter by compression tier after assembly so it applies to
         # both vault + graph items regardless of which SQL path ran.
         if request.compression_tier:
@@ -1120,19 +1049,6 @@ async def search_memories(
     vault_items = [_to_response(m) for m in memories]
     logger.debug("memory.search.ok", total=total, returned=len(vault_items))
 
-    # KMV-S8.3: Graph-augmented recall — expand via Cognition OS concept graph
-    if request.use_graph and request.query:
-        graph_items = await _expand_with_graph(
-            query=request.query,
-            existing_ids={item.memory_id for item in vault_items},
-        )
-        vault_items = vault_items + graph_items
-        logger.debug(
-            "memory.search.graph_expanded",
-            vault_count=len(vault_items) - len(graph_items),
-            graph_count=len(graph_items),
-        )
-
     # F12: filter by compression tier after assembly (FTS path).
     if request.compression_tier:
         vault_items = [i for i in vault_items if i.compression_tier == request.compression_tier]
@@ -1145,75 +1061,12 @@ async def search_memories(
     )
 
 
-async def _expand_with_graph(
-    query: str,
-    existing_ids: set[str],
-    top_k: int = 5,
-) -> list["MemoryResponse"]:
-    """
-    KMV-S8.3: Expand a recall query via the Cognition OS concept graph.
-
-    Calls CognitionBridge.expand_recall() to retrieve related entities from the
-    knowledge graph that are semantically related to the query but may not appear
-    verbatim in the local vault. Results are converted to synthetic MemoryResponse
-    objects tagged with source='cognition_os' so callers can distinguish them.
-
-    Gracefully returns an empty list if:
-    - Cognition OS is not configured (bridge.enabled is False)
-    - The network call fails or times out
-    - The bridge circuit-breaker is open
-    """
-    try:
-        from backend.services.cognition_bridge import get_cognition_bridge
-
-        bridge = get_cognition_bridge()
-        if not bridge.enabled:
-            return []
-        graph_results = await bridge.expand_recall(query=query, top_k=top_k)
-    except Exception as exc:
-        logger.debug("memory.search.graph_expand_failed", error=str(exc))
-        return []
-
-    now_str = datetime.now(timezone.utc).isoformat()
-    items: list[MemoryResponse] = []
-    for r in graph_results:
-        entity_id = r.get("entity_id", "")
-        # Skip if already present in vault results (entity_id == memory_id for vault memories)
-        if entity_id in existing_ids:
-            continue
-        items.append(
-            MemoryResponse(
-                memory_id=entity_id or f"cog-{len(items)}",
-                user_id="cognition_os",
-                namespace="cognition_os",
-                content=r.get("content") or r.get("title", ""),
-                content_type="fact",
-                metadata={
-                    "source": "cognition_os",
-                    "score": r.get("score", 0.0),
-                    "title": r.get("title", ""),
-                },
-                source_agent_id=None,
-                source_type="cognition_os",
-                quality_score=r.get("score"),
-                enrichment_status="done",
-                version=1,
-                ttl_seconds=None,
-                expires_at=None,
-                created_at=now_str,
-                updated_at=now_str,
-                # Cognition OS entities are synthesized concepts — L3.1 tier.
-                compression_tier="L3.1",
-            )
-        )
-    return items
-
-
 async def list_namespaces(
     user_id: uuid.UUID,
     db: AsyncSession,
     admin_view: bool = False,
     agent_id: uuid.UUID | None = None,
+    skip_gatekeeper: bool = False,
 ) -> list[dict]:
     """
     List namespaces with memory counts + policy metadata.
@@ -1260,7 +1113,7 @@ async def list_namespaces(
     # DB roundtrips and caused /api/v1/namespaces to time out at 15s in the
     # dashboard. Pull rules once, evaluate in Python.
     filtered: list[tuple[str, int]] = []
-    if agent_id is not None and not admin_view:
+    if agent_id is not None and not admin_view and not skip_gatekeeper:
         from backend.models.permission import PermissionRule
         from backend.services.gatekeeper_service import (
             _matches_agent,
@@ -1792,11 +1645,11 @@ async def get_namespace_compressed(
     namespace: str,
     db: AsyncSession,
     *,
-    mode: str = "concept",  # "raw" | "aaak" | "concept" | "cognition"
+    mode: str = "concept",  # "raw" | "aaak" | "concept"
     merge_mode: str = "current",  # "current" | "aggregate"
     skip_gatekeeper: bool = False,
 ) -> dict:
-    """Tiered memory compression entry point — L1 raw, L2 AAAK, L3.1 concept, L4 cognition.
+    """Tiered memory compression entry point — L1 raw, L2 AAAK, L3.1 concept.
 
     Caches results in a process-level NamespaceCompressionCache keyed by the
     sorted memory IDs in the namespace plus mode + merge_mode. Auto-invalidates
@@ -1806,12 +1659,10 @@ async def get_namespace_compressed(
       raw       — L1: every active memory as raw dicts
       aaak      — L2: lossless AAAK dialect encoding with compression metrics
       concept   — L3.1: LLM-synthesized concepts via CoreAIBackendClient
-      cognition — L4: concept synthesis augmented with Cognition OS graph entities
-
     Story: KMV-COMPRESS-01 / S9N-3050 | KMV-S11.1
     """
-    if mode not in {"raw", "aaak", "concept", "cognition"}:
-        raise ValueError(f"mode must be raw|aaak|concept|cognition, got {mode!r}")
+    if mode not in {"raw", "aaak", "concept"}:
+        raise ValueError(f"mode must be raw|aaak|concept, got {mode!r}")
     if merge_mode not in {"current", "aggregate"}:
         raise ValueError(f"merge_mode must be current|aggregate, got {merge_mode!r}")
 
@@ -1831,11 +1682,10 @@ async def get_namespace_compressed(
     # Local imports to keep memory_service import-light at module load
     from kemory.compression.aaak import compression_ratio, encode_aaak
     from kemory.compression.cache import get_default_cache
-    from kemory.compression.cognition_round_trip import round_trip_concepts
     from kemory.compression.concept import synthesize_namespace_local
     from kemory.compression.llm_client import CoreAIBackendClient
 
-    needs_embedding = mode in {"concept", "cognition"}
+    needs_embedding = mode == "concept"
     memories = await _list_namespace_active_memories(
         user_id, namespace, db, include_embedding=needs_embedding
     )
@@ -1902,12 +1752,6 @@ async def get_namespace_compressed(
             namespace=namespace,
             merge_mode=merge_mode,
         )
-        # L3.2 placeholder pass-through (KMV-COMPRESS-02 will hook this up)
-        synthesis["concepts"] = await round_trip_concepts(
-            None,
-            synthesis["concepts"],
-            namespace=namespace,
-        )
         payload = {
             "mode": "concept",
             "merge_mode": merge_mode,
@@ -1915,77 +1759,6 @@ async def get_namespace_compressed(
             "source_count": synthesis.get("source_count", 0),
             "concepts": synthesis["concepts"],
             "source": synthesis.get("source", "local"),
-        }
-
-    if mode == "cognition":
-        # L4: concept synthesis augmented with Cognition OS graph entities
-        # First synthesize concepts (same as L3.1)
-        # L4 cognition path uses the same grouping helper as L3.1; the
-        # adapter is kept as a separate class because KMV-COMPRESS-02 may
-        # diverge the cognition behaviour, but the grouping logic is identical.
-        class _DBAdapterCog:
-            def __init__(self, mems: list[dict]) -> None:
-                self._mems = mems
-
-            async def list_episodes(self, *, org_id, limit=200, offset=0, include_invalid=False):
-                return self._mems[offset : offset + limit]
-
-            async def find_similar(self, *, content, org_id, limit=20):
-                return cosine_find_similar(content, self._mems, encoder=_encode, limit=limit)
-
-            async def get_related(self, *, episode_id, relation_type, limit=10):
-                return []
-
-        adapter_cog = _DBAdapterCog(memory_dicts)
-        client_cog = CoreAIBackendClient()
-        synthesis_cog = await synthesize_namespace_local(
-            adapter_cog,
-            llm_client=client_cog,
-            org_id=str(user_id),
-            namespace=namespace,
-            merge_mode=merge_mode,
-        )
-        synthesis_cog["concepts"] = await round_trip_concepts(
-            None,
-            synthesis_cog["concepts"],
-            namespace=namespace,
-        )
-        # Now augment with Cognition OS graph entities (graceful degradation)
-        graph_entities: list[dict] = []
-        cognition_available = False
-        try:
-            from backend.services.cognition_bridge import get_cognition_bridge
-
-            bridge = get_cognition_bridge()
-            if bridge.enabled and not bridge.circuit_open:
-                # Use the namespace as the query to find related graph entities
-                query_terms = namespace
-                if synthesis_cog["concepts"]:
-                    # Extract key terms from the first concept for a richer query
-                    first_concept = synthesis_cog["concepts"][0]
-                    if isinstance(first_concept, dict):
-                        query_terms = first_concept.get("summary", namespace) or namespace
-                    elif isinstance(first_concept, str):
-                        query_terms = first_concept[:200]
-                graph_entities = await bridge.expand_recall(
-                    query=query_terms,
-                    org_id=str(user_id),
-                    top_k=10,
-                    min_score=0.3,
-                )
-                cognition_available = True
-        except Exception:  # noqa: BLE001
-            # Graceful degradation: Cognition OS unavailable — return concept-only payload
-            pass
-        payload = {
-            "mode": "cognition",
-            "merge_mode": merge_mode,
-            "namespace": namespace,
-            "source_count": synthesis_cog.get("source_count", 0),
-            "concepts": synthesis_cog["concepts"],
-            "graph_entities": graph_entities,
-            "cognition_os_available": cognition_available,
-            "source": "cognition_os" if cognition_available else "local",
         }
 
     cache.put(str(user_id), namespace, mode, merge_mode, memory_ids, payload)
@@ -2000,6 +1773,8 @@ async def aggregate_memories(
     agent_id: uuid.UUID | None,
     request: MemoryAggregateRequest,
     db: AsyncSession,
+    *,
+    skip_gatekeeper: bool = False,
 ) -> MemoryAggregateResponse:
     """Run an aggregation query against the user's memories.
 
@@ -2036,7 +1811,7 @@ async def aggregate_memories(
 
     # Gatekeeper — only when the request scopes to a single namespace
     # and the caller is an agent (not a Memory Vault admin user).
-    if request.namespace and agent_id:
+    if request.namespace and agent_id and not skip_gatekeeper:
         decision = await evaluate(
             user_id,
             EvaluationRequest(

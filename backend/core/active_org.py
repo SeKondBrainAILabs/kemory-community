@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from fastapi import Request
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from backend.services.auth_service import AuthContext
+    from backend.core.auth_context import AuthContext
 
 logger = structlog.get_logger(__name__)
 

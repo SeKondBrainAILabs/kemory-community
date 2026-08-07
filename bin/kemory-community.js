@@ -119,12 +119,10 @@ function dockerCompose(config) {
   kemory-api:
     image: \${KEMORY_COMMUNITY_IMAGE:-${config.apiImage}}
     environment:
-      API_KEY_PEPPER: community-local-api-key-pepper-32-bytes
       API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
       CORS_ORIGINS: http://localhost:${config.dashboardPort}
       DATABASE_URL: postgresql+asyncpg://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
       DATABASE_URL_SYNC: postgresql://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
-      JWT_SECRET_KEY: kemory-community-local-jwt-secret-32-bytes
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
       KMV_VECTOR_BACKEND: pgvector
       KMV_BLOB_BACKEND: local_fs

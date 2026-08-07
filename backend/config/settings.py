@@ -102,24 +102,13 @@ class Settings(BaseSettings):
     kmv_telemetry: str = "noop"
     kmv_cognition_enterprise: bool = False
 
-    # ─── JWT Authentication (internal HS256 for agents) ─────────
-    # SECURITY: fail-closed in non-development environments. The previous
-    # default ("dev-secret-change-in-production") meant a misconfigured env
-    # would silently ship that hard-coded secret to prod. See codebase review
-    # P1 #5. Empty in dev → an ephemeral random key is generated at startup
-    # (logged WARN). Empty in staging/prod → kemory refuses to start.
+    # Retained only so hosted-origin modules remain import-compatible. Community
+    # boot never reads or initializes JWT/API-key-registry secrets.
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 15
-
-    # ─── API-key pepper (HMAC-SHA256) ────────────────────────────
-    # Server-side secret that keys the HMAC over agent API keys. New keys are
-    # minted as `hmac-sha256:<kid>:<hex>`; existing bcrypt keys keep verifying
-    # (allow_legacy_bcrypt) and upgrade to HMAC on next use. Same fail-closed
-    # discipline as JWT_SECRET_KEY: empty in staging/prod → refuse to start;
-    # empty in dev → a FIXED dev pepper is used (NOT ephemeral — an ephemeral
-    # pepper would invalidate every HMAC key written before the last restart).
     api_key_pepper: str = ""
+    kemory_local_blob_signing_key: str = ""
 
     # ─── Multi-tenancy (KEMORY_MULTI_TENANT_AUTH_PLAN.md) ────────
     # Three modes:
@@ -286,10 +275,6 @@ class Settings(BaseSettings):
     def model_post_init(self, __context) -> None:
         """Apply security policies that depend on multiple fields.
 
-        P1 #5 — JWT secret fail-closed:
-          * non-dev with empty/placeholder secret → refuse to start.
-          * dev with empty secret → generate ephemeral random key, log WARN.
-
         P1 #6 — CORS origins format validation:
           Misformatted CORS_ORIGINS (missing scheme, etc.) makes kemory
           refuse to start. Better than silent CORS errors in the customer's
@@ -301,52 +286,6 @@ class Settings(BaseSettings):
             _parse_cors_origins(self.cors_origins)
         except ValueError as exc:
             raise ValueError(f"CORS_ORIGINS is malformed: {exc}. Refusing to start.") from exc
-
-        legacy_placeholders = {"", "dev-secret-change-in-production", "change-me"}
-        if self.jwt_secret_key in legacy_placeholders:
-            if self.environment in {"staging", "production", "prod"}:
-                raise ValueError(
-                    "JWT_SECRET_KEY is empty or a placeholder in a non-dev "
-                    "environment. Refusing to start. Set a real secret in "
-                    "the deployment env (32+ random bytes)."
-                )
-            # Dev: generate an ephemeral key. Use object.__setattr__ because
-            # pydantic v2 freezes fields after validation by default.
-            import secrets
-            import sys as _sys
-
-            ephemeral = secrets.token_urlsafe(48)
-            object.__setattr__(self, "jwt_secret_key", ephemeral)
-            # Log to stderr explicitly. structlog's default goes to stdout,
-            # which is wrong for a startup-warn line — and pollutes anything
-            # else that pipes the process's stdout (gen_env.py, scripts that
-            # render the model).
-            print(
-                f"[WARN] jwt.ephemeral_secret_generated environment={self.environment} "
-                "hint='Set JWT_SECRET_KEY to keep tokens valid across restarts'",
-                file=_sys.stderr,
-            )
-
-        # API-key pepper fail-closed (mirrors the JWT guard). Unlike the JWT
-        # secret, the dev fallback is a FIXED constant, never ephemeral: an
-        # ephemeral pepper would change on every restart and silently
-        # invalidate every HMAC-hashed API key already in the DB.
-        if self.api_key_pepper in {"", "change-me"}:
-            if self.environment in {"staging", "production", "prod"}:
-                raise ValueError(
-                    "API_KEY_PEPPER is empty in a non-dev environment. Refusing "
-                    "to start — agent API-key hashing needs a stable server-side "
-                    "pepper (32+ random bytes). Set it in the deployment env."
-                )
-            import sys as _sys
-
-            object.__setattr__(self, "api_key_pepper", "kemory-dev-api-key-pepper")
-            print(
-                f"[WARN] api_key.dev_pepper_in_use environment={self.environment} "
-                "hint='Set API_KEY_PEPPER for any shared/persistent environment'",
-                file=_sys.stderr,
-            )
-
 
 # Singleton settings instance
 settings = Settings()

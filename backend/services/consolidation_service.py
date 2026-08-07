@@ -1,23 +1,13 @@
 """
 S9N Memory Vault — Memory Consolidation & Decay Service (KMV-E13)
 
-Implements the three-phase consolidation pipeline:
+Implements the local consolidation pipeline:
   1. apply_weight_decay()   — KMV-S13.3: Reduce consolidation_weight daily per namespace policy
   2. auto_archive_expired() — KMV-S13.3: Archive memories older than retention_days
-  3. run_daily_consolidation() — KMV-S13.2: Push pending memories to Cognition OS, tombstone on success
-
-Architecture:
-  Memory Vault = short-term working memory (days to weeks)
-  Cognition OS = long-term semantic memory (indefinite)
-
-  The consolidation pipeline is the bridge between the two systems.
-  Once a memory is archived, it is excluded from L1/L2/L3 reads (short-term).
-  It remains accessible via L3.1 (consolidated) and L4 (cognition) reads.
 
 Spec reviewer mitigations applied:
   - Batched DB updates to avoid table locks on large datasets
-  - Memories in 'consolidating' status are immutable (enforced in memory_service)
-  - Circuit breaker: Cognition OS failures leave memories in 'pending' for retry
+  - Expired memories are archived locally without an external graph service
 """
 
 import logging
@@ -28,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
 from backend.models.namespace_policy import EXEMPT_NAMESPACES, NamespacePolicy
-from backend.services.cognition_bridge import CognitionBridge
 
 logger = logging.getLogger(__name__)
 
@@ -197,18 +186,11 @@ async def auto_archive_expired(
 async def run_daily_consolidation(
     db: AsyncSession,
     namespace: str | None = None,
-    cognition_bridge: CognitionBridge | None = None,
 ) -> dict:
     """
     KMV-S13.2: Full daily consolidation pipeline for a namespace (or all namespaces).
 
-    Pipeline:
-      1. apply_weight_decay() — reduce weights for all pending memories
-      2. auto_archive_expired() — archive memories past retention window
-      3. Push remaining pending memories to Cognition OS (if auto_consolidate=True)
-         - Sets consolidation_status='consolidating' before push (immutability signal)
-         - On success: sets consolidation_status='archived', stores cognition_entity_id
-         - On failure: reverts to 'pending' for retry on next run (circuit breaker)
+    Applies weight decay and archives memories past their local retention window.
 
     Returns a detailed summary dict.
     """
@@ -236,150 +218,7 @@ async def run_daily_consolidation(
         logger.error("auto_archive_failed error=%s", exc)
         summary["errors"].append(f"auto_archive: {exc}")
 
-    # Phase 3: Push to Cognition OS
-    if namespace:
-        namespaces_to_consolidate = [namespace]
-    else:
-        result = await db.execute(
-            select(Memory.namespace).where(Memory.consolidation_status == "pending").distinct()
-        )
-        namespaces_to_consolidate = [row[0] for row in result.fetchall()]
-
-    for ns in namespaces_to_consolidate:
-        policy = await _get_policy(db, ns)
-        if not policy.auto_consolidate:
-            logger.info("consolidation skipped (auto_consolidate=False) namespace=%s", ns)
-            summary["consolidated"][ns] = {"skipped": True, "reason": "auto_consolidate=False"}
-            continue
-
-        ns_summary = {"pushed": 0, "failed": 0, "entity_ids": []}
-
-        # Fetch pending memories for this namespace (older than 24h)
-        cutoff_24h = datetime.now(UTC) - timedelta(hours=24)
-        result = await db.execute(
-            select(Memory)
-            .where(
-                and_(
-                    Memory.namespace == ns,
-                    Memory.consolidation_status == "pending",
-                    Memory.created_at < cutoff_24h,
-                    Memory.invalid_at.is_(None),
-                )
-            )
-            .order_by(Memory.created_at)
-            .limit(_BATCH_SIZE)
-        )
-        memories = result.scalars().all()
-
-        for memory in memories:
-            # Mark as consolidating (immutability signal — KMV spec reviewer mitigation)
-            await db.execute(
-                update(Memory)
-                .where(Memory.memory_id == memory.memory_id)
-                .values(
-                    consolidation_status="consolidating",
-                    epoch_date=today,
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            await db.commit()
-
-            # Push to Cognition OS
-            entity_id = None
-            try:
-                if cognition_bridge is not None:
-                    entity_id = await _push_to_cognition_os(cognition_bridge, memory, ns, today)
-                else:
-                    # No bridge available — log and skip (graceful degradation)
-                    logger.warning(
-                        "consolidation_skipped_no_bridge memory_id=%s namespace=%s",
-                        memory.memory_id,
-                        ns,
-                    )
-                    # Revert to pending for retry
-                    await db.execute(
-                        update(Memory)
-                        .where(Memory.memory_id == memory.memory_id)
-                        .values(consolidation_status="pending")
-                    )
-                    await db.commit()
-                    ns_summary["failed"] += 1
-                    continue
-
-                # Success — archive the memory
-                await db.execute(
-                    update(Memory)
-                    .where(Memory.memory_id == memory.memory_id)
-                    .values(
-                        consolidation_status="archived",
-                        cognition_entity_id=entity_id,
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-                await db.commit()
-                ns_summary["pushed"] += 1
-                if entity_id:
-                    ns_summary["entity_ids"].append(entity_id)
-
-            except Exception as exc:
-                # Circuit breaker: revert to pending for retry
-                logger.error(
-                    "consolidation_push_failed memory_id=%s namespace=%s error=%s",
-                    memory.memory_id,
-                    ns,
-                    exc,
-                )
-                await db.execute(
-                    update(Memory)
-                    .where(Memory.memory_id == memory.memory_id)
-                    .values(consolidation_status="pending")
-                )
-                await db.commit()
-                ns_summary["failed"] += 1
-                summary["errors"].append(f"{ns}/{memory.memory_id}: {exc}")
-
-        summary["consolidated"][ns] = ns_summary
-        logger.info(
-            "consolidation_complete namespace=%s pushed=%d failed=%d",
-            ns,
-            ns_summary["pushed"],
-            ns_summary["failed"],
-        )
-
     return summary
-
-
-async def _push_to_cognition_os(
-    bridge: CognitionBridge,
-    memory: Memory,
-    namespace: str,
-    epoch_date: str,
-) -> str | None:
-    """
-    Push a single memory to Cognition OS via the bridge.
-    Returns the cognition_entity_id on success, or None.
-    """
-    payload = {
-        "content": memory.content,
-        "namespace": namespace,
-        "epoch_date": epoch_date,
-        "memory_id": str(memory.memory_id),
-        "consolidation_weight": memory.consolidation_weight,
-        "source_type": memory.source_type,
-        "created_at": memory.created_at.isoformat() if memory.created_at else None,
-        "meta": memory.meta or {},
-    }
-    # Use the bridge's push_memory method if available, otherwise fall back to round_trip_concepts
-    if hasattr(bridge, "push_memory"):
-        result = await bridge.push_memory(payload)
-        return result.get("entity_id")
-    else:
-        # Fallback: use round_trip_concepts with a single-item list
-        result = await bridge.round_trip_concepts(
-            namespace=namespace,
-            concepts=[{"text": memory.content, "weight": memory.consolidation_weight}],
-        )
-        return result.get("entity_id") if result else None
 
 
 async def get_consolidation_stats(
