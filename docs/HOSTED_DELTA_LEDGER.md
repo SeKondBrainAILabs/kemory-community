@@ -18,10 +18,43 @@ whole upstream tree. For each hosted baseline:
 2. Classify it as port, adapt, or exclude against the community boundaries.
 3. Replay compatible behavior in a `community/` pull request with Docker tests.
 4. Record source commits, adaptations, exclusions, and the new baseline here.
+5. Verify the community repository still carries upstream's **security gates**,
+   not just its code — see below.
 
 This avoids reintroducing hosted authentication, billing, telemetry, storage,
 analytics, or organisation workflows while keeping compatible memory behavior
 and wire contracts current.
+
+Replay is deliberately manual. There is no automated subtree-pull job: a
+scheduled mirror would defeat the per-cohort classification that keeps hosted
+concerns out of this repository.
+
+### Step 5 — why gates need their own step
+
+Steps 1-4 decide which *code* crosses the boundary. They say nothing about the
+CI and repository settings that catch a bad crossing, and those do not travel
+with a subtree import. Every one of the following was true at the v0.1.0
+baseline:
+
+- upstream ran gitleaks with a tuned config; this repository had no secret
+  scanning of any kind, on the one repository where a leak is public the moment
+  it lands
+- GitHub secret scanning and push protection were enabled upstream and disabled
+  here — GitHub only turns them on by default for public repositories owned by
+  *personal accounts*, never organisation-owned ones
+- `ruff` and `compileall` covered `backend`, `kemory`, `kemory_cli` and `tests`
+  but not `scripts/`, so a ported script that raised `ImportError` on its first
+  line passed every check
+- the forbidden-package guard read `pyproject.toml` only, so a ported module
+  could import a package nobody declared
+- Dependabot pointed at a lockfile the build does not use, while the lockfile it
+  does use went unwatched
+
+So each replay must confirm: scanners still run and still cover the new paths,
+lint and compile roots include everything shipped, the community boundary
+guards in `scripts/test_community_config.sh` still fail on what they should,
+and repository security settings match upstream's. A gate that silently stopped
+covering something is indistinguishable from a gate that passes.
 
 ## Baseline
 

@@ -12,17 +12,21 @@ make dev   # boots API + dashboard locally
 make test  # runs pytest + vitest matrix
 ```
 
-For now (during the scaffolding phase), the backend code lives in
-`SeKondBrainAILabs/agent_memory_vault` and is pulled into this repo
-via a weekly subtree sync. See `.github/workflows/sync-from-main.yml`.
+The backend, dashboard and CLI now live in this repository — they were
+imported from hosted Kemory by subtree split and are maintained here.
+
+Upstream changes are replayed **manually, by feature cohort**, not mirrored:
+each hosted commit is classified port / adapt / exclude against the community
+boundaries and landed in its own PR. The process and the full decision history
+are in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md). There is no
+scheduled sync job, by design — a mirror would defeat the classification that
+keeps hosted concerns out of this repository.
 
 ## Branch model
 
 - `main` - protected, requires PR + 1 review + CI green.
-- `dev-sync` - auto-receives the weekly subtree pull from
-  `agent_memory_vault`. Manually promoted to `main` after review.
 - Feature branches: `feat/<short-slug>`, `fix/<short-slug>`,
-  `docs/<short-slug>`, etc.
+  `docs/<short-slug>`, etc. Upstream replays use `community/<slug>`.
 
 ## Commit conventions
 

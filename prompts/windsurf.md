@@ -20,15 +20,10 @@ Windsurf → **Settings** → **Cascade** → **MCP Servers** → **Add server**
 ```json
 {
   "mcpServers": {
-    "s9nmem": {
-      "command": "/opt/anaconda3/bin/python",
-      "args": [
-        "/absolute/path/to/agent_memory_vault/scripts/kemory_mcp_server.py"
-      ],
-      "env": {
-        "S9NMV_API_KEY": "{{KEMORY_API_KEY}}",
-        "S9NMV_API_URL": "{{KEMORY_URL}}"
-      }
+    "kemory": {
+      "command": "kemory",
+      "args": ["mcp", "serve"],
+      "env": {}
     }
   }
 }
