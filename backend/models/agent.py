@@ -106,11 +106,10 @@ class AgentRegistry(Base):
 
     # ── Kind (chats-v1) ───────────────────────────────────────────
     # 'agent'     = regular MCP / SDK agent (default)
-    # 'extension' = Kanvas Chrome Extension install. Auth path is identical
-    #               (same X-API-Key flow, same Gatekeeper checks); the kind
-    #               only changes which mint/list endpoints surface the row
-    #               and lets the dashboard render extension installs in
-    #               their own tab. See backend/api/routes/extension_keys.py.
+    # 'extension' = Kanvas Chrome Extension install (hosted-only). The column
+    #               is retained so the schema stays portable with hosted, but
+    #               community mounts no endpoint that mints or lists these —
+    #               the extension-key routes were removed as hosted-only.
     agent_kind = Column(
         String(20),
         nullable=False,

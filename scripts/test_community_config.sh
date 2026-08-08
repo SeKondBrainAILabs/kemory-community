@@ -119,21 +119,10 @@ FORBIDDEN_MODULES = {
 ROOTS = ("backend", "kemory", "kemory_cli", "scripts", "tests")
 SKIP_PARTS = {"__pycache__", "node_modules", "versions"}
 
-# Known-dead hosted modules, exempted BY PATH and enumerated so the gate stays
-# green on today's tree and red on anything new — the same approach .gitleaks.toml
-# takes with its allowlist.
-#
-# backend/services/auth_service.py imports `jose` for create_access_token and
-# decode_access_token. Both are unreachable from backend/main.py: the only
-# importers are agent_service.py and extension_key_service.py, reached solely
-# via the agents, pair and extension_keys routers — none of which main.py
-# mounts. That is why the container boots at all without python-jose installed.
-#
-# Deleting that chain touches five modules and deserves its own review, so it
-# is exempted here rather than skipped silently. Remove this entry with it.
-KNOWN_DEAD_HOSTED = {
-    "backend/services/auth_service.py",
-}
+# No exemptions. The dead hosted auth chain that needed one has been deleted,
+# so this guard now runs clean against the whole tree — which is the useful
+# state for it to be in. Resist adding an exemption here: if a module needs
+# one, that is the signal it should not be in the community edition.
 
 violations = []
 for root in ROOTS:
@@ -142,8 +131,6 @@ for root in ROOTS:
         continue
     for path in base.rglob("*.py"):
         if SKIP_PARTS.intersection(path.parts):
-            continue
-        if path.as_posix() in KNOWN_DEAD_HOSTED:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
