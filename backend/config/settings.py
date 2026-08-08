@@ -106,12 +106,6 @@ class Settings(BaseSettings):
     kmv_synthesis_model: str = "llama-3.3-70b-versatile"
     kemory_artifact_max_bytes: int = 50 * 1024 * 1024
 
-    # Retained only so hosted-origin modules remain import-compatible. Community
-    # boot never reads or initializes JWT/API-key-registry secrets.
-    jwt_secret_key: str = ""
-    jwt_algorithm: str = "HS256"
-    jwt_expiry_minutes: int = 15
-    api_key_pepper: str = ""
     kemory_local_blob_signing_key: str = ""
 
     # ─── Multi-tenancy (KEMORY_MULTI_TENANT_AUTH_PLAN.md) ────────

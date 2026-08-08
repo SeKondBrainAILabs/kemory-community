@@ -30,12 +30,7 @@ import sys
 from collections.abc import Iterable
 from typing import Any, get_args
 
-# Allow gen_env to run without a real JWT secret etc — we're just inspecting
-# the model, not instantiating it for runtime. A non-empty placeholder
-# secret avoids the dev-mode ephemeral-secret WARN log that would
-# otherwise pollute stdout (and produce false drift in env-example-check
-# on every run, since the WARN includes a fresh timestamp).
-os.environ.setdefault("JWT_SECRET_KEY", "gen-env-placeholder-not-a-real-secret-32-chars")
+# We're only inspecting the model here, not instantiating it for runtime.
 os.environ.setdefault("ENVIRONMENT", "development")
 
 # structlog defaults to stdout; redirect to stderr while we import settings
