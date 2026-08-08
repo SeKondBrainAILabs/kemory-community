@@ -40,5 +40,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard builds and CI now use Node 24, with Vite constrained to the
   hosted security floor (`^6.4.3`) and the npm lock refreshed to remove
   high-severity transitive advisories.
+- The Quick Start now leads with cloning the repository and running
+  `docker compose -f docker-compose.community.yml up -d --build`, which needs
+  only Docker. The `npx kemory-community` installer is documented as pending
+  its first publish rather than presented as available.
+- Tagging a release now fails immediately when `NPM_TOKEN` is absent, before
+  any image or package is published, instead of skipping the npm publish and
+  reporting success.
+- Dependabot now watches `dashboard/package-lock.json` and the Python
+  dependencies in `pyproject.toml`. Minor and patch updates arrive grouped;
+  majors still arrive individually.
+
+### Removed
+- Hosted agent-JWT, device-pairing and browser-extension-key code, none of
+  which was reachable from the running application: the `agents`, `pair` and
+  `extension_keys` routes and the `auth_service`, `agent_service` and
+  `extension_key_service` modules behind them, along with the now-unread
+  `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_EXPIRY_MINUTES` and
+  `API_KEY_PEPPER` settings.
+- A hosted QA script that could not run here — it imported a package this
+  edition forbids and does not ship — and the `rich` dependency it was the
+  only consumer of.
+- `dashboard/pnpm-lock.yaml`, a leftover from the initial import. The build
+  uses npm and `package-lock.json`; the stale file was the sole source of
+  every open dependency advisory against this repository.
+
+### Fixed
+- A fresh clone now starts a working stack. `KEMORY_RUN_MIGRATIONS` was set to
+  `false` in the committed compose file, so the API came up against an empty
+  database and every authenticated request failed with
+  `relation "kemory_memories" does not exist`.
+- MCP client setup instructions were unusable in every guide. They pointed at
+  a `scripts/kemory_mcp_server.py` that does not exist in this repository, in
+  a repository under its former name, through a hardcoded interpreter path.
+  All six guides now configure the real bridge, `kemory mcp serve`, and
+  mention the `kemory mcp install --host <client>` shortcut.
+
+### Security
+- Published ports now bind to `127.0.0.1` instead of every network interface,
+  in both the committed compose file and the one the installer generates.
+  Previously the dashboard served the local API key at `/config.json` to any
+  unauthenticated caller, and the API accepted it — so anyone on the same
+  network could read, modify and delete the entire memory store. If you rely
+  on reaching the stack from another machine, publish the port deliberately.
+- Secret scanning runs in CI (gitleaks, pinned by version and checksum, with
+  rules for this project's own API-key formats), and a guard now rejects
+  imports of hosted-only packages that no declared dependency provides.
 
 [Unreleased]: https://github.com/SeKondBrainAILabs/kemory-community/compare/HEAD...HEAD
