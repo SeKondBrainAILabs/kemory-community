@@ -72,9 +72,8 @@ def _get_session_factory():
             expire_on_commit=False,
         )
         # Lazy import to avoid the import cycle:
-        #   tenancy → auth_service → settings (fine)
-        #   database → tenancy → auth_service → ... (fine, but only safe
-        # AFTER the session factory is in place).
+        #   database → tenancy → settings → ... (only safe AFTER the session
+        # factory is in place).
         from sqlalchemy.orm import Session as _SyncSession
 
         from backend.core.query_safety import register_query_safety_listener

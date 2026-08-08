@@ -72,7 +72,7 @@ async def tenant_rate_limit_middleware(request: Request, call_next):
     the request, before route handlers run).
     """
     # Lazy import to avoid the module-load cycle:
-    # tenancy → auth_service → settings → ... → tenant_rate_limit
+    # tenancy → settings → ... → tenant_rate_limit
     from backend.core.tenancy import current_org_id, current_user_id
 
     org = current_org_id()
