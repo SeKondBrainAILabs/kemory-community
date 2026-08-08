@@ -18,23 +18,23 @@ Edit `~/.claude/settings.json` and add this entry under `mcpServers`:
 ```json
 {
   "mcpServers": {
-    "s9nmem": {
-      "command": "/opt/anaconda3/bin/python",
-      "args": [
-        "/absolute/path/to/agent_memory_vault/scripts/kemory_mcp_server.py"
-      ],
-      "env": {
-        "S9NMV_API_KEY": "{{KEMORY_API_KEY}}",
-        "S9NMV_API_URL": "{{KEMORY_URL}}"
-      }
+    "kemory": {
+      "command": "kemory",
+      "args": ["mcp", "serve"],
+      "env": {}
     }
   }
 }
 ```
 
-If you also want enforcement (Claude blocked from silently using local
-files instead of Kemory), add a `PreToolUse` hook — see the Kemory repo's
-`hooks/block_local_memory.py`.
+Or let the CLI write that entry for you:
+
+```bash
+kemory mcp install --host claude-code
+```
+
+`kemory mcp install` also accepts `claude-desktop`, `cursor`, `continue`,
+`warp`, or `all`.
 
 After ⌘Q + relaunch, the next session will have these tools:
 

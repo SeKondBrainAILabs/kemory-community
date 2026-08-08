@@ -21,16 +21,10 @@ Most MCP hosts accept a config like:
 ```json
 {
   "mcpServers": {
-    "s9nmem": {
-      "command": "python",
-      "args": [
-        "/absolute/path/to/agent_memory_vault/scripts/kemory_mcp_server.py"
-      ],
-      "env": {
-        "S9NMV_API_KEY": "{{KEMORY_API_KEY}}",
-        "S9NMV_API_URL": "{{KEMORY_URL}}"
-      },
-      "transport": "stdio"
+    "kemory": {
+      "command": "kemory",
+      "args": ["mcp", "serve"],
+      "env": {}
     }
   }
 }

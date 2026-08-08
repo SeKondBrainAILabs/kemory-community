@@ -46,6 +46,44 @@ docker compose -f docker-compose.community.yml exec api \
   --namespace project:example --tag client-work --to-namespace project:client-work
 ```
 
+## Your data
+
+Kemory Community runs entirely on your machine, and it's a memory product, so
+this is the first thing worth knowing:
+
+- **Memories, chats, artifacts and indexes stay local** — Postgres data under
+  `~/.kemory-community/data/pgdata/`, artifacts under
+  `~/.kemory-community/artifacts/`.
+- **No telemetry.** The community build ships `KMV_TELEMETRY: noop`. There is no
+  analytics backend, no usage reporting, and no phone-home.
+- **No account, no signup, no network identity.** Auth is a single local API key
+  you control. There is no Keycloak, OIDC or OAuth in this edition.
+- **Embeddings run in-process by default** (`fastembed`, a local ONNX model), so
+  indexing your memories does not call out to anyone.
+- **Outbound calls happen only for features you configure yourself** — a
+  summarisation or alternative embedding provider you supply a key for. The
+  provider key variables ship empty; leave them unset and nothing leaves the
+  machine.
+
+Full detail in [docs/privacy.md](docs/privacy.md).
+
+## Community vs hosted
+
+Same REST + MCP wire protocol, so memories are portable between them.
+
+| | Community | Hosted |
+| --- | --- | --- |
+| Identity | one local API key | Keycloak / OIDC, orgs, teams |
+| Tenancy | single user | multi-org with per-tenant isolation |
+| Permissions | owner has full access | Gatekeeper rule engine |
+| Vector search | pgvector | pgvector + hosted vector store |
+| Blob storage | local filesystem | object storage |
+| Telemetry | none | hosted analytics |
+| Licence | Apache-2.0 | commercial |
+
+Which upstream changes are ported, adapted or excluded — and why — is recorded
+per cohort in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
+
 ## What ships in v0.1
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the full table.

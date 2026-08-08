@@ -20,21 +20,16 @@ Cursor → **Settings** → **Cursor Settings** → **MCP** → **Add new MCP se
 ```json
 {
   "mcpServers": {
-    "s9nmem": {
-      "command": "/opt/anaconda3/bin/python",
-      "args": [
-        "/absolute/path/to/agent_memory_vault/scripts/kemory_mcp_server.py"
-      ],
-      "env": {
-        "S9NMV_API_KEY": "{{KEMORY_API_KEY}}",
-        "S9NMV_API_URL": "{{KEMORY_URL}}"
-      }
+    "kemory": {
+      "command": "kemory",
+      "args": ["mcp", "serve"],
+      "env": {}
     }
   }
 }
 ```
 
-Restart Cursor. The MCP panel should show the s9nmem server as
+Restart Cursor. The MCP panel should show the kemory server as
 **connected** with 16 tools.
 
 ---
