@@ -8,7 +8,23 @@ permissions:
   packages: write
 
 jobs:
+  # Runs before anything is published. A release that cannot complete should
+  # fail while it is still a no-op, not after the images are already public
+  # and only the npm half is missing.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN is not configured, so this version tag cannot be published to npm. Add the NPM_TOKEN repository secret and re-run this workflow. Nothing has been published."
+            exit 1
+          fi
+
   publish-docker:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,18 +56,6 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      # This workflow only runs on version tags, so a missing token is not a
-      # situation to skip around — it means the release is broken. The previous
-      # silent-skip notice is how v0.1.0 got tagged, the README told users to
-      # `npx kemory-community`, and the package sat unpublished for two months.
-      - name: Require npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::NPM_TOKEN is not configured, so this version tag cannot be published to npm. Add the NPM_TOKEN repository secret and re-run this workflow."
-            exit 1
-          fi
       - run: npm install --package-lock=false
       - run: npm test
       - run: npm run prepublishOnly
