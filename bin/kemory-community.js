@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -16,7 +15,6 @@ const DEFAULTS = {
   postgresContainerPort: 5432,
   apiImage: 'ghcr.io/sekondbrainailabs/kemory-community-api:0.1.0',
   dashboardImage: 'ghcr.io/sekondbrainailabs/kemory-community-dashboard:0.1.0',
-  dataDir: path.join(os.homedir(), '.kemory-community'),
 };
 
 function usage(exitCode = 0) {
@@ -26,7 +24,9 @@ kemory-community ${VERSION}
 Usage:
   kemory-community init [--runtime docker|local] [--dir <path>] [--force]
   kemory-community up [--dir <path>]
+  kemory-community down [--dir <path>]
   kemory-community doctor [--dir <path>]
+  kemory-community mcp-config [--dir <path>]
   kemory-community ports
 
 Docker is the default runtime. The local runtime only writes config; v0.1
@@ -109,7 +109,6 @@ function configFromArgs(args) {
     postgresContainerPort: DEFAULTS.postgresContainerPort,
     apiImage: args['api-image'] || args.image || DEFAULTS.apiImage,
     dashboardImage: args['dashboard-image'] || (args.image ? `${args.image}-dashboard` : DEFAULTS.dashboardImage),
-    dataDir: path.resolve(args['data-dir'] || DEFAULTS.dataDir),
     apiKey: args['api-key'] || `kc_${crypto.randomBytes(24).toString('base64url')}`,
   };
 }
@@ -144,6 +143,12 @@ function dockerCompose(config) {
       - "127.0.0.1:${config.apiPort}:${config.apiContainerPort}"
     volumes:
       - kemory_data:/app/.community
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${config.apiContainerPort}/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,7 +164,8 @@ function dockerCompose(config) {
     ports:
       - "127.0.0.1:${config.dashboardPort}:${config.dashboardContainerPort}"
     depends_on:
-      - kemory-api
+      kemory-api:
+        condition: service_healthy
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -220,11 +226,40 @@ function jsonConfig(config) {
         api: config.apiImage,
         dashboard: config.dashboardImage,
       },
-      dataDir: config.dataDir,
+      storage: 'docker_named_volumes',
     },
     null,
     2,
   ) + '\n';
+}
+
+function mcpBridge() {
+  return `#!/usr/bin/env node
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+const dir = __dirname;
+const result = spawnSync('docker', [
+  'compose', '--env-file', path.join(dir, 'kemory.env'),
+  '-f', path.join(dir, 'docker-compose.yml'),
+  'exec', '-T', '-e', 'KEMORY_URL=http://127.0.0.1:8000',
+  'kemory-api', 'kemory', 'mcp', 'serve',
+], { stdio: 'inherit' });
+
+process.exit(result.status ?? 1);
+`;
+}
+
+function mcpClientConfig(dir) {
+  return JSON.stringify({
+    mcpServers: {
+      kemory: {
+        command: 'node',
+        args: [path.join(dir, 'kemory-mcp.js')],
+        env: {},
+      },
+    },
+  }, null, 2) + '\n';
 }
 
 function writeFileOnce(filePath, content, force) {
@@ -245,6 +280,8 @@ function init(args) {
 
   if (config.runtime === 'docker') {
     writeFileOnce(path.join(dir, 'docker-compose.yml'), dockerCompose(config), args.force);
+    writeFileOnce(path.join(dir, 'kemory-mcp.js'), mcpBridge(), args.force);
+    writeFileOnce(path.join(dir, 'mcp.json'), mcpClientConfig(dir), args.force);
   } else {
     writeFileOnce(
       path.join(dir, 'local.env'),
@@ -261,6 +298,7 @@ KEMORY_DASHBOARD_PORT=${config.dashboardPort}
   console.log(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);
   if (config.runtime === 'docker') {
     console.log(`Run: kemory-community up --dir ${dir}`);
+    console.log(`MCP config: ${path.join(dir, 'mcp.json')}`);
   }
 }
 
@@ -272,7 +310,47 @@ function composeCommand() {
   fail('Docker Compose is required for --runtime docker');
 }
 
-function up(args) {
+function composeArgs(dir, action) {
+  return ['--env-file', path.join(dir, 'kemory.env'), '-f', path.join(dir, 'docker-compose.yml'), action];
+}
+
+function readConfig(dir) {
+  const target = path.join(dir, 'config.json');
+  if (!fs.existsSync(target)) fail(`missing ${target}; run kemory-community init first`);
+  try {
+    return JSON.parse(fs.readFileSync(target, 'utf8'));
+  } catch {
+    fail(`${target} is not valid JSON`);
+  }
+}
+
+function readEnvValue(dir, key) {
+  const target = path.join(dir, 'kemory.env');
+  if (!fs.existsSync(target)) return '';
+  const line = fs.readFileSync(target, 'utf8').split(/\r?\n/).find((item) => item.startsWith(`${key}=`));
+  return line ? line.slice(key.length + 1) : '';
+}
+
+async function probe(url, options = {}) {
+  try {
+    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(5_000) });
+    return { ok: response.ok, status: response.status };
+  } catch (error) {
+    return { ok: false, status: error.cause?.code || error.name || 'unreachable' };
+  }
+}
+
+async function waitForReady(url, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await probe(url);
+    if (result.ok) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  fail(`timed out waiting for ${url}`);
+}
+
+async function up(args) {
   const dir = setupDir(args);
   const composeFile = path.join(dir, 'docker-compose.yml');
   const envFilePath = path.join(dir, 'kemory.env');
@@ -280,21 +358,64 @@ function up(args) {
     fail(`missing ${composeFile}; run kemory-community init --runtime docker first`);
   }
   const [command, baseArgs] = composeCommand();
-  const result = spawnSync(command, [...baseArgs, '--env-file', envFilePath, '-f', composeFile, 'up', '-d'], {
+  const result = spawnSync(command, [...baseArgs, ...composeArgs(dir, 'up'), '-d'], {
     stdio: 'inherit',
   });
-  process.exit(result.status ?? 1);
+  if (result.status !== 0) fail('Docker Compose failed to start');
+
+  const config = readConfig(dir);
+  process.stdout.write('Waiting for Kemory API');
+  await waitForReady(`${config.urls.api}/health/ready`);
+  process.stdout.write(' ready\nWaiting for dashboard');
+  await waitForReady(config.urls.dashboard);
+  console.log(' ready');
+  console.log(`Kemory Community is ready: ${config.urls.dashboard}`);
+  console.log(`MCP config: ${path.join(dir, 'mcp.json')}`);
 }
 
-function doctor(args) {
+function down(args) {
+  const dir = setupDir(args);
+  const [command, baseArgs] = composeCommand();
+  const result = spawnSync(command, [...baseArgs, ...composeArgs(dir, 'down')], { stdio: 'inherit' });
+  if (result.status !== 0) fail('Docker Compose failed to stop');
+}
+
+async function doctor(args) {
   const dir = setupDir(args);
   const configPath = path.join(dir, 'config.json');
   const composePath = path.join(dir, 'docker-compose.yml');
-  console.log(`setup dir: ${dir}`);
-  console.log(`config: ${fs.existsSync(configPath) ? 'ok' : 'missing'}`);
-  console.log(`docker compose: ${fs.existsSync(composePath) ? 'ok' : 'missing'}`);
+  const checks = [];
+  function report(label, ok, detail) {
+    checks.push(ok);
+    console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}  ${detail}`);
+  }
+  console.log('kemory community doctor');
+  report('setup', fs.existsSync(configPath), dir);
+  report('compose file', fs.existsSync(composePath), composePath);
   const docker = spawnSync('docker', ['--version'], { encoding: 'utf8' });
-  console.log(`docker: ${docker.status === 0 ? docker.stdout.trim() : 'missing'}`);
+  report('docker', docker.status === 0, docker.status === 0 ? docker.stdout.trim() : 'missing');
+  const compose = spawnSync('docker', ['compose', 'version'], { encoding: 'utf8' });
+  report('docker compose', compose.status === 0, compose.status === 0 ? compose.stdout.trim() : 'missing');
+
+  if (fs.existsSync(configPath)) {
+    const config = readConfig(dir);
+    const readiness = await probe(`${config.urls.api}/health/ready`);
+    report('API readiness', readiness.ok, `HTTP ${readiness.status}`);
+    const apiKey = readEnvValue(dir, 'KEMORY_LOCAL_API_KEY');
+    const auth = await probe(`${config.urls.api}/api/v1/community/settings`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+    report('API key', auth.ok, `HTTP ${auth.status}`);
+    const dashboard = await probe(config.urls.dashboard);
+    report('dashboard', dashboard.ok, `HTTP ${dashboard.status}`);
+  }
+  if (checks.includes(false)) process.exitCode = 1;
+}
+
+function printMcpConfig(args) {
+  const target = path.join(setupDir(args), 'mcp.json');
+  if (!fs.existsSync(target)) fail(`missing ${target}; run kemory-community init --runtime docker first`);
+  process.stdout.write(fs.readFileSync(target, 'utf8'));
 }
 
 function ports() {
@@ -305,27 +426,22 @@ function ports() {
   }, null, 2));
 }
 
-const args = parseArgs(process.argv.slice(2));
-const command = args._[0] || 'help';
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const command = args._[0] || 'help';
 
-switch (command) {
-  case 'init':
-    init(args);
-    break;
-  case 'up':
-    up(args);
-    break;
-  case 'doctor':
-    doctor(args);
-    break;
-  case 'ports':
-    ports();
-    break;
-  case 'help':
-  case '--help':
-  case '-h':
-    usage(0);
-    break;
-  default:
-    usage(2);
+  switch (command) {
+    case 'init': init(args); break;
+    case 'up': await up(args); break;
+    case 'down': down(args); break;
+    case 'doctor': await doctor(args); break;
+    case 'mcp-config': printMcpConfig(args); break;
+    case 'ports': ports(); break;
+    case 'help':
+    case '--help':
+    case '-h': usage(0); break;
+    default: usage(2);
+  }
 }
+
+main().catch((error) => fail(error.message || String(error)));

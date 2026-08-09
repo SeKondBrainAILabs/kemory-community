@@ -29,11 +29,11 @@ set -eu
 pip install --upgrade pip
 
 if [ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ]; then
-    echo "Installing WITH local-embeddings extra (FastEmbed/ONNX model)"
-    pip install --no-cache-dir '.[backend,platform,local-embeddings]'
+    echo "Installing WITH local-embeddings and Community CLI extras"
+    pip install --no-cache-dir '.[backend,platform,local-embeddings,cli]'
 else
-    echo "Installing slim (no in-process model; uses core-embedding-service)"
-    pip install --no-cache-dir '.[backend,platform]'
+    echo "Installing slim with Community CLI (no in-process model)"
+    pip install --no-cache-dir '.[backend,platform,cli]'
 fi
 EOF
 # Alembic config lives at the project root; init_db() runs `alembic upgrade head`

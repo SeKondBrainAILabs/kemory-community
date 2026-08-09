@@ -55,7 +55,19 @@ npx kemory-community@latest up
 ```
 
 The installer writes a compose file with a randomly generated API key into
-`.kemory-community/` and pulls prebuilt images from GHCR.
+`.kemory-community/`, pulls prebuilt images from GHCR, waits for readiness,
+and generates `.kemory-community/mcp.json`. The MCP configuration contains no
+API key; its Node bridge starts `kemory mcp serve` inside the API container.
+
+```bash
+npx kemory-community@latest doctor
+npx kemory-community@latest mcp-config
+npx kemory-community@latest down
+```
+
+The installer and source compose files use Docker named volumes for Postgres
+and artifact/configuration data. `docker compose down` preserves them;
+`docker compose down -v` permanently removes them.
 
 ### Local runtime
 

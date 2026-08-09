@@ -43,12 +43,15 @@ def test_artifact_limit_applies_to_every_upload_route(monkeypatch):
     assert _limit_for("/api/v1/memories") == settings.max_request_body_bytes
 
 
-def test_runtime_settings_persist_without_returning_groq_secret(tmp_path, monkeypatch):
+def test_runtime_settings_persist_without_returning_provider_secrets(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({"version": 1, "ports": {"api": 8111}}))
     monkeypatch.setattr(settings, "kemory_community_config", str(config_path))
     for env_name in (
         "GROQ_API_KEY",
+        "OPENAI_API_KEY",
+        "VOYAGE_API_KEY",
+        "COHERE_API_KEY",
         "KEMORY_EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL",
         "KMV_SYNTHESIS_MODEL",
@@ -60,6 +63,7 @@ def test_runtime_settings_persist_without_returning_groq_secret(tmp_path, monkey
     result = update_community_runtime_settings(
         CommunityRuntimeSettingsUpdate(
             groq_api_key="gsk_test_only",
+            openai_api_key="sk_test_only",
             embedding_provider="fastembed",
             embedding_model="BAAI/bge-small-en-v1.5",
             groq_model="llama-3.3-70b-versatile",
@@ -71,14 +75,20 @@ def test_runtime_settings_persist_without_returning_groq_secret(tmp_path, monkey
     document = json.loads(config_path.read_text())
     assert document["ports"] == {"api": 8111}
     assert document["runtime_settings"]["groq_api_key"] == "gsk_test_only"
+    assert document["runtime_settings"]["openai_api_key"] == "sk_test_only"
     assert result.groq_configured is True
+    assert result.openai_configured is True
+    assert result.voyage_configured is False
     assert "groq_api_key" not in result.model_dump()
+    assert "openai_api_key" not in result.model_dump()
     assert settings.kemory_artifact_max_bytes == 64 * 1024 * 1024
     assert config_path.stat().st_mode & 0o777 == 0o600
 
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     loaded = load_community_runtime_settings()
     assert loaded.groq_configured is True
+    assert loaded.openai_configured is True
     assert get_community_runtime_settings().log_level == "DEBUG"
 
 

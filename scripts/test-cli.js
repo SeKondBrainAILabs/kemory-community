@@ -44,5 +44,9 @@ for (const mapping of published) {
   }
 }
 
-run(['doctor', '--dir', tmp]);
+const bridge = fs.readFileSync(path.join(tmp, 'kemory-mcp.js'), 'utf8');
+if (!bridge.includes("'kemory', 'mcp', 'serve'")) throw new Error('Docker MCP bridge was not generated');
+const mcpConfig = JSON.parse(fs.readFileSync(path.join(tmp, 'mcp.json'), 'utf8'));
+if (mcpConfig.mcpServers.kemory.command !== 'node') throw new Error('MCP config should use Node bridge');
+run(['mcp-config', '--dir', tmp]);
 console.log('CLI scaffold tests passed');

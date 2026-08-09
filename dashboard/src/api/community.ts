@@ -15,6 +15,9 @@ export type CommunitySettings = {
 
 export type CommunityRuntimeSettings = {
   groq_configured: boolean
+  openai_configured: boolean
+  voyage_configured: boolean
+  cohere_configured: boolean
   embedding_provider: 'fastembed' | 'openai' | 'voyage' | 'cohere'
   embedding_model: string
   groq_model: string
@@ -22,9 +25,18 @@ export type CommunityRuntimeSettings = {
   log_level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
 }
 
-export type CommunityRuntimeSettingsUpdate = Omit<CommunityRuntimeSettings, 'groq_configured'> & {
+export type CommunityRuntimeSettingsUpdate = Omit<
+  CommunityRuntimeSettings,
+  'groq_configured' | 'openai_configured' | 'voyage_configured' | 'cohere_configured'
+> & {
   groq_api_key?: string
   clear_groq_api_key?: boolean
+  openai_api_key?: string
+  clear_openai_api_key?: boolean
+  voyage_api_key?: string
+  clear_voyage_api_key?: boolean
+  cohere_api_key?: string
+  clear_cohere_api_key?: boolean
 }
 
 export type CommunityExport = {

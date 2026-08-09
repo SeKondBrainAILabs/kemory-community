@@ -61,7 +61,10 @@ npx kemory-community@latest up
 ```
 
 The installer generates a compose file with a randomly generated API key and
-pulls prebuilt images — no clone needed. **Not available yet:** the npm
+pulls prebuilt images, waits for the API and dashboard to become ready, and
+writes a secret-free `mcp.json` that starts the MCP bridge through Docker.
+Use `npx kemory-community@latest doctor` for a live install check and
+`npx kemory-community@latest down` to stop the stack. **Not available yet:** the npm
 package and the public images for v0.1 are pending publication (see the npm
 badge above). Until then, use the run-from-source path.
 
@@ -91,9 +94,10 @@ docker compose -f docker-compose.community.yml exec api \
 Kemory Community runs entirely on your machine, and it's a memory product, so
 this is the first thing worth knowing:
 
-- **Memories, chats, artifacts and indexes stay local** — Postgres data under
-  `~/.kemory-community/data/pgdata/`, artifacts under
-  `~/.kemory-community/artifacts/`.
+- **Memories, chats, artifacts and indexes stay local.** Docker stores them in
+  named volumes (`community_pgdata` and `community_api_data` for a source
+  checkout). They survive container replacement and are deleted only when you
+  explicitly remove the volumes.
 - **No telemetry.** The community build ships `KMV_TELEMETRY: noop`. There is no
   analytics backend, no usage reporting, and no phone-home.
 - **No account, no signup, no network identity.** Auth is a single local API key
