@@ -14,6 +14,9 @@ from backend.config.settings import settings
 
 class CommunityRuntimeSettings(BaseModel):
     groq_configured: bool
+    openai_configured: bool
+    voyage_configured: bool
+    cohere_configured: bool
     embedding_provider: Literal["fastembed", "openai", "voyage", "cohere"]
     embedding_model: str
     groq_model: str
@@ -24,6 +27,12 @@ class CommunityRuntimeSettings(BaseModel):
 class CommunityRuntimeSettingsUpdate(BaseModel):
     groq_api_key: str | None = Field(default=None, max_length=512)
     clear_groq_api_key: bool = False
+    openai_api_key: str | None = Field(default=None, max_length=512)
+    clear_openai_api_key: bool = False
+    voyage_api_key: str | None = Field(default=None, max_length=512)
+    clear_voyage_api_key: bool = False
+    cohere_api_key: str | None = Field(default=None, max_length=512)
+    clear_cohere_api_key: bool = False
     embedding_provider: Literal["fastembed", "openai", "voyage", "cohere"]
     embedding_model: str = Field(min_length=1, max_length=200)
     groq_model: str = Field(min_length=1, max_length=200)
@@ -37,6 +46,13 @@ _ENV_KEYS = {
     "groq_model": "KMV_SYNTHESIS_MODEL",
     "artifact_max_bytes": "KEMORY_ARTIFACT_MAX_BYTES",
     "log_level": "LOG_LEVEL",
+}
+
+_SECRET_KEYS = {
+    "groq": "GROQ_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "voyage": "VOYAGE_API_KEY",
+    "cohere": "COHERE_API_KEY",
 }
 
 
@@ -67,6 +83,9 @@ def get_community_runtime_settings() -> CommunityRuntimeSettings:
     saved = _runtime_values()
     return CommunityRuntimeSettings(
         groq_configured=bool(os.environ.get("GROQ_API_KEY", "").strip() or saved.get("groq_api_key")),
+        openai_configured=bool(os.environ.get("OPENAI_API_KEY", "").strip() or saved.get("openai_api_key")),
+        voyage_configured=bool(os.environ.get("VOYAGE_API_KEY", "").strip() or saved.get("voyage_api_key")),
+        cohere_configured=bool(os.environ.get("COHERE_API_KEY", "").strip() or saved.get("cohere_api_key")),
         embedding_provider=str(
             os.environ.get("KEMORY_EMBEDDING_PROVIDER") or saved.get("embedding_provider") or "fastembed"
         ),
@@ -86,8 +105,10 @@ def get_community_runtime_settings() -> CommunityRuntimeSettings:
 def load_community_runtime_settings() -> CommunityRuntimeSettings:
     """Apply persisted values before community services initialize."""
     saved = _runtime_values()
-    if saved.get("groq_api_key") and not os.environ.get("GROQ_API_KEY"):
-        os.environ["GROQ_API_KEY"] = str(saved["groq_api_key"])
+    for provider, env_name in _SECRET_KEYS.items():
+        field = f"{provider}_api_key"
+        if saved.get(field) and not os.environ.get(env_name):
+            os.environ[env_name] = str(saved[field])
     for field, env_name in _ENV_KEYS.items():
         if field in saved and not os.environ.get(env_name):
             os.environ[env_name] = str(saved[field])
@@ -108,15 +129,24 @@ def update_community_runtime_settings(
     path = _config_path()
     document = _load_document()
     saved = _runtime_values()
-    values = update.model_dump(exclude={"groq_api_key", "clear_groq_api_key"})
+    secret_fields = {
+        field
+        for provider in _SECRET_KEYS
+        for field in (f"{provider}_api_key", f"clear_{provider}_api_key")
+    }
+    values = update.model_dump(exclude=secret_fields)
     saved.update(values)
 
-    if update.clear_groq_api_key:
-        saved.pop("groq_api_key", None)
-        os.environ.pop("GROQ_API_KEY", None)
-    elif update.groq_api_key is not None and update.groq_api_key.strip():
-        saved["groq_api_key"] = update.groq_api_key.strip()
-        os.environ["GROQ_API_KEY"] = update.groq_api_key.strip()
+    for provider, env_name in _SECRET_KEYS.items():
+        field = f"{provider}_api_key"
+        clear_field = f"clear_{provider}_api_key"
+        value = getattr(update, field)
+        if getattr(update, clear_field):
+            saved.pop(field, None)
+            os.environ.pop(env_name, None)
+        elif value is not None and value.strip():
+            saved[field] = value.strip()
+            os.environ[env_name] = value.strip()
 
     for field, env_name in _ENV_KEYS.items():
         os.environ[env_name] = str(values[field])

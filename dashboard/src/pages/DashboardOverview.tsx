@@ -6,10 +6,12 @@ import { useNamespaces } from '@/hooks/useMemories'
 import { formatLatency } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 import {
+  ArrowRight,
   Database,
   FolderTree,
   Heart,
   AlertTriangle,
+  Settings2,
 } from 'lucide-react'
 
 export function DashboardOverview() {
@@ -62,6 +64,23 @@ export function DashboardOverview() {
           />
         )}
       </div>
+
+      {!namespaces.isLoading && !namespaces.isError && totalMemories === 0 && (
+        <div className="mt-6 flex flex-col gap-4 border-y border-border py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand-primary/10 text-brand-primary">
+              <Settings2 size={18} />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-content-primary">Complete local setup</div>
+              <div className="mt-1 text-sm text-content-secondary">Review access, embeddings, optional providers, and backup.</div>
+            </div>
+          </div>
+          <Link to="/settings" className="inline-flex items-center gap-2 self-start rounded-md bg-brand-primary px-4 py-2 text-sm font-medium text-white sm:self-auto">
+            Community admin <ArrowRight size={16} />
+          </Link>
+        </div>
+      )}
 
       {/* Service health */}
       <div className="mt-6">
