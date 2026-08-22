@@ -17,6 +17,7 @@ from backend.adapters.telemetry import configure_telemetry, get_telemetry, resol
 from backend.api.routes.ai_chats import router as ai_chats_router  # chats-v1
 from backend.api.routes.artifacts import local_fs_router  # v3.35.0 project files
 from backend.api.routes.artifacts import router as artifacts_router
+from backend.api.routes.ask import router as ask_router
 from backend.api.routes.chat_mappings import router as chat_mappings_router  # chats-v1
 from backend.api.routes.community import router as community_router
 from backend.api.routes.consolidation import router as consolidation_router  # KMV-E14
@@ -132,6 +133,7 @@ app.middleware("http")(metrics_middleware)
 # ─── Routes ──────────────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(memories_router)
+app.include_router(ask_router)
 app.include_router(mcp_router)
 app.include_router(enrichment_router)
 app.include_router(security_router)

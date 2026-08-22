@@ -535,6 +535,21 @@ async def _resolve_namespace(
 # ─── Persistence ────────────────────────────────────────────────────
 
 
+def _collapse_duplicate_source_ids(turns: list[TurnUpsert]) -> list[TurnUpsert]:
+    """Keep the last turn for a repeated source id within one push."""
+    seen: set[str] = set()
+    collapsed: list[TurnUpsert] = []
+    for turn in reversed(turns):
+        source_id = turn.source_turn_id
+        if source_id and source_id in seen:
+            continue
+        if source_id:
+            seen.add(source_id)
+        collapsed.append(turn)
+    collapsed.reverse()
+    return collapsed
+
+
 async def _persist_turns(
     chat: AIChat,
     turns: list[TurnUpsert],
@@ -550,6 +565,7 @@ async def _persist_turns(
     if not turns:
         return 0
 
+    turns = _collapse_duplicate_source_ids(turns)
     inserted = 0
     for turn in turns:
         existing: AIChatTurn | None = None

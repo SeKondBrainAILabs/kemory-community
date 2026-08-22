@@ -59,17 +59,18 @@ covering something is indistinguishable from a gate that passes.
 ## Baseline
 
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
-- Hosted baseline inspected: `60390acd5f` (`v1.8.2`); previous audit baseline
-  was `dcaa931ae8` (`v1.7.6`).
+- Hosted baseline inspected: `300696e8e9` (`v2.21.1`); previous recorded
+  baseline was `60390acd5f` (`v1.8.2`).
 - Backend subtree anchor: `5b70a8a884` (equivalent hosted tree at `305adba0e8:backend`).
 - Python SDK anchor: `ea2c494530`.
 - CLI anchor: `6fb85a6d4b`.
 - Dashboard anchor: `c82bebf5cd`.
 
-The initial backend delta contained 374 effective commits and the dashboard
-contained 186. The follow-up audit from hosted `v1.7.6` through `v1.8.2`
-classified five more commits. Changes are ported by feature cohort, with
-community adapters and Docker runtime constraints applied at each boundary.
+The `v2.21.1` audit classified 784 hosted commits after the previous recorded
+baseline. Its final refresh window contained 46 merged PRs and 215 commits
+after the local hosted `v2.10.0` checkout. Changes are ported by feature cohort,
+with community adapters and Docker runtime constraints applied at each
+boundary; the hosted worktree itself was not modified during the audit.
 
 ## Classification
 
@@ -84,6 +85,14 @@ community adapters and Docker runtime constraints applied at each boundary.
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
 | Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
 | Python CLI and stdio bridge | Ported and adapted | Local endpoint plus API-key configuration only; OAuth device flow, Bearer forwarding, hosted environments, org/team commands, telemetry, and hosted release upgrades are removed. |
+| Ask over retrieved evidence (`b7e3898`, `37aacc1`) | Ported and adapted | `POST /api/v1/ask`, `kemory_ask`, and `kemory ask` search local memories, captured chats, and inline text artifacts. The configured user-supplied Groq key replaces the hosted gateway; evidence still returns when synthesis is disabled or unavailable. |
+| MCP output schemas (`36c3d68`) | Ported selectively | MCP definitions and results support additive `outputSchema` and `structuredContent`; Ask declares and returns the structured envelope while legacy text remains intact. Hosted project/account tools remain absent. |
+| Container hardening (`1d54fda`, `424e8aa`, `ada5236`) | Ported and adapted | Multi-stage API image, non-root UID 1001 runtime, writable Community config directory, no compiler toolchain in the final image. Community administration scripts remain because the Docker-first docs invoke them. |
+| Ruff toolchain refresh (`5df260b`) | Ported | CI pins Ruff 0.16.3 and preserves the existing explicit rule policy. |
+| Chat duplicate-source ingestion (`f217450`) | Ported and adapted | Repeated `source_turn_id` values in one Community push collapse last-write-wins before persistence; id-less turns remain distinct. |
+| Retrieval-v2 question vectors, blind indexes, lexical calibration, cross-encoder reranking, and chat/file ANN | Deferred for Community-native design | Hosted migrations `080`-`100`, encryption keys, tenant blind indexes, embedding gateway, and benchmark infrastructure do not exist in Community. Ask uses the existing pgvector/FTS engine plus local chat/file evidence; future retrieval work must be measured against Community's schema before replay. |
+| Hosted onboarding and MCP connection board | Excluded from direct replay | The new board verifies OAuth grants, DCR client adoption, managed connectors, and hosted Known Issues. Community retains its API-key Quick Connect and Settings/Doctor surfaces; copying the board would present unavailable setup paths. |
+| Hosted enrichment caches and AI routing (`560abc6`, `5f74eee`, `82f27b8`) | Not applicable | These fixes protect tenant-pinned hosted gateway calls and model-output caches. Community enrichment is deterministic or calls the user's Groq endpoint directly and has neither cache. |
 | Post-`v1.7.6` build security (`63b8035`, `60390ac`) | Ported and adapted | Raise the Vite floor to `^6.4.3`, refresh safe transitive dependency pins, and build the dashboard plus Node-based CI/release jobs on Node 24. Community retains npm/package-lock instead of hosted pnpm/private design-system dependencies. |
 | Post-`v1.7.6` exec analytics, pooled value mode, and agent-admin auth (`14ff2f2`, `fa0ad02`, `fb2da18`) | Excluded | These commits operate on hosted executive analytics, cross-org pooling, and agent/account-admin authorization. None of those routes or identity modes execute in local single-user Community. |
 | Keycloak, OIDC, OAuth, DCR, teams, Gatekeeper, trusted org delegation | Excluded | Removed dashboard identity/Bearer paths and hosted admin navigation; community boot does not import or mount agent JWT, pairing, identity/team, permission, or Gatekeeper routers, and memory reads bypass rule evaluation under `local_single_user`. |
@@ -92,6 +101,13 @@ community adapters and Docker runtime constraints applied at each boundary.
 
 ## Ported In This Cohort
 
+- Local-first Ask across memories, captured chats, and inline text artifacts,
+  with REST, MCP, and Python CLI parity and honest no-synthesis reasons.
+- Additive MCP `outputSchema` / `structuredContent` support for Ask.
+- Searchable inline copies of UTF-8 text uploads up to 1 MiB; the local blob
+  remains the authoritative download body.
+- Last-write-wins collapse for repeated chat turn source ids in one push.
+- Multi-stage, non-root Community API image with no build toolchain at runtime.
 - `kemory_get_session_context`
 - `kemory_rehydrate_session_sources`
 - `kemory_session_digests` schema and ORM model

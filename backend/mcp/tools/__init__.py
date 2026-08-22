@@ -21,12 +21,13 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.mcp.tools import consolidation, memory, meta, namespaces, skills
+from backend.mcp.tools import ask, consolidation, memory, meta, namespaces, skills
 from backend.mcp.tools._base import MCPToolDefinition, MCPToolResult
 
 # ─── Aggregate ────────────────────────────────────────────────────────────
 
 _SOURCE_TOOL_DEFINITIONS: list[MCPToolDefinition] = [
+    *ask.DEFINITIONS,
     *memory.DEFINITIONS,
     *namespaces.DEFINITIONS,
     *consolidation.DEFINITIONS,
@@ -54,6 +55,7 @@ TOOL_DEFINITIONS: list[MCPToolDefinition] = [
 # family module are picked up here automatically because we re-import each
 # module's HANDLERS and dict-spread.
 HANDLERS: dict[str, object] = {
+    **ask.HANDLERS,
     **memory.HANDLERS,
     **namespaces.HANDLERS,
     **consolidation.HANDLERS,

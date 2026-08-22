@@ -256,9 +256,9 @@ echo "Verifying canonical MCP discovery surface"
 from backend.mcp.tools import TOOL_DEFINITIONS
 
 names = [tool.name for tool in TOOL_DEFINITIONS]
-required = {"kemory_get_session_context", "kemory_rehydrate_session_sources"}
-if len(names) != 16 or len(names) != len(set(names)):
-    raise SystemExit(f"expected 16 unique MCP tools, got {names}")
+required = {"kemory_ask", "kemory_get_session_context", "kemory_rehydrate_session_sources"}
+if len(names) != 17 or len(names) != len(set(names)):
+    raise SystemExit(f"expected 17 unique MCP tools, got {names}")
 if any(not name.startswith("kemory_") for name in names):
     raise SystemExit(f"non-canonical MCP tool advertised: {names}")
 if not required.issubset(names):
@@ -318,9 +318,9 @@ with httpx.Client(base_url=base, timeout=120.0) as client:
     tool_list = client.post("/mcp/v1/tools/list", headers=headers, json={})
     tool_names = [tool["name"] for tool in tool_list.json().get("tools", [])]
     check(
-        "MCP HTTP discovery advertises 16 canonical tools",
+        "MCP HTTP discovery advertises 17 canonical tools",
         tool_list.status_code == 200
-        and len(tool_names) == 16
+        and len(tool_names) == 17
         and len(tool_names) == len(set(tool_names))
         and all(name.startswith("kemory_") for name in tool_names),
         str(tool_names),
@@ -431,6 +431,44 @@ with httpx.Client(base_url=base, timeout=120.0) as client:
         and bool(body.get("content_url"))
         and bool(metadata.get("storage_key")),
         f"status={artifact.status_code} url={bool(body.get('content_url'))}",
+    )
+
+    ask = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={
+            "query": "community smoke local",
+            "types": ["memory", "chat", "file"],
+            "limit": 10,
+            "synthesize": False,
+        },
+    )
+    ask_body = ask.json() if ask.status_code == 200 else {}
+    ask_types = {item.get("type") for item in ask_body.get("items", [])}
+    check(
+        "Ask retrieves local memory, chat, and file evidence without Groq",
+        ask.status_code == 200
+        and ask_body.get("synthesized") is False
+        and ask_body.get("not_synthesized_reason") == "not_requested"
+        and {"memory", "chat", "file"}.issubset(ask_types),
+        f"status={ask.status_code} types={sorted(str(item) for item in ask_types)}",
+    )
+
+    ask_tool = client.post(
+        "/mcp/v1/tools/call",
+        headers=headers,
+        json={
+            "name": "kemory_ask",
+            "arguments": {"query": "community smoke local", "synthesize": False},
+        },
+    )
+    ask_tool_body = ask_tool.json() if ask_tool.status_code == 200 else {}
+    check(
+        "MCP Ask returns additive structured evidence",
+        ask_tool.status_code == 200
+        and isinstance(ask_tool_body.get("structuredContent"), dict)
+        and bool(ask_tool_body["structuredContent"].get("items")),
+        f"status={ask_tool.status_code}",
     )
 
 env_expectations = {

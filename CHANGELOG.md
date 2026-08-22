@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Local-first Ask over memories, captured chats, and inline text artifacts via
+  `POST /api/v1/ask`, MCP `kemory_ask`, and the Python `kemory ask` command.
+  Retrieval evidence remains available when Groq is not configured.
+- Additive MCP `outputSchema` and `structuredContent` support for machine-readable
+  Ask results without changing the legacy text envelope.
 - Automatic second-tier namespace tags with entity/embedding/era matching,
   local-user profile reads, Docker backfill and promotion tools, and dashboard chips.
 - Unified, keyset-paginated namespace timeline interleaving source-ordered chats and memories.
@@ -37,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Community port registry at `docs/PORT_REGISTRY.md`.
 
 ### Changed
+- Python CI now uses Ruff 0.16.3, matching the current hosted lint floor.
+- The API image is now a multi-stage build that runs as non-root UID 1001 and
+  leaves compilers and development headers out of the runtime image.
 - Dashboard builds and CI now use Node 24, with Vite constrained to the
   hosted security floor (`^6.4.3`) and the npm lock refreshed to remove
   high-severity transitive advisories.
@@ -66,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every open dependency advisory against this repository.
 
 ### Fixed
+- UTF-8 text uploads up to 1 MiB are retained inline as searchable artifact
+  evidence while the complete body remains in local filesystem blob storage.
+- Chat pushes that repeat a `source_turn_id` now keep the last occurrence
+  instead of risking a unique-constraint failure for the entire conversation.
 - A fresh clone now starts a working stack. `KEMORY_RUN_MIGRATIONS` was set to
   `false` in the committed compose file, so the API came up against an empty
   database and every authenticated request failed with

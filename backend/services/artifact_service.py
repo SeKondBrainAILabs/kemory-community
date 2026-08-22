@@ -45,6 +45,7 @@ logger = structlog.get_logger(__name__)
 # ─── Content-type → artifact_type mapping ───────────────────────────
 
 _VALID_ARTIFACT_TYPES = frozenset({"code", "image", "file", "react", "html", "svg", "audio", "video"})
+_MAX_INLINE_TEXT_BYTES = 1_048_576
 
 
 def _infer_artifact_type(mimetype: str | None, filename: str | None) -> str:
@@ -70,6 +71,22 @@ def _infer_artifact_type(mimetype: str | None, filename: str | None) -> str:
     if m.startswith("text/") or m in {"application/json", "application/xml"}:
         return "code"
     return "file"
+
+
+def _inline_text(data: bytes, content_type: str | None, artifact_type: str) -> str | None:
+    """Keep searchable text beside the blob without treating binary data as text."""
+    mimetype = (content_type or "").split(";", 1)[0].strip().lower()
+    textual = (
+        mimetype.startswith("text/")
+        or mimetype in {"application/json", "application/xml"}
+        or artifact_type in {"code", "html", "svg", "text"}
+    )
+    if not textual or len(data) > _MAX_INLINE_TEXT_BYTES:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 # ─── Upload ─────────────────────────────────────────────────────────
@@ -141,6 +158,7 @@ async def upload_artifact(
 
     artifact_id = uuid.uuid4()
     inferred_type = artifact_type or _infer_artifact_type(content_type, filename)
+    inline_content = _inline_text(data, content_type, inferred_type)
 
     # ── Store binary body ────────────────────────────────────────────
     try:
@@ -187,7 +205,7 @@ async def upload_artifact(
         source_platform=platform,
         artifact_type=inferred_type,
         language=language,
-        content=None,
+        content=inline_content,
         content_url=None,
         content_sha256=put_result.sha256,
         artifact_metadata=meta,

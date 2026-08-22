@@ -49,3 +49,11 @@ def test_migrations_are_not_disabled_for_community():
         "/health/ready still reports healthy (S9N-6773). See "
         "backend/core/database.py::init_db for the fresh-DB bootstrap it gates."
     )
+
+
+def test_api_image_is_multi_stage_and_non_root():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+
+    assert "FROM python:3.11-slim AS builder" in dockerfile
+    assert "FROM python:3.11-slim AS runtime" in dockerfile
+    assert "USER kemory" in dockerfile
