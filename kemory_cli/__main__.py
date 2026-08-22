@@ -90,9 +90,7 @@ def _write_mcp_entry(config_path: Path, name: str) -> None:
         try:
             config = json.loads(config_path.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError as exc:
-            raise click.ClickException(
-                f"{config_path} is not valid JSON. Refusing to overwrite it."
-            ) from exc
+            raise click.ClickException(f"{config_path} is not valid JSON. Refusing to overwrite it.") from exc
     else:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config = {}
@@ -126,7 +124,9 @@ def mcp_install(hosts: tuple[str, ...], config_path: Path | None, name: str) -> 
         _write_mcp_entry(config_path, name)
         click.echo(f"Wrote MCP server '{name}' to {config_path}")
         return
-    targets = ["claude-code", "claude-desktop", "cursor", "continue", "warp"] if "all" in hosts else list(hosts)
+    targets = (
+        ["claude-code", "claude-desktop", "cursor", "continue", "warp"] if "all" in hosts else list(hosts)
+    )
     for host in targets:
         target = _resolve_host_config(host)
         if target is None:
@@ -141,6 +141,65 @@ def mcp_serve() -> None:
     from kemory_cli.mcp_bridge import serve
 
     serve()
+
+
+@cli.command("ask")
+@click.argument("question", nargs=-1, required=True)
+@click.option("--type", "types", multiple=True, type=click.Choice(["memory", "chat", "file"]))
+@click.option("--limit", type=click.IntRange(1, 50), default=None)
+@click.option("--token-budget", type=click.IntRange(500, 32_000), default=None)
+@click.option("--no-synth", is_flag=True, help="Return evidence without calling the configured model.")
+@click.option("--json-output", "as_json", is_flag=True, help="Print the complete response as JSON.")
+def ask_cmd(
+    question: tuple[str, ...],
+    types: tuple[str, ...],
+    limit: int | None,
+    token_budget: int | None,
+    no_synth: bool,
+    as_json: bool,
+) -> None:
+    """Ask a question using memories, captured chats, and local text artifacts."""
+    credentials = _configured()
+    body: dict[str, object] = {"query": " ".join(question)}
+    if types:
+        body["types"] = list(types)
+    if limit is not None:
+        body["limit"] = limit
+    if token_budget is not None:
+        body["token_budget"] = token_budget
+    if no_synth:
+        body["synthesize"] = False
+
+    try:
+        response = httpx.post(
+            f"{credentials.kemory_url}/api/v1/ask",
+            headers={"X-API-Key": credentials.api_key},
+            json=body,
+            timeout=90.0,
+        )
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"Ask request failed: {exc}") from exc
+    if response.status_code != 200:
+        raise click.ClickException(f"Ask failed with HTTP {response.status_code}: {response.text[:300]}")
+
+    payload = response.json()
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    if payload.get("synthesized") and payload.get("answer"):
+        click.echo(payload["answer"])
+        return
+
+    items = payload.get("items") or []
+    reason = payload.get("not_synthesized_reason") or "unavailable"
+    if not items:
+        click.echo(f"No synthesized answer ({reason}); nothing matched the local vault.")
+        return
+    click.echo(f"No synthesized answer ({reason}). Retrieved {len(items)} evidence item(s):")
+    for item in items:
+        title = item.get("title") or item.get("namespace") or item.get("type") or "item"
+        snippet = str(item.get("snippet") or "").replace("\n", " ").strip()
+        click.echo(f"- [{item.get('type', 'item')}] {title}: {snippet[:240]}")
 
 
 @cli.command("doctor")

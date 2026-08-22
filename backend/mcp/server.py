@@ -52,6 +52,7 @@ class ToolCallResponse(BaseModel):
 
     content: list[dict]
     isError: bool = False
+    structuredContent: dict | None = None
 
 
 # ─── Shared handlers ─────────────────────────────────────────────
@@ -59,7 +60,7 @@ class ToolCallResponse(BaseModel):
 
 def _tool_list_payload() -> list[dict]:
     """Return the same canonical tool catalogue for every transport."""
-    return [tool.model_dump() for tool in TOOL_DEFINITIONS]
+    return [tool.model_dump(exclude_none=True) for tool in TOOL_DEFINITIONS]
 
 
 async def _render_kemory_brief(auth: AuthContext, db: AsyncSession) -> str:
@@ -123,6 +124,7 @@ async def call_tool(
     return ToolCallResponse(
         content=result.content,
         isError=result.isError,
+        structuredContent=result.structuredContent,
     )
 
 
@@ -241,7 +243,10 @@ async def _jsonrpc_dispatch(
                 agent_id=auth.agent_id,
                 db=db,
             )
-            return ok({"content": result.content, "isError": result.isError})
+            payload = {"content": result.content, "isError": result.isError}
+            if result.structuredContent is not None:
+                payload["structuredContent"] = result.structuredContent
+            return ok(payload)
 
         if method == "prompts/list":
             return ok(

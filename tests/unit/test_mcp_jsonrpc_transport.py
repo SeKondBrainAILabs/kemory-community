@@ -187,6 +187,22 @@ async def test_legacy_routes_share_the_tool_handlers(auth, db):
     handler.assert_awaited_once()
 
 
+async def test_structured_tool_content_is_forwarded_additively(auth, db):
+    expected = MCPToolResult(
+        content=[{"type": "text", "text": "answer"}],
+        structuredContent={"answer": "answer", "items": []},
+    )
+    with patch("backend.mcp.server.handle_tool_call", AsyncMock(return_value=expected)):
+        response = await _jsonrpc_dispatch(
+            request("tools/call", params={"name": "kemory_ask", "arguments": {"query": "q"}}),
+            auth,
+            db,
+        )
+
+    assert response["result"]["content"] == expected.content
+    assert response["result"]["structuredContent"] == expected.structuredContent
+
+
 def test_jsonrpc_route_keeps_local_auth_dependency():
     route = next(route for route in router.routes if route.path == "/mcp/v1")
     dependencies = {dependency.call for dependency in route.dependant.dependencies}

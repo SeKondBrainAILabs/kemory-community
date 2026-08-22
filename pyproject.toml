@@ -201,11 +201,9 @@ ignore = [
   "C408",   # unnecessary list()/dict()/tuple() calls
   "B007",   # unused loop control variable — name with `_` instead
   "UP042",  # str enum migration to StrEnum (3.11+) — breaking change
-  "UP038",  # isinstance(x, (A, B)) → isinstance(x, A | B) — runtime perf cost
   "E402",   # module-level import not at top — sometimes intentional
   "ASYNC221", "ASYNC230",  # async-aware lint, false-positive heavy
-  # ASYNC240 has been renamed in newer ruff; we ignore it via the SIM
-  # category override below if it surfaces.
+  "ASYNC240", # Path operations in async startup are short, local, and non-blocking.
   "F821",   # undefined name — only in test fixtures with deferred imports
 ]
 

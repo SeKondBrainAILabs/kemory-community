@@ -53,6 +53,19 @@ The first returns the readiness document; the second returns your (initially
 empty) namespace list. A `401` from the second means the key doesn't match
 what the API container was started with.
 
+Ask across local memories, captured chats, and searchable text artifacts:
+
+```bash
+curl -fsS http://127.0.0.1:8111/api/v1/ask \
+  -H "X-API-Key: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What did we decide?","synthesize":false}'
+```
+
+Set a Groq key in the dashboard Settings page to synthesize a cited answer.
+Without one, Ask still returns the ranked local evidence and an explicit
+`digest_unavailable` reason.
+
 ### npm installer
 
 ```bash

@@ -18,6 +18,7 @@ class MCPToolDefinition(BaseModel):
     name: str
     description: str
     inputSchema: dict
+    outputSchema: dict | None = None
 
 
 class MCPToolResult(BaseModel):
@@ -25,3 +26,4 @@ class MCPToolResult(BaseModel):
 
     content: list[dict]  # [{type: "text", text: "..."}, ...]
     isError: bool = False
+    structuredContent: dict | None = None
