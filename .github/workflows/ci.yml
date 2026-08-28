@@ -9,7 +9,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Working tree only (--no-git), per the reasoning in .gitleaks.toml.
       # gitleaks exits 1 when it finds something, which fails the job.
       - name: gitleaks
@@ -35,7 +35,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - uses: actions/setup-node@v4
