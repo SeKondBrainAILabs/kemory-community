@@ -30,8 +30,40 @@ from backend.services.session_digest_service import (  # noqa: E402
     detect_rehydration_trigger,
     get_session_context,
     load_session_exchanges,
+    load_stored_digest,
     rehydrate_session_sources,
 )
+
+
+@pytest.mark.asyncio
+async def test_load_stored_digest_is_read_only(db_session: AsyncSession) -> None:
+    user_id = uuid.uuid4()
+    org_id = "org-digest-read"
+    session_id = "session-read"
+    namespace = "project:digest"
+    with bypass_tenant_filter():
+        db_session.add(
+            SessionDigest(
+                org_id=org_id,
+                user_id=user_id,
+                namespace=namespace,
+                session_id=session_id,
+                digest="Stable stored digest",
+                digest_tier="L2.1-extractive",
+                source_exchange_ids=[],
+                source_memory_ids=[],
+                source_turn_ids=[],
+                compacted_exchange_count=4,
+            )
+        )
+        await db_session.flush()
+
+    with scoped_tenant(org_id, user_id):
+        result = await load_stored_digest(user_id, namespace, session_id, db_session)
+
+    assert result["digest"] == "Stable stored digest"
+    assert result["digest_tier"] == "L2.1-extractive"
+    assert result["compacted_exchange_count"] == 4
 
 
 @contextmanager

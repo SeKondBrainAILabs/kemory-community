@@ -15,6 +15,27 @@ from backend.services.gatekeeper_service import EvaluationRequest, evaluate
 from backend.services.memory_service import get_memory
 from backend.services.provenance_service import get_memory_history
 
+ACCESS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "allowed": {"type": "boolean"},
+        "scope": {"type": "string"},
+        "outcome": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["allowed", "scope", "outcome", "reason"],
+}
+HISTORY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+        "namespace": {"type": ["string", "null"]},
+        "events": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["memory_id", "events"],
+    "additionalProperties": True,
+}
+
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
         name="s9nmem_check_access",
@@ -36,6 +57,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["scope"],
         },
+        outputSchema=ACCESS_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_get_history",
@@ -59,6 +81,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["memory_id"],
         },
+        outputSchema=HISTORY_OUTPUT_SCHEMA,
     ),
 ]
 
@@ -86,6 +109,12 @@ async def _handle_check_access(args, user_id, agent_id, db):
                 ),
             }
         ],
+        structuredContent={
+            "allowed": decision.allowed,
+            "scope": args["scope"],
+            "outcome": decision.outcome,
+            "reason": decision.reason,
+        },
     )
 
 
@@ -97,6 +126,11 @@ async def _handle_get_history(args, user_id, agent_id, db):
     if not events:
         return MCPToolResult(
             content=[{"type": "text", "text": f"No history events for memory {args['memory_id']}."}],
+            structuredContent={
+                "memory_id": args["memory_id"],
+                "namespace": memory.namespace,
+                "events": [],
+            },
         )
     lines = [f"History for memory {memory.memory_id} (namespace: {memory.namespace}):\n"]
     for ev in events:
@@ -107,6 +141,11 @@ async def _handle_get_history(args, user_id, agent_id, db):
         )
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={
+            "memory_id": str(memory.memory_id),
+            "namespace": memory.namespace,
+            "events": events,
+        },
     )
 
 

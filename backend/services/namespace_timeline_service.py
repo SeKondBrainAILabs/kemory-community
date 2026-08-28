@@ -109,7 +109,7 @@ async def get_namespace_timeline(
             select(
                 literal("chat").label("kind"),
                 cast(AIChat.chat_id, String).label("id"),
-                func.coalesce(AIChat.captured_at, AIChat.updated_at).label("occurred_at"),
+                func.coalesce(AIChat.captured_at, AIChat.created_at).label("occurred_at"),
             ).where(
                 AIChat.user_id == user_id,
                 AIChat.invalid_at.is_(None),
@@ -125,7 +125,7 @@ async def get_namespace_timeline(
                 func.coalesce(
                     Memory.occurred_at,
                     source_chat.captured_at,
-                    source_chat.updated_at,
+                    source_chat.created_at,
                     Memory.created_at,
                 ).label("occurred_at"),
             )

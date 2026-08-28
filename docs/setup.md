@@ -1,13 +1,17 @@
 # Setup
 
-Two ways to run Kemory Community Edition. Both use the same Docker stack and
-the same reserved local ports:
+Kemory Community supports a portable standalone Docker stack and a
+SeKondBrain shared-infrastructure deployment. Both publish the same API and
+dashboard ports:
 
 | Service | Host | Container |
 | --- | ---: | ---: |
 | API | `8111` | `8000` |
 | Dashboard | `5175` | `5173` |
 | Postgres + pgvector | `5434` | `5432` |
+
+The `5434` allocation is standalone-only. Shared mode uses the existing infra
+PostgreSQL port `5432` with a dedicated `kemory_community` database and user.
 
 ## Run from source (available today)
 
@@ -30,6 +34,28 @@ for local trials. Set your own before starting:
 KEMORY_LOCAL_API_KEY="$(openssl rand -hex 24)" \
   docker compose -f docker-compose.community.yml up -d
 ```
+
+## Run on SeKondBrain shared infrastructure
+
+This mode starts only the Community API and dashboard containers. PostgreSQL
+and Redis remain owned by `~/infra` and are reached over the external
+`shared-infra` Docker network.
+
+```bash
+./infrastructure/provision-shared-infra.sh
+docker compose --env-file .env.shared -f docker-compose.shared.yml up -d --build
+```
+
+The idempotent provisioner starts shared infrastructure, creates the isolated
+`kemory_community` database/user, enables `vector` and `pg_trgm`, reserves
+Redis database `14`, and writes generated secrets to mode-`0600`
+`.env.shared`. Ports are registered in
+[`infrastructure/PORT_REGISTRY.md`](../infrastructure/PORT_REGISTRY.md).
+
+When converting an existing standalone source deployment, use the guarded
+[`migrate-standalone-data.sh`](../infrastructure/migrate-standalone-data.sh)
+procedure in `infrastructure/README.md` before the first shared start. It
+preserves the source database and reuses the existing artifact/config volume.
 
 ### Verify
 
@@ -54,6 +80,14 @@ npx kemory-community@latest init --runtime docker
 npx kemory-community@latest up
 ```
 
+For a machine with the SeKondBrain shared stack:
+
+```bash
+npx kemory-community@latest init --runtime docker --infra shared
+npx kemory-community@latest provision-shared
+npx kemory-community@latest up
+```
+
 The installer writes a compose file with a randomly generated API key into
 `.kemory-community/`, pulls prebuilt images from GHCR, waits for readiness,
 and generates `.kemory-community/mcp.json`. The MCP configuration contains no
@@ -65,9 +99,11 @@ npx kemory-community@latest mcp-config
 npx kemory-community@latest down
 ```
 
-The installer and source compose files use Docker named volumes for Postgres
-and artifact/configuration data. `docker compose down` preserves them;
-`docker compose down -v` permanently removes them.
+Standalone mode uses Docker named volumes for PostgreSQL and
+artifact/configuration data. Shared mode keeps PostgreSQL in the infra-owned
+database and uses one Community-owned volume for artifacts/configuration.
+`docker compose down` preserves application data; destructive volume or
+database deletion remains an explicit operator action.
 
 ### Local runtime
 

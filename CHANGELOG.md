@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Structured output schemas and results across all Community MCP tools while
+  retaining existing text responses for older clients.
+- MCP namespace-tag writes, caller-controlled relevance floors, and a read-only
+  endpoint for retrieving a chat's stored rolling digest.
+- Shared-infrastructure deployment mode for source and npm installs. Community
+  API/dashboard containers join external `shared-infra`, reuse an isolated
+  PostgreSQL database/user and Redis database `14`, and include idempotent
+  provisioning, guarded standalone-data migration, and an application-owned
+  infrastructure port registry.
+
 - Local-first Ask over memories, captured chats, and inline text artifacts via
   `POST /api/v1/ask`, MCP `kemory_ask`, and the Python `kemory ask` command.
   Retrieval evidence remains available when Groq is not configured.
@@ -42,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Community port registry at `docs/PORT_REGISTRY.md`.
 
 ### Changed
+- Refreshed the hosted delta audit through `cb90234d89` (post-`v3.11.1`) and
+  replayed Community-compatible MCP, digest, compression-source, and timeline
+  correctness updates without importing hosted identity or infrastructure.
+- L3.1 synthesis now selects its capped source set newest-first with a stable
+  tie-break, and timeline fallbacks use immutable creation timestamps.
+- SeKondBrain deployments now use `docker-compose.shared.yml`; the existing
+  self-contained compose remains the portable public and CI default.
 - Python CI now uses Ruff 0.16.3, matching the current hosted lint floor.
 - The API image is now a multi-stage build that runs as non-root UID 1001 and
   leaves compilers and development headers out of the runtime image.

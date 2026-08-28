@@ -40,7 +40,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.memory import Memory
@@ -954,17 +954,22 @@ async def _maybe_synthesize_l3_1(
     so operators can distinguish "no clusters yet, working as designed"
     from "CoreAIBackend is offline".
     """
-    # Count active non-concept memories in the namespace
-    result = await db.execute(
-        select(Memory).where(
-            Memory.user_id == uuid.UUID(user_id),
-            Memory.namespace == namespace,
-            Memory.invalid_at == None,  # noqa: E711
-            Memory.content_type != "concept",  # don't re-synthesize concepts
-        )
+    source_filter = (
+        Memory.user_id == uuid.UUID(user_id),
+        Memory.namespace == namespace,
+        Memory.invalid_at.is_(None),
+        Memory.content_type != "concept",
     )
-    source_memories = result.scalars().all()
-    count = len(source_memories)
+
+    # Count independently so the synthesis threshold and debounce operate on
+    # the whole namespace even though prompt sources are intentionally capped.
+    count = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(Memory).where(*source_filter)
+            )
+        ).scalar_one()
+    )
 
     if count < L3_SYNTHESIS_THRESHOLD:
         logger.info(
@@ -990,8 +995,16 @@ async def _maybe_synthesize_l3_1(
         )
         return
 
-    # Cap sources
-    sources = source_memories[:L3_SYNTHESIS_MAX_SOURCES]
+    # Pick the newest sources deterministically. The old un-ordered slice could
+    # keep feeding an arbitrary historical subset after a namespace exceeded
+    # the cap, preventing fresh facts from reaching a regenerated concept.
+    result = await db.execute(
+        select(Memory)
+        .where(*source_filter)
+        .order_by(Memory.created_at.desc(), Memory.memory_id.desc())
+        .limit(L3_SYNTHESIS_MAX_SOURCES)
+    )
+    sources = result.scalars().all()
     source_dicts = [_memory_to_dict(m) for m in sources]
     source_ids = [str(m.memory_id) for m in sources]
 

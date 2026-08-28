@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const VERSION = '0.1.0';
 const DEFAULTS = {
   runtime: 'docker',
+  infra: 'standalone',
   apiPort: 8111,
   dashboardPort: 5175,
   postgresPort: 5434,
+  sharedPostgresPort: 5432,
+  sharedRedisPort: 6379,
+  sharedRedisDatabase: 14,
   apiContainerPort: 8000,
   dashboardContainerPort: 5173,
   postgresContainerPort: 5432,
@@ -22,7 +27,8 @@ function usage(exitCode = 0) {
 kemory-community ${VERSION}
 
 Usage:
-  kemory-community init [--runtime docker|local] [--dir <path>] [--force]
+  kemory-community init [--runtime docker|local] [--infra standalone|shared] [--dir <path>] [--force]
+  kemory-community provision-shared [--dir <path>] [--infra-dir <path>]
   kemory-community up [--dir <path>]
   kemory-community down [--dir <path>]
   kemory-community doctor [--dir <path>]
@@ -31,6 +37,10 @@ Usage:
 
 Docker is the default runtime. The local runtime only writes config; v0.1
 will wire the downloaded platform binary.
+
+Docker infrastructure modes:
+  standalone  Portable stack with dedicated Postgres and Redis containers
+  shared      App containers join external shared-infra Postgres and Redis
 
 Default local Docker ports:
   API        http://127.0.0.1:${DEFAULTS.apiPort}
@@ -99,8 +109,16 @@ function configFromArgs(args) {
   if (!['docker', 'local'].includes(runtime)) {
     fail('--runtime must be docker or local');
   }
+  const infra = args.infra || DEFAULTS.infra;
+  if (!['standalone', 'shared'].includes(infra)) {
+    fail('--infra must be standalone or shared');
+  }
+  if (runtime === 'local' && infra !== 'standalone') {
+    fail('--infra shared requires --runtime docker');
+  }
   return {
     runtime,
+    infra,
     apiPort: intArg(args, 'api-port', DEFAULTS.apiPort),
     dashboardPort: intArg(args, 'dashboard-port', DEFAULTS.dashboardPort),
     postgresPort: intArg(args, 'postgres-port', DEFAULTS.postgresPort),
@@ -110,10 +128,15 @@ function configFromArgs(args) {
     apiImage: args['api-image'] || args.image || DEFAULTS.apiImage,
     dashboardImage: args['dashboard-image'] || (args.image ? `${args.image}-dashboard` : DEFAULTS.dashboardImage),
     apiKey: args['api-key'] || `kc_${crypto.randomBytes(24).toString('base64url')}`,
+    blobSigningKey: crypto.randomBytes(32).toString('hex'),
+    dbName: 'kemory_community',
+    dbUser: 'kemory_community',
+    dbPassword: args['db-password'] || '',
+    redisDatabase: DEFAULTS.sharedRedisDatabase,
   };
 }
 
-function dockerCompose(config) {
+function standaloneDockerCompose(config) {
   return `services:
   kemory-api:
     image: \${KEMORY_COMMUNITY_IMAGE:-${config.apiImage}}
@@ -130,7 +153,7 @@ function dockerCompose(config) {
       KMV_TELEMETRY: noop
       KMV_COGNITION_ENTERPRISE: "false"
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
-      KEMORY_LOCAL_BLOB_SIGNING_KEY: community-local-blob-signing-key-32-bytes
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
       OPENAI_API_KEY: \${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
@@ -198,10 +221,83 @@ volumes:
 `;
 }
 
+function sharedDockerCompose(config) {
+  return `services:
+  kemory-api:
+    image: \${KEMORY_COMMUNITY_IMAGE:-${config.apiImage}}
+    restart: unless-stopped
+    environment:
+      API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
+      CORS_ORIGINS: http://localhost:${config.dashboardPort},http://127.0.0.1:${config.dashboardPort}
+      DATABASE_URL: postgresql+asyncpg://\${KEMORY_COMMUNITY_DB_USER:-${config.dbUser}}:\${KEMORY_COMMUNITY_DB_PASSWORD:?Provision the shared database first}@postgres:5432/\${KEMORY_COMMUNITY_DB_NAME:-${config.dbName}}
+      DATABASE_URL_SYNC: postgresql://\${KEMORY_COMMUNITY_DB_USER:-${config.dbUser}}:\${KEMORY_COMMUNITY_DB_PASSWORD:?Provision the shared database first}@postgres:5432/\${KEMORY_COMMUNITY_DB_NAME:-${config.dbName}}
+      KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KMV_VECTOR_BACKEND: pgvector
+      KMV_BLOB_BACKEND: local_fs
+      KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
+      KMV_IDENTITY: local_single_user
+      KMV_TELEMETRY: noop
+      KMV_COGNITION_ENTERPRISE: "false"
+      KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
+      OPENAI_API_KEY: \${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
+      COHERE_API_KEY: \${COHERE_API_KEY:-}
+      KEMORY_RUN_MIGRATIONS: "true"
+      MEMORY_VAULT_MODE: platform
+      REDIS_URL: redis://redis:6379/\${KEMORY_COMMUNITY_REDIS_DB:-${config.redisDatabase}}
+      TENANT_ENFORCEMENT: "off"
+      WORKERS: "1"
+    ports:
+      - "127.0.0.1:${config.apiPort}:${config.apiContainerPort}"
+    volumes:
+      - kemory_data:/app/.community
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${config.apiContainerPort}/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  dashboard:
+    image: \${KEMORY_COMMUNITY_DASHBOARD_IMAGE:-${config.dashboardImage}}
+    restart: unless-stopped
+    environment:
+      API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
+      API_KEY: \${KEMORY_LOCAL_API_KEY}
+      SKIP_AUTH: "true"
+    ports:
+      - "127.0.0.1:${config.dashboardPort}:${config.dashboardContainerPort}"
+    depends_on:
+      kemory-api:
+        condition: service_healthy
+    networks:
+      - shared-infra
+
+volumes:
+  kemory_data:
+
+networks:
+  shared-infra:
+    external: true
+`;
+}
+
+function dockerCompose(config) {
+  return config.infra === 'shared' ? sharedDockerCompose(config) : standaloneDockerCompose(config);
+}
+
 function envFile(config) {
   return `KEMORY_LOCAL_API_KEY=${config.apiKey}
 KEMORY_COMMUNITY_IMAGE=${config.apiImage}
 KEMORY_COMMUNITY_DASHBOARD_IMAGE=${config.dashboardImage}
+KEMORY_LOCAL_BLOB_SIGNING_KEY=${config.blobSigningKey}
+KEMORY_COMMUNITY_DB_NAME=${config.dbName}
+KEMORY_COMMUNITY_DB_USER=${config.dbUser}
+KEMORY_COMMUNITY_DB_PASSWORD=${config.dbPassword}
+KEMORY_COMMUNITY_REDIS_DB=${config.redisDatabase}
 OPENAI_API_KEY=
 VOYAGE_API_KEY=
 COHERE_API_KEY=
@@ -213,6 +309,7 @@ function jsonConfig(config) {
     {
       version: 1,
       runtime: config.runtime,
+      infrastructure: config.infra,
       urls: {
         api: `http://127.0.0.1:${config.apiPort}`,
         dashboard: `http://127.0.0.1:${config.dashboardPort}`,
@@ -220,13 +317,16 @@ function jsonConfig(config) {
       ports: {
         api: config.apiPort,
         dashboard: config.dashboardPort,
-        postgres: config.postgresPort,
+        postgres: config.infra === 'shared' ? DEFAULTS.sharedPostgresPort : config.postgresPort,
+        redis: config.infra === 'shared' ? DEFAULTS.sharedRedisPort : null,
+        redis_database: config.infra === 'shared' ? config.redisDatabase : null,
       },
       images: {
         api: config.apiImage,
         dashboard: config.dashboardImage,
       },
-      storage: 'docker_named_volumes',
+      database: config.infra === 'shared' ? { name: config.dbName, user: config.dbUser } : null,
+      storage: config.infra === 'shared' ? 'shared_postgres_and_docker_volume' : 'docker_named_volumes',
     },
     null,
     2,
@@ -294,9 +394,13 @@ KEMORY_DASHBOARD_PORT=${config.dashboardPort}
   }
 
   console.log(`Initialized ${config.runtime} setup in ${dir}`);
+  console.log(`Infrastructure: ${config.infra}`);
   console.log(`API: http://127.0.0.1:${config.apiPort}`);
   console.log(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);
   if (config.runtime === 'docker') {
+    if (config.infra === 'shared') {
+      console.log(`First provision shared services: kemory-community provision-shared --dir ${dir}`);
+    }
     console.log(`Run: kemory-community up --dir ${dir}`);
     console.log(`MCP config: ${path.join(dir, 'mcp.json')}`);
   }
@@ -331,6 +435,65 @@ function readEnvValue(dir, key) {
   return line ? line.slice(key.length + 1) : '';
 }
 
+function setEnvValue(dir, key, value) {
+  const target = path.join(dir, 'kemory.env');
+  if (!fs.existsSync(target)) fail(`missing ${target}; run kemory-community init first`);
+  const lines = fs.readFileSync(target, 'utf8').split(/\r?\n/);
+  const prefix = `${key}=`;
+  const index = lines.findIndex((line) => line.startsWith(prefix));
+  if (index >= 0) lines[index] = `${prefix}${value}`;
+  else lines.push(`${prefix}${value}`);
+  fs.writeFileSync(target, `${lines.filter(Boolean).join('\n')}\n`, { mode: 0o600 });
+}
+
+function dotenvValue(filePath, key) {
+  if (!fs.existsSync(filePath)) return '';
+  const prefix = `${key}=`;
+  const line = fs.readFileSync(filePath, 'utf8').split(/\r?\n/).find((item) => item.startsWith(prefix));
+  if (!line) return '';
+  return line.slice(prefix.length).trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+function provisionShared(args) {
+  const dir = setupDir(args);
+  const config = readConfig(dir);
+  if (config.runtime !== 'docker' || config.infrastructure !== 'shared') {
+    fail('provision-shared requires a setup initialized with --runtime docker --infra shared');
+  }
+
+  const infraDir = path.resolve(args['infra-dir'] || process.env.SHARED_INFRA_DIR || path.join(os.homedir(), 'infra'));
+  const startScript = path.join(infraDir, 'scripts', 'start.sh');
+  const createDbScript = path.join(infraDir, 'scripts', 'create-app-db.sh');
+  const infraEnv = path.join(infraDir, '.env');
+  for (const required of [startScript, createDbScript, infraEnv]) {
+    if (!fs.existsSync(required)) fail(`missing shared infrastructure file ${required}`);
+  }
+
+  const start = spawnSync(startScript, [], { stdio: 'inherit' });
+  if (start.status !== 0) fail('shared infrastructure failed to start');
+  const dbName = config.database?.name || 'kemory_community';
+  const provision = spawnSync(createDbScript, [dbName], { encoding: 'utf8' });
+  if (provision.status !== 0) {
+    process.stderr.write(provision.stderr || provision.stdout || '');
+    fail('shared PostgreSQL database provisioning failed');
+  }
+
+  const adminUser = dotenvValue(infraEnv, 'POSTGRES_USER') || 'admin';
+  const adminPassword = dotenvValue(infraEnv, 'POSTGRES_PASSWORD');
+  if (!adminPassword) fail(`POSTGRES_PASSWORD is missing from ${infraEnv}`);
+  const dbPassword = crypto.createHash('sha256').update(`${dbName}:${adminPassword}`).digest('hex').slice(0, 32);
+  const extensions = spawnSync('docker', [
+    'exec', 'postgres', 'psql', '-U', adminUser, '-d', dbName,
+    '-v', 'ON_ERROR_STOP=1', '-c',
+    'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;',
+  ], { stdio: 'inherit' });
+  if (extensions.status !== 0) fail('failed to enable pgvector prerequisites');
+
+  setEnvValue(dir, 'KEMORY_COMMUNITY_DB_PASSWORD', dbPassword);
+  console.log(`Shared infrastructure provisioned for ${dbName}.`);
+  console.log(`Run: kemory-community up --dir ${dir}`);
+}
+
 async function probe(url, options = {}) {
   try {
     const response = await fetch(url, { ...options, signal: AbortSignal.timeout(5_000) });
@@ -357,13 +520,22 @@ async function up(args) {
   if (!fs.existsSync(composeFile)) {
     fail(`missing ${composeFile}; run kemory-community init --runtime docker first`);
   }
+  const config = readConfig(dir);
+  if (config.infrastructure === 'shared') {
+    if (!readEnvValue(dir, 'KEMORY_COMMUNITY_DB_PASSWORD')) {
+      fail('shared infrastructure requires KEMORY_COMMUNITY_DB_PASSWORD in kemory.env');
+    }
+    const network = spawnSync('docker', ['network', 'inspect', 'shared-infra'], { stdio: 'ignore' });
+    if (network.status !== 0) {
+      fail('shared-infra network is unavailable; start and provision shared infrastructure first');
+    }
+  }
   const [command, baseArgs] = composeCommand();
   const result = spawnSync(command, [...baseArgs, ...composeArgs(dir, 'up'), '-d'], {
     stdio: 'inherit',
   });
   if (result.status !== 0) fail('Docker Compose failed to start');
 
-  const config = readConfig(dir);
   process.stdout.write('Waiting for Kemory API');
   await waitForReady(`${config.urls.api}/health/ready`);
   process.stdout.write(' ready\nWaiting for dashboard');
@@ -423,6 +595,11 @@ function ports() {
     api: DEFAULTS.apiPort,
     dashboard: DEFAULTS.dashboardPort,
     postgres: DEFAULTS.postgresPort,
+    shared: {
+      postgres: DEFAULTS.sharedPostgresPort,
+      redis: DEFAULTS.sharedRedisPort,
+      redis_database: DEFAULTS.sharedRedisDatabase,
+    },
   }, null, 2));
 }
 
@@ -432,6 +609,7 @@ async function main() {
 
   switch (command) {
     case 'init': init(args); break;
+    case 'provision-shared': provisionShared(args); break;
     case 'up': await up(args); break;
     case 'down': down(args); break;
     case 'doctor': await doctor(args); break;

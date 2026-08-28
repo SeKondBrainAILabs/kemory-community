@@ -18,6 +18,25 @@ from backend.services.memory_service import (
     list_namespace_raw,
 )
 
+CONSOLIDATION_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string"},
+        "status": {"type": "string"},
+    },
+    "required": ["session_id", "status"],
+    "additionalProperties": True,
+}
+NAMESPACE_DATA_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "namespace": {"type": "string"},
+        "source_count": {"type": "integer"},
+        "mode": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
+
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
         name="s9nmem_consolidate_session",
@@ -41,6 +60,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["session_id"],
         },
+        outputSchema=CONSOLIDATION_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_get_raw",
@@ -58,6 +78,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["namespace"],
         },
+        outputSchema=NAMESPACE_DATA_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_get_compressed",
@@ -90,6 +111,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["namespace"],
         },
+        outputSchema=NAMESPACE_DATA_OUTPUT_SCHEMA,
     ),
 ]
 
@@ -115,6 +137,7 @@ async def _handle_consolidate_session(args, user_id, agent_id, db):
                 ),
             }
         ],
+        structuredContent={"session_id": args["session_id"], "status": "requested"},
     )
 
 
@@ -131,6 +154,7 @@ async def _handle_get_raw(args, user_id, agent_id, db):
                 ),
             }
         ],
+        structuredContent={"namespace": args["namespace"], **result},
     )
 
 
@@ -176,7 +200,10 @@ async def _handle_get_compressed(args, user_id, agent_id, db):
             src_flag = f" [source={src}]" if src and src != "core_ai_backend" else ""
             lines.append(f"\n{i}. {c.get('name')}{directional}{flag}{src_flag}\n   {c.get('synthesis', '')}")
         text = "\n".join(lines)
-    return MCPToolResult(content=[{"type": "text", "text": text}])
+    return MCPToolResult(
+        content=[{"type": "text", "text": text}],
+        structuredContent={"namespace": args["namespace"], **result},
+    )
 
 
 HANDLERS: dict[str, object] = {

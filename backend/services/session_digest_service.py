@@ -892,6 +892,25 @@ async def _load_digest_row(
     ).scalar_one_or_none()
 
 
+async def load_stored_digest(
+    user_id: uuid.UUID,
+    namespace: str,
+    session_id: str,
+    db: AsyncSession,
+) -> dict[str, Any] | None:
+    """Return an existing digest without generating or mutating context."""
+    org_id = current_org_id() or settings.tenant_legacy_sentinel
+    row = await _load_digest_row(user_id, org_id, namespace, session_id, db)
+    if row is None:
+        return None
+    return {
+        "digest": row.digest or "",
+        "digest_tier": row.digest_tier,
+        "compacted_exchange_count": row.compacted_exchange_count,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
 def _digest_state(
     *,
     digest: str,

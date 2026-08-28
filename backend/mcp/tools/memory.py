@@ -30,6 +30,50 @@ from backend.services.memory_service import (
     search_memories,
 )
 
+MEMORY_ITEM_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+        "namespace": {"type": "string"},
+        "namespace_tag": {"type": ["string", "null"]},
+        "content": {"type": "string"},
+        "content_type": {"type": "string"},
+        "similarity_score": {"type": ["number", "null"]},
+    },
+    "additionalProperties": True,
+}
+STORE_MEMORY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "memory": MEMORY_ITEM_OUTPUT_SCHEMA,
+        "deduplicated": {"type": "boolean"},
+    },
+    "required": ["memory", "deduplicated"],
+    "additionalProperties": True,
+}
+MEMORY_RESULTS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "total": {"type": "integer"},
+        "showing": {"type": "integer"},
+        "memories": {"type": "array", "items": MEMORY_ITEM_OUTPUT_SCHEMA},
+    },
+    "required": ["total", "showing", "memories"],
+    "additionalProperties": True,
+}
+DELETE_MEMORY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+        "deleted": {"type": "boolean"},
+    },
+    "required": ["memory_id", "deleted"],
+}
+
+
+def _memory_payload(item) -> dict:
+    return item.model_dump(mode="json")
+
 
 def _skip_gatekeeper() -> bool:
     return settings.kmv_identity == "local_single_user"
@@ -72,9 +116,14 @@ DEFINITIONS: list[MCPToolDefinition] = [
                     "type": "string",
                     "description": "Optional ISO-8601 source time when the content happened",
                 },
+                "namespace_tag": {
+                    "type": "string",
+                    "description": "Optional second-tier segment within the namespace",
+                },
             },
             "required": ["namespace", "content"],
         },
+        outputSchema=STORE_MEMORY_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_recall_memory",
@@ -99,9 +148,16 @@ DEFINITIONS: list[MCPToolDefinition] = [
                     "description": "Pagination offset",
                     "default": 0,
                 },
+                "min_relevance": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Optional relevance-score floor for hybrid search",
+                },
             },
             "required": [],
         },
+        outputSchema=MEMORY_RESULTS_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_delete_memory",
@@ -119,6 +175,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["memory_id"],
         },
+        outputSchema=DELETE_MEMORY_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_find_similar",
@@ -143,9 +200,16 @@ DEFINITIONS: list[MCPToolDefinition] = [
                     "description": "Max similar memories to return (default 10)",
                     "default": 10,
                 },
+                "min_relevance": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Optional relevance-score floor",
+                },
             },
             "required": ["content"],
         },
+        outputSchema=MEMORY_RESULTS_OUTPUT_SCHEMA,
     ),
 ]
 
@@ -158,6 +222,7 @@ async def _handle_store_memory(args, user_id, agent_id, db):
         metadata=args.get("metadata"),
         ttl_seconds=args.get("ttl_seconds"),
         occurred_at=args.get("occurred_at"),
+        namespace_tag=args.get("namespace_tag"),
     )
     # WS-2: pull the request-scoped org_id (set by require_auth) so the row
     # is tagged with the caller's tenant rather than falling through to the
@@ -187,6 +252,10 @@ async def _handle_store_memory(args, user_id, agent_id, db):
                 ),
             }
         ],
+        structuredContent={
+            "memory": _memory_payload(memory),
+            "deduplicated": bool(memory.dedup),
+        },
     )
 
 
@@ -197,12 +266,14 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
         content_type=args.get("content_type"),
         limit=args.get("limit", 20),
         offset=args.get("offset", 0),
+        min_score=args.get("min_relevance"),
     )
     result = await search_memories(user_id, agent_id, request, db, skip_gatekeeper=_skip_gatekeeper())
 
     if not result.items:
         return MCPToolResult(
             content=[{"type": "text", "text": "No memories found matching your query."}],
+            structuredContent={"total": result.total, "showing": 0, "memories": []},
         )
 
     lines = [f"Found {result.total} memories (showing {len(result.items)}):\n"]
@@ -233,6 +304,11 @@ async def _handle_recall_memory(args, user_id, agent_id, db):
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={
+            "total": result.total,
+            "showing": len(result.items),
+            "memories": [_memory_payload(item) for item in result.items],
+        },
     )
 
 
@@ -241,6 +317,7 @@ async def _handle_delete_memory(args, user_id, agent_id, db):
     await delete_memory(memory_id, user_id, agent_id, db, skip_gatekeeper=_skip_gatekeeper())
     return MCPToolResult(
         content=[{"type": "text", "text": f"Memory {args['memory_id']} deleted successfully."}],
+        structuredContent={"memory_id": args["memory_id"], "deleted": True},
     )
 
 
@@ -264,11 +341,13 @@ async def _handle_find_similar(args, user_id, agent_id, db):
         namespace=namespace,
         limit=args.get("limit", 10),
         offset=0,
+        min_score=args.get("min_relevance"),
     )
     result = await search_memories(user_id, agent_id, request, db, skip_gatekeeper=True)
     if not result.items:
         return MCPToolResult(
             content=[{"type": "text", "text": "No similar memories found."}],
+            structuredContent={"total": result.total, "showing": 0, "memories": []},
         )
     lines = [f"Found {len(result.items)} similar memories:\n"]
     for i, item in enumerate(result.items, 1):
@@ -277,6 +356,11 @@ async def _handle_find_similar(args, user_id, agent_id, db):
         lines.append(f"{i}. [{namespace}/{item.content_type}] id={item.memory_id}\n   {snippet}")
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={
+            "total": result.total,
+            "showing": len(result.items),
+            "memories": [_memory_payload(item) for item in result.items],
+        },
     )
 
 

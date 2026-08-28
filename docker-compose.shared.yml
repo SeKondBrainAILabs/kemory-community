@@ -1,0 +1,76 @@
+# Kemory Community deployment for SeKondBrain shared infrastructure.
+# Provision first with: ./infrastructure/provision-shared-infra.sh
+# Run with: docker compose --env-file .env.shared -f docker-compose.shared.yml up -d --build
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_EMBEDDINGS: "true"
+    container_name: kemory-community-api
+    restart: unless-stopped
+    environment:
+      API_PUBLIC_URL: http://127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}
+      CORS_ORIGINS: http://localhost:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175},http://127.0.0.1:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175}
+      DATABASE_URL: postgresql+asyncpg://${KEMORY_COMMUNITY_DB_USER:-kemory_community}:${KEMORY_COMMUNITY_DB_PASSWORD:?Run infrastructure/provision-shared-infra.sh first}@postgres:5432/${KEMORY_COMMUNITY_DB_NAME:-kemory_community}
+      DATABASE_URL_SYNC: postgresql://${KEMORY_COMMUNITY_DB_USER:-kemory_community}:${KEMORY_COMMUNITY_DB_PASSWORD:?Run infrastructure/provision-shared-infra.sh first}@postgres:5432/${KEMORY_COMMUNITY_DB_NAME:-kemory_community}
+      ENVIRONMENT: development
+      KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:?Run infrastructure/provision-shared-infra.sh first}
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: ${KEMORY_LOCAL_BLOB_SIGNING_KEY:?Run infrastructure/provision-shared-infra.sh first}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      KEMORY_RUN_MIGRATIONS: "true"
+      KMV_BLOB_BACKEND: local_fs
+      KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
+      KMV_COGNITION_ENTERPRISE: "false"
+      KMV_IDENTITY: local_single_user
+      KMV_TELEMETRY: noop
+      KMV_VECTOR_BACKEND: pgvector
+      MEMORY_VAULT_MODE: platform
+      NAMESPACE_TAGS_ENABLED: ${NAMESPACE_TAGS_ENABLED:-true}
+      REDIS_URL: redis://redis:6379/${KEMORY_COMMUNITY_REDIS_DB:-14}
+      TENANT_ENFORCEMENT: "off"
+      WORKERS: "1"
+    expose:
+      - "8000"
+    ports:
+      - "127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}:8000"
+    volumes:
+      - community_api_data:/app/.community
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: kemory-community-dashboard
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_KEY: ${KEMORY_LOCAL_API_KEY:?Run infrastructure/provision-shared-infra.sh first}
+      API_PUBLIC_URL: http://127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}
+      SKIP_AUTH: "true"
+    ports:
+      - "127.0.0.1:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175}:5173"
+    networks:
+      - shared-infra
+
+volumes:
+  community_api_data:
+
+networks:
+  shared-infra:
+    external: true

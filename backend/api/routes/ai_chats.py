@@ -203,6 +203,34 @@ async def get_chat_endpoint(
         ) from exc
 
 
+@router.get(
+    "/chats/{chat_id}/digest",
+    summary="Get the stored rolling digest for a chat session",
+)
+async def get_chat_digest_endpoint(
+    chat_id: uuid.UUID,
+    auth: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read a stored digest without triggering synthesis or changing state."""
+    try:
+        chat = await get_chat(chat_id, auth.user_id, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    from backend.services.session_digest_service import load_stored_digest
+
+    stored = await load_stored_digest(auth.user_id, chat.namespace, str(chat_id), db)
+    return {
+        "chat_id": str(chat_id),
+        "namespace": chat.namespace,
+        "digest": stored.get("digest") if stored else None,
+        "digest_tier": stored.get("digest_tier") if stored else None,
+        "source_exchange_count": stored.get("compacted_exchange_count") if stored else 0,
+        "updated_at": stored.get("updated_at") if stored else None,
+    }
+
+
 @router.post(
     "/chats/{chat_id}/classify",
     response_model=ChatClassifyResponse,

@@ -1,3 +1,5 @@
+# Self-contained Community stack for public installs and CI.
+# SeKondBrain deployments use docker-compose.shared.yml instead.
 services:
   postgres:
     image: pgvector/pgvector:pg16

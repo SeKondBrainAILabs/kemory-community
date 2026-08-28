@@ -59,23 +59,31 @@ covering something is indistinguishable from a gate that passes.
 ## Baseline
 
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
-- Hosted baseline inspected: `300696e8e9` (`v2.21.1`); previous recorded
-  baseline was `60390acd5f` (`v1.8.2`).
+- Hosted baseline inspected: `2aa9da45db` (post-`v3.11.1`); previous recorded
+  baseline was `300696e8e9` (`v2.21.1`).
 - Backend subtree anchor: `5b70a8a884` (equivalent hosted tree at `305adba0e8:backend`).
 - Python SDK anchor: `ea2c494530`.
 - CLI anchor: `6fb85a6d4b`.
 - Dashboard anchor: `c82bebf5cd`.
 
-The `v2.21.1` audit classified 784 hosted commits after the previous recorded
-baseline. Its final refresh window contained 46 merged PRs and 215 commits
-after the local hosted `v2.10.0` checkout. Changes are ported by feature cohort,
-with community adapters and Docker runtime constraints applied at each
-boundary; the hosted worktree itself was not modified during the audit.
+The 2026-08-29 refresh classified 445 hosted commits (141 first-parent entries)
+after `v2.21.1`, through hosted commit `2aa9da45db`. Changes are ported by
+feature cohort, with community adapters and Docker runtime constraints applied
+at each boundary; the hosted worktree itself was not modified during the audit.
 
 ## Classification
 
 | Cohort | Decision | Community treatment |
 | --- | --- | --- |
+| MCP structured-result parity (`372aa81`, `a45e8bc`, `f49e68d`) | Ported and adapted | All 17 Community tools now declare additive output schemas and return `structuredContent` on successful responses while preserving their existing text. Hosted consolidated/friendly names are not substituted for Community's canonical discovery plus legacy dispatch aliases. |
+| Stored session-digest read (`4bfc98c`) | Ported and adapted | Added a read-only chat digest endpoint over Community's existing plaintext local digest store. Hosted encryption and Gatekeeper checks are replaced by the existing local authenticated-user chat lookup. |
+| MCP namespace tags and deterministic L3.1 sources (`0515187`) | Ported and adapted | `kemory_store_memory` accepts `namespace_tag`; capped L3.1 synthesis sources are selected newest-first with a stable UUID tie-break while the threshold still counts the whole namespace. |
+| MCP relevance floor and page-shape work (`a4fa183`, `3c87c8a`) | Ported selectively | Memory recall and similar-memory calls expose `min_relevance` through Community's existing hybrid `min_score` filter. Hosted encrypted-retrieval routing, exact facets, blind indexes, and consolidated tool-name removals remain excluded. |
+| Timeline pagination and immutable chronology (`fb3ecfa`, `7f86134`) | Ported selectively | Community already had the complete `(occurred_at, id, kind)` keyset tie-break. This refresh replaces mutable `updated_at` fallbacks with immutable `created_at`; hosted platform filtering and drill-down parameters are deferred until Community UX requires them. |
+| Intel macOS CLI `0.6.4` packaging (`2aa9da4`) | Excluded | The commit only bumps hosted Python package and lockfile versions for a native Intel macOS release. Community is independently versioned, distributed through npm, and runs its services in Docker. |
+| Project sibling matcher and apply-suggestion tooling (`19decaf`, `2774b2a`) | Deferred | The hosted semantic matcher is coupled to hosted project inventory and operational scripts. Community retains its existing namespace matcher until a local benchmark demonstrates a gap. |
+| Exact-memory receipts, classification queues, bounded outcomes (`6d1671e`, `26aaf8d`, `cdf91d5`, `2f05a56`) | Deferred for Community-native design | These cohorts depend on hosted tenant receipts, worker queues, outcome enums, metrics, and migrations. Their behavioral goals remain candidates, but direct replay would add inactive hosted infrastructure. |
+| Hosted identity, organisations, residency, billing, analytics, support corpus, managed connectors, CLI channels, and native binary releases | Excluded | These are hosted product or deployment concerns. Community remains one local user, API-key authenticated, Docker-first, telemetry-free, and independently packaged. |
 | Rolling session digest and raw-source rehydration (hosted PR #152) | Port and adapt | New `018` migration, local user scope, latest three exchanges raw, whole-item source expansion, no AAAK prompt context. |
 | MCP JSON-RPC transport and canonical names | Ported and adapted | Standard JSON-RPC 2.0 over HTTP and stdio; advertise `kemory_*` only; retain `s9nmem_*` and `kora_*` dispatch aliases; keep X-API-Key auth. |
 | Pgvector search scale, batch encoding, retrieval floor | Ported and adapted | ANN search and transactional writes use `kemory_memory_vectors`; legacy rows remain searchable; omit Gatekeeper, org fairness, and hosted telemetry. |
@@ -101,6 +109,11 @@ boundary; the hosted worktree itself was not modified during the audit.
 
 ## Ported In This Cohort
 
+- Structured MCP outputs and advertised schemas across the complete Community tool surface.
+- MCP `namespace_tag` writes and caller-controlled hybrid relevance floors.
+- Deterministic newest-first capped L3.1 source selection.
+- Read-only retrieval of a chat's stored rolling digest.
+- Immutable timeline fallback timestamps while preserving the existing cursor contract.
 - Local-first Ask across memories, captured chats, and inline text artifacts,
   with REST, MCP, and Python CLI parity and honest no-synthesis reasons.
 - Additive MCP `outputSchema` / `structuredContent` support for Ask.

@@ -11,12 +11,14 @@ your data under your control.
 ## What Kemory stores locally
 
 Kemory stores memory records, namespaces, chats, artifacts, configuration,
-indexes, and operational metadata on your local machine. The Docker setup uses
-named volumes for Postgres and API data. These volumes survive container
-replacement and `docker compose down`; they are removed only by an explicit
-volume deletion such as `docker compose down -v`. The npm installer keeps its
-compose file, local API key, and secret-free MCP client configuration under
-`.kemory-community/` in the directory where it was initialized.
+indexes, and operational metadata on your local machine. Standalone Docker
+uses named volumes for Postgres and API data. Shared-infrastructure mode uses
+the local infra PostgreSQL service with an isolated `kemory_community`
+database/user and a Community-owned API-data volume. These survive container
+replacement and `docker compose down`; removal requires an explicit volume or
+database deletion. The npm installer keeps its compose file, local API key,
+and secret-free MCP client configuration under `.kemory-community/` in the
+directory where it was initialized.
 
 If you opt into an external Postgres database, your database provider's
 own privacy and security practices apply to that database.

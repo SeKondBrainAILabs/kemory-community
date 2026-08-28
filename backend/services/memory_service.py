@@ -67,6 +67,12 @@ class MemoryCreate(BaseModel):
     """Request body for creating a memory."""
 
     namespace: str = Field(..., min_length=1, max_length=100)
+    namespace_tag: str | None = Field(
+        None,
+        min_length=1,
+        max_length=120,
+        description="Optional second-tier segment within the namespace.",
+    )
     content: str = Field(..., min_length=1, max_length=100000)
     content_type: str = Field(default="text", max_length=50)
     metadata: dict | None = Field(None)
@@ -566,6 +572,7 @@ async def create_memory(
         user_id=user_id,
         org_id=org_id,
         namespace=request.namespace,
+        namespace_tag=request.namespace_tag,
         content=request.content,
         content_type=request.content_type,
         content_hash=content_hash,

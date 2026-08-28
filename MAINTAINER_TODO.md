@@ -89,6 +89,8 @@ this repository aligned when runtime providers or data paths change.
   `local_single_user`, and `noop` telemetry.
 - [x] Wire npm `kemory-community init --runtime docker` / `up` to the
   community port registry (`8111`, `5175`, `5434`).
+- [x] Add `--infra shared`, external `shared-infra` deployment, idempotent
+  database provisioning, and registry entries for shared `5432` / `6379:14`.
 - [x] Add canonical `kemory_*` MCP tool aliases while retaining `s9nmem_*`
   and `kora_*` compatibility.
 - [x] Update `.github/workflows/release.yml` with Docker image publishing

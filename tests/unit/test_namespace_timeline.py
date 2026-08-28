@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import JSON
+from sqlalchemy import JSON, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session as SyncSession
 
@@ -221,6 +221,20 @@ async def test_interleaves_source_dates_and_provenance(db: AsyncSession) -> None
     assert by_id[str(M2)].platform == "claude"
     assert by_id[str(M2)].preview.endswith("...")
     assert str(C_OTHER) not in by_id
+
+
+@pytest.mark.asyncio
+async def test_timeline_does_not_move_when_chat_is_updated(db: AsyncSession) -> None:
+    chat = (await db.execute(select(AIChat).where(AIChat.chat_id == C1))).scalar_one()
+    chat.updated_at = T0 + timedelta(days=30)
+    await db.flush()
+
+    items, _ = await _all_pages(db)
+    c1 = next(item for item in items if item.id == str(C1))
+    m1 = next(item for item in items if item.id == str(M1))
+
+    assert c1.occurred_at.startswith((T0 + timedelta(hours=2)).isoformat()[:19])
+    assert m1.occurred_at.startswith((T0 + timedelta(hours=2)).isoformat()[:19])
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "docker-compose.community.yml"
+SHARED_COMPOSE_PATH = REPO_ROOT / "docker-compose.shared.yml"
+SHARED_MIGRATION_PATH = REPO_ROOT / "infrastructure" / "migrate-standalone-data.sh"
 
 _MIGRATIONS_LINE = re.compile(
     r"""^\s*KEMORY_RUN_MIGRATIONS\s*:\s*["']?([^"'\s#]+)""",
@@ -57,3 +59,41 @@ def test_api_image_is_multi_stage_and_non_root():
     assert "FROM python:3.11-slim AS builder" in dockerfile
     assert "FROM python:3.11-slim AS runtime" in dockerfile
     assert "USER kemory" in dockerfile
+
+
+def test_shared_compose_reuses_infra_without_duplicate_backing_services():
+    text = SHARED_COMPOSE_PATH.read_text()
+
+    assert "external: true" in text
+    assert "shared-infra:" in text
+    assert not re.search(r"^  (postgres|redis):\s*$", text, re.MULTILINE)
+    assert "@postgres:5432/" in text
+    assert "redis://redis:6379/${KEMORY_COMMUNITY_REDIS_DB:-14}" in text
+    assert '"127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}:8000"' in text
+    assert '"127.0.0.1:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175}:5173"' in text
+
+
+def test_shared_compose_keeps_migrations_enabled():
+    matches = _MIGRATIONS_LINE.findall(SHARED_COMPOSE_PATH.read_text())
+    value = matches[0].strip().lower() if matches else "true"
+    assert value not in {"false", "0", "no"}
+
+
+def test_shared_port_registry_matches_compose():
+    registry = (REPO_ROOT / "infrastructure" / "PORT_REGISTRY.md").read_text()
+
+    for allocation in ("`8111`", "`5175`", "`5432`", "`6379`", "`14`"):
+        assert allocation in registry
+
+
+def test_shared_migration_is_cross_version_and_checks_every_table():
+    script = SHARED_MIGRATION_PATH.read_text()
+
+    assert "--format=plain" in script
+    assert "--exclude-extension=vector" in script
+    assert "--exclude-extension=pg_trgm" in script
+    assert "pg_restore" not in script
+    assert 'psql \\\n  -U "$TARGET_USER"' in script
+    assert "REASSIGN OWNED" not in script
+    assert "SELECT tablename FROM pg_tables" in script
+    assert 'cmp -s "$SOURCE_MANIFEST" "$TARGET_MANIFEST"' in script

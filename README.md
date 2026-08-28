@@ -38,6 +38,20 @@ KEMORY_LOCAL_API_KEY="$(openssl rand -hex 24)" \
   docker compose -f docker-compose.community.yml up -d
 ```
 
+### SeKondBrain shared infrastructure
+
+On a host with the canonical `~/infra` stack, deploy only the Community
+application containers and reuse its PostgreSQL and Redis services:
+
+```bash
+./infrastructure/provision-shared-infra.sh
+docker compose --env-file .env.shared -f docker-compose.shared.yml up -d --build
+```
+
+The API and dashboard remain on `8111` and `5175`. PostgreSQL uses the shared
+port `5432` with an isolated `kemory_community` database/user, and Redis uses
+logical database `14`. See [the infrastructure registry](infrastructure/PORT_REGISTRY.md).
+
 ### Verify your install
 
 ```bash
@@ -70,6 +84,14 @@ Without one, Ask still returns the ranked local evidence and an explicit
 
 ```bash
 npx kemory-community@latest init --runtime docker
+npx kemory-community@latest up
+```
+
+The npm installer also supports the internal shared stack:
+
+```bash
+npx kemory-community@latest init --runtime docker --infra shared
+npx kemory-community@latest provision-shared
 npx kemory-community@latest up
 ```
 
@@ -107,10 +129,10 @@ docker compose -f docker-compose.community.yml exec api \
 Kemory Community runs entirely on your machine, and it's a memory product, so
 this is the first thing worth knowing:
 
-- **Memories, chats, artifacts and indexes stay local.** Docker stores them in
-  named volumes (`community_pgdata` and `community_api_data` for a source
-  checkout). They survive container replacement and are deleted only when you
-  explicitly remove the volumes.
+- **Memories, chats, artifacts and indexes stay local.** Standalone Docker
+  stores them in named volumes (`community_pgdata` and `community_api_data`).
+  Shared mode stores records and indexes in the local infra PostgreSQL database
+  `kemory_community` and artifacts in a Community-owned Docker volume.
 - **No telemetry.** The community build ships `KMV_TELEMETRY: noop`. There is no
   analytics backend, no usage reporting, and no phone-home.
 - **No account, no signup, no network identity.** Auth is a single local API key

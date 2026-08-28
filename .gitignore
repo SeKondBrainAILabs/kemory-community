@@ -31,6 +31,7 @@ Thumbs.db
 
 # Local config
 .env
+.env.shared
 .env.local
 .env.*.local
 .kemory-community/

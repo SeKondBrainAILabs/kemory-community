@@ -56,3 +56,9 @@ jobs:
         run: npm ci && npm run lint && npm test && npm run build
       - name: Compose config
         run: docker compose -f docker-compose.community.yml config >/dev/null
+      - name: Shared-infra compose config
+        env:
+          KEMORY_COMMUNITY_DB_PASSWORD: ci-only
+          KEMORY_LOCAL_API_KEY: ci-only
+          KEMORY_LOCAL_BLOB_SIGNING_KEY: ci-only-blob-signing-key-32-bytes
+        run: docker compose -f docker-compose.shared.yml config >/dev/null

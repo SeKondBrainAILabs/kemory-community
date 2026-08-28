@@ -24,6 +24,41 @@ from backend.services.memory_service import (
 from backend.services.session_digest_service import get_session_context, rehydrate_session_sources
 from backend.services.user_context_service import get_user_context
 
+NAMESPACE_LIST_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "namespaces": {"type": "array", "items": {"type": "object"}},
+        "total": {"type": "integer"},
+    },
+    "required": ["namespaces", "total"],
+}
+CONTEXT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topic": {"type": "string"},
+        "synthesis": {"type": ["string", "null"]},
+        "memories": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["topic", "memories"],
+    "additionalProperties": True,
+}
+SESSION_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "namespace": {"type": "string"},
+        "session_id": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
+USER_CONTEXT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "depth": {"type": "string"},
+        "namespaces": {"type": "array", "items": {"type": "object"}},
+    },
+    "additionalProperties": True,
+}
+
 _SESSION_CONTEXT_DEFINITION = MCPToolDefinition(
     name="kemory_get_session_context",
     description=(
@@ -46,6 +81,7 @@ _SESSION_CONTEXT_DEFINITION = MCPToolDefinition(
         },
         "required": ["namespace", "session_id"],
     },
+    outputSchema=SESSION_OUTPUT_SCHEMA,
 )
 
 _REHYDRATE_SESSION_SOURCES_DEFINITION = MCPToolDefinition(
@@ -70,6 +106,7 @@ _REHYDRATE_SESSION_SOURCES_DEFINITION = MCPToolDefinition(
         },
         "required": ["namespace", "session_id"],
     },
+    outputSchema=SESSION_OUTPUT_SCHEMA,
 )
 
 _USER_CONTEXT_DEFINITION = MCPToolDefinition(
@@ -107,6 +144,7 @@ _USER_CONTEXT_DEFINITION = MCPToolDefinition(
         },
         "required": [],
     },
+    outputSchema=USER_CONTEXT_OUTPUT_SCHEMA,
 )
 
 DEFINITIONS: list[MCPToolDefinition] = [
@@ -121,6 +159,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             "properties": {},
             "required": [],
         },
+        outputSchema=NAMESPACE_LIST_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_get_context",
@@ -155,6 +194,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["topic"],
         },
+        outputSchema=CONTEXT_OUTPUT_SCHEMA,
     ),
     _SESSION_CONTEXT_DEFINITION,
     _REHYDRATE_SESSION_SOURCES_DEFINITION,
@@ -167,6 +207,7 @@ async def _handle_list_namespaces(args, user_id, agent_id, db):
     if not namespaces:
         return MCPToolResult(
             content=[{"type": "text", "text": "No namespaces found. The vault is empty."}],
+            structuredContent={"namespaces": [], "total": 0},
         )
 
     lines = ["Available namespaces:\n"]
@@ -175,6 +216,7 @@ async def _handle_list_namespaces(args, user_id, agent_id, db):
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={"namespaces": namespaces, "total": len(namespaces)},
     )
 
 
@@ -223,6 +265,7 @@ async def _handle_get_context(args, user_id, agent_id, db):
                     "text": f"No contextual memories found for topic: '{topic}'",
                 }
             ],
+            structuredContent={"topic": topic, "synthesis": None, "memories": []},
         )
 
     # S9N-3074-SUB3: attempt LLM synthesis via reranker
@@ -255,7 +298,14 @@ async def _handle_get_context(args, user_id, agent_id, db):
 
     if synthesised:
         text = synthesised + ("\n" + cross_section if cross_section else "")
-        return MCPToolResult(content=[{"type": "text", "text": text}])
+        return MCPToolResult(
+            content=[{"type": "text", "text": text}],
+            structuredContent={
+                "topic": topic,
+                "synthesis": synthesised,
+                "memories": [item.model_dump(mode="json") for item in result.items],
+            },
+        )
 
     # Fallback: format as context block
     lines = [f"Context for '{topic}' ({len(result.items)} memories):\n"]
@@ -269,6 +319,11 @@ async def _handle_get_context(args, user_id, agent_id, db):
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={
+            "topic": topic,
+            "synthesis": None,
+            "memories": [item.model_dump(mode="json") for item in result.items],
+        },
     )
 
 
@@ -305,6 +360,7 @@ async def _handle_get_user_context(args, user_id, agent_id, db):
 
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent=result,
     )
 
 
@@ -354,7 +410,10 @@ async def _handle_get_session_context(args, user_id, agent_id, db):
             f"- source_memory_ids={digest_hook.get('source_memory_ids', [])}\n"
             f"- source_turn_ids={digest_hook.get('source_turn_ids', [])}"
         )
-    return MCPToolResult(content=[{"type": "text", "text": context["text"] + footer}])
+    return MCPToolResult(
+        content=[{"type": "text", "text": context["text"] + footer}],
+        structuredContent=result,
+    )
 
 
 async def _handle_rehydrate_session_sources(args, user_id, agent_id, db):
@@ -388,7 +447,10 @@ async def _handle_rehydrate_session_sources(args, user_id, agent_id, db):
         "AAAK is not returned; raw sources are exact and read-only.\n"
     )
     text = result.get("text") or "(no raw sources fit the requested token budget)"
-    return MCPToolResult(content=[{"type": "text", "text": header + "\n" + text}])
+    return MCPToolResult(
+        content=[{"type": "text", "text": header + "\n" + text}],
+        structuredContent=result,
+    )
 
 
 HANDLERS: dict[str, object] = {

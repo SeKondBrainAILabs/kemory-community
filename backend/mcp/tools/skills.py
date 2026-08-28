@@ -18,6 +18,25 @@ from backend.services.memory_service import (
     search_memories,
 )
 
+SKILL_LIST_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "total": {"type": "integer"},
+        "skills": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["total", "skills"],
+}
+STORE_SKILL_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+        "name": {"type": "string"},
+        "namespace": {"type": "string"},
+        "visibility": {"type": "string"},
+    },
+    "required": ["memory_id", "name", "namespace", "visibility"],
+}
+
 DEFINITIONS: list[MCPToolDefinition] = [
     MCPToolDefinition(
         name="s9nmem_list_skills",
@@ -35,6 +54,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": [],
         },
+        outputSchema=SKILL_LIST_OUTPUT_SCHEMA,
     ),
     MCPToolDefinition(
         name="s9nmem_store_skill",
@@ -67,6 +87,7 @@ DEFINITIONS: list[MCPToolDefinition] = [
             },
             "required": ["name", "trigger", "steps"],
         },
+        outputSchema=STORE_SKILL_OUTPUT_SCHEMA,
     ),
 ]
 
@@ -92,19 +113,30 @@ async def _handle_list_skills(args, user_id, agent_id, db):
     if not result.items:
         return MCPToolResult(
             content=[{"type": "text", "text": "No stored skills found."}],
+            structuredContent={"total": 0, "skills": []},
         )
     lines = [f"{len(result.items)} stored skills:\n"]
+    skills: list[dict] = []
     for item in result.items:
         try:
             skill = json.loads(item.content)
+            skills.append(
+                {
+                    **skill,
+                    "memory_id": str(item.memory_id),
+                    "namespace": item.namespace,
+                }
+            )
             lines.append(
                 f"- {skill.get('name', 'unknown')} (v{skill.get('version', 1)})"
                 f" — trigger: {skill.get('trigger', '')}"
             )
         except (json.JSONDecodeError, TypeError):
+            skills.append({"memory_id": str(item.memory_id), "namespace": item.namespace})
             lines.append(f"- {item.namespace}/{item.memory_id}")
     return MCPToolResult(
         content=[{"type": "text", "text": "\n".join(lines)}],
+        structuredContent={"total": len(skills), "skills": skills},
     )
 
 
@@ -159,6 +191,12 @@ async def _handle_store_skill(args, user_id, agent_id, db):
                 ),
             }
         ],
+        structuredContent={
+            "memory_id": str(memory.memory_id),
+            "name": args["name"],
+            "namespace": namespace,
+            "visibility": args.get("visibility", "user-private"),
+        },
     )
 
 

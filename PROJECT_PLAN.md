@@ -40,8 +40,9 @@ Not included (stays in hosted Kemory):
 ## Architecture
 
 - **Backend:** Python 3.11 + FastAPI, shipped as a Docker image.
-- **Database default:** Postgres + pgvector in the Docker runtime.
-- **Database opt-in:** host Postgres via generated compose overrides.
+- **Database default:** Postgres + pgvector in the standalone Docker runtime.
+- **Database shared mode:** isolated `kemory_community` database/user on the
+  external `shared-infra` PostgreSQL container.
 - **LLM:** Groq, user-supplied key. Default model `llama-3.3-70b-versatile`.
 - **Embeddings:** local `fastembed` with `BAAI/bge-small-en-v1.5`. Configurable to OpenAI/Voyage/Cohere.
 - **Auth:** single-user, X-API-Key only. No Keycloak, no JWT.
@@ -53,9 +54,11 @@ Not included (stays in hosted Kemory):
 `npm i -g kemory-community` (or `npx kemory-community@latest`). The npm
 package provides the setup CLI and pulls the published Docker images.
 
-The npm CLI supports `init --runtime docker|local`. Docker is the default
-runtime for local setup and QA. The reserved local Docker ports are API `8111`,
-dashboard `5175`, and optional Postgres/pgvector `5434`.
+The npm CLI supports `init --runtime docker|local` and Docker infrastructure
+mode `--infra standalone|shared`. Docker standalone is the portable default;
+SeKondBrain hosts deploy shared mode. Reserved application ports are API
+`8111` and dashboard `5175`; standalone PostgreSQL uses `5434`, while shared
+mode reuses infra PostgreSQL `5432` and Redis `6379` database `14`.
 
 **v0.1 platforms:** Docker Desktop / Docker Engine on macOS, Linux, and
 Windows hosts. Host-local binaries are deferred until after the Docker-first
