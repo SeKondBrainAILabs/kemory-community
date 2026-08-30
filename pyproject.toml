@@ -84,7 +84,7 @@ cli = [
     "httpx>=0.27.0",
     # The stdio bridge uses the stable 1.x Server decorator API. MCP 2.x
     # removed that API, so keep this bounded until the bridge is migrated.
-    "mcp>=1.0.0,<2",
+    "mcp>=1.0.0,<3",
 ]
 
 [project.scripts]
