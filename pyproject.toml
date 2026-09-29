@@ -44,7 +44,7 @@ platform = [
 backend = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.1",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "cryptography>=42.0.0",
     # P4 #24: bcrypt direct (no passlib). passlib pulls stdlib `crypt`
     # which is removed in Python 3.13. We only ever used the bcrypt
