@@ -52,7 +52,6 @@ In the repo Discussions tab, create:
 
 Add when needed (do NOT commit values):
 
-- `NPM_TOKEN` - automation token scoped to the `kemory-community` package
 - `GROQ_API_KEY_TEST` - low-quota Groq key for CI L3 tests
 - `APPLE_DEVELOPER_ID_CERT` + `APPLE_DEVELOPER_ID_PASSWORD` - macOS binary signing (can wait until first real release)
 - `APPLE_NOTARY_API_KEY_ID` + `APPLE_NOTARY_API_KEY_ISSUER_ID` + `APPLE_NOTARY_API_PRIVATE_KEY` - notarization
@@ -65,12 +64,13 @@ Community documentation is published by the central public docs repository:
 - URL: `https://docs.sekondbrain.ai/kemory/community/`
 - Community Discussions and Issues remain in this repository.
 
-## 5. npm reservation
+## 5. npm publishing
 
-```bash
-npm login
-npm publish --access public
-```
+`kemory-community` is published on npm (0.1.0, 2026-09-29) and owned by the
+`sekondbrainailabs` npm account. Releases publish through npm trusted
+publishing, so there is no `NPM_TOKEN` secret to create or rotate: on
+npmjs.com, the package's Settings -> Trusted Publisher names GitHub Actions,
+`SeKondBrainAILabs/kemory-community`, workflow `release.yml`.
 
 The v0.1 package is the Docker setup CLI. The tag release workflow builds
 and pushes the API/dashboard images to GHCR before publishing npm.
