@@ -70,7 +70,9 @@ Community documentation is published by the central public docs repository:
 `sekondbrainailabs` npm account. Releases publish through npm trusted
 publishing, so there is no `NPM_TOKEN` secret to create or rotate: on
 npmjs.com, the package's Settings -> Trusted Publisher names GitHub Actions,
-`SeKondBrainAILabs/kemory-community`, workflow `release.yml`.
+`SeKondBrainAILabs/kemory-community`, workflow `release.yml`, environment
+`release`. The `release` GitHub environment requires a reviewer's approval
+and only runs for `v*` tags, so every npm release waits for a human.
 
 The v0.1 package is the Docker setup CLI. The tag release workflow builds
 and pushes the API/dashboard images to GHCR before publishing npm.
