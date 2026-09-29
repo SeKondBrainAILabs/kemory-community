@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Releases publish to npm through trusted publishing (GitHub Actions OIDC)
+  instead of an `NPM_TOKEN` secret. There is no long-lived token to expire or
+  leak, and each published version carries provenance linking it to its
+  commit. The `preflight` job that required `NPM_TOKEN` is removed.
+
 ### Added
 - Structured output schemas and results across all Community MCP tools while
   retaining existing text responses for older clients.
