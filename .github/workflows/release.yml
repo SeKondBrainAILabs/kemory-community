@@ -31,6 +31,9 @@ jobs:
   publish-npm:
     needs: publish-docker
     runs-on: ubuntu-latest
+    # Waits for a required reviewer to approve. The npm trusted publisher only
+    # accepts publishes from this environment, which is limited to v* tags.
+    environment: release
     permissions:
       contents: read
       id-token: write
