@@ -37,6 +37,46 @@ for service, published in expected.items():
     actual = {int(port["published"]) for port in services[service].get("ports", [])}
     if published not in actual:
         raise SystemExit(f"{service} must publish reserved port {published}; got {sorted(actual)}")
+api_env = services["api"].get("environment", {})
+for name, expected_value in {
+    "KMV_IDENTITY": "local_single_user",
+    "KEMORY_ARTIFACT_BACKEND": "local_fs",
+    "KMV_VECTOR_BACKEND": "pgvector",
+    "KMV_BLOB_BACKEND": "local_fs",
+    "KMV_TELEMETRY": "noop",
+}.items():
+    if api_env.get(name) != expected_value:
+        raise SystemExit(f"api {name} must be {expected_value!r}; got {api_env.get(name)!r}")
+if "GROQ_API_KEY" not in api_env:
+    raise SystemExit("api must pass through optional GROQ_API_KEY")
+PY
+
+echo "Checking Community bundle contract"
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+bundle = json.loads(Path("config/community-bundle.json").read_text())
+if bundle["schema_version"] != 1 or bundle["default_profile"] != "minimal":
+    raise SystemExit("invalid Community bundle schema/default profile")
+required = {
+    "kemory-api",
+    "kemory-dashboard",
+    "postgres-pgvector",
+    "redis",
+    "fastembed",
+    "local-artifact-store",
+}
+actual = set(bundle["profiles"]["minimal"]["components"])
+if actual != required:
+    raise SystemExit(f"minimal bundle components changed: {sorted(actual)}")
+leaks = [
+    integration["repository"]
+    for integration in bundle["repository_integrations"]
+    if integration["default_bundle"]
+]
+if leaks:
+    raise SystemExit(f"private/optional repositories entered default bundle: {leaks}")
 PY
 
 if command -v shellcheck >/dev/null 2>&1; then

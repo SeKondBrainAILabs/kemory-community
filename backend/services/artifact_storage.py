@@ -6,8 +6,8 @@ Two responsibilities:
   1. Put / get / delete binary artifact bodies in S3-compatible object
      storage.  Two backends are supported:
 
-     * ``minio`` (default) — Kemory writes directly to its own minio
-       bucket (``kemory-chat-artifacts``) using the minio SDK.
+     * ``local_fs`` (default) — Community writes through its local blob-store
+       adapter into the configured Community data volume.
 
      * ``core_backend`` — Kemory delegates all storage operations to
        Core_Backend's tenant storage API (``/storage/*``).  Auth is
@@ -36,7 +36,7 @@ Two responsibilities:
 
 Config (env):
 
-    KEMORY_ARTIFACT_BACKEND          default 'minio'  ('minio' | 'core_backend')
+    KEMORY_ARTIFACT_BACKEND          default 'local_fs' ('local_fs' | 'core_backend')
 
     For minio backend:
     KEMORY_ARTIFACT_BUCKET           default 'kemory-chat-artifacts'

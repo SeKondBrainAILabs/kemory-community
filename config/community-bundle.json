@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "bundle_version": "0.1.0",
+  "default_profile": "minimal",
+  "profiles": {
+    "minimal": {
+      "description": "Self-contained Community runtime with no SeKondBrain private-service dependency.",
+      "components": [
+        "kemory-api",
+        "kemory-dashboard",
+        "postgres-pgvector",
+        "redis",
+        "fastembed",
+        "local-artifact-store"
+      ]
+    },
+    "shared-infra": {
+      "description": "Kemory application containers on SeKondBrain shared PostgreSQL and Redis.",
+      "components": [
+        "kemory-api",
+        "kemory-dashboard",
+        "shared-postgres-pgvector",
+        "shared-redis",
+        "fastembed",
+        "local-artifact-store"
+      ]
+    }
+  },
+  "components": [
+    {
+      "id": "kemory-api",
+      "requirement": "required",
+      "distribution": "community-source-or-ghcr-image",
+      "healthcheck": "/health/ready"
+    },
+    {
+      "id": "kemory-dashboard",
+      "requirement": "required",
+      "distribution": "community-source-or-ghcr-image",
+      "healthcheck": "/"
+    },
+    {
+      "id": "postgres-pgvector",
+      "requirement": "required-standalone",
+      "distribution": "pgvector/pgvector:pg16",
+      "isolation": "dedicated-container-and-volume"
+    },
+    {
+      "id": "redis",
+      "requirement": "required-standalone",
+      "distribution": "redis:7-alpine",
+      "isolation": "dedicated-container"
+    },
+    {
+      "id": "shared-postgres-pgvector",
+      "requirement": "required-shared-infra",
+      "distribution": "external-shared-infra",
+      "isolation": "database-and-user-kemory_community"
+    },
+    {
+      "id": "shared-redis",
+      "requirement": "required-shared-infra",
+      "distribution": "external-shared-infra",
+      "isolation": "logical-database-14"
+    },
+    {
+      "id": "fastembed",
+      "requirement": "required",
+      "distribution": "embedded-in-api-image",
+      "purpose": "offline-default-embeddings"
+    },
+    {
+      "id": "local-artifact-store",
+      "requirement": "required",
+      "distribution": "embedded-in-api-image",
+      "purpose": "filesystem-artifacts-on-community-volume"
+    },
+    {
+      "id": "groq",
+      "requirement": "optional",
+      "distribution": "user-api-key",
+      "purpose": "synthesis-and-reranking"
+    }
+  ],
+  "repository_integrations": [
+    {
+      "repository": "SeKondBrainAILabs/Core_Ai_Backend",
+      "status": "not-required",
+      "default_bundle": false,
+      "reason": "Community uses embedded FastEmbed and direct user-key LLM adapters; the hosted cognition service is not on the default runtime path.",
+      "admission_gates": [
+        "redistribution-license-approved",
+        "public-versioned-image-available",
+        "community-capability-requires-service",
+        "tenant-and-secret-contract-documented",
+        "docker-acceptance-tests-pass"
+      ]
+    },
+    {
+      "repository": "SeKondBrainAILabs/Core_Backend",
+      "status": "not-required",
+      "default_bundle": false,
+      "reason": "Community local-single-user identity and local artifact storage do not call the hosted organization and identity system of record.",
+      "admission_gates": [
+        "redistribution-license-approved",
+        "public-versioned-image-available",
+        "multi-user-community-scope-approved",
+        "org-and-membership-contract-documented",
+        "docker-acceptance-tests-pass"
+      ]
+    },
+    {
+      "repository": "keycloak",
+      "status": "future-optional-profile",
+      "default_bundle": false,
+      "reason": "The supported Community identity boundary is local_single_user; OIDC requires an approved multi-user isolation design.",
+      "admission_gates": [
+        "multi-user-community-scope-approved",
+        "realm-and-client-bootstrap-idempotent",
+        "pkce-and-token-validation-tested",
+        "published-port-registered",
+        "local-single-user-regression-tests-pass"
+      ]
+    }
+  ]
+}

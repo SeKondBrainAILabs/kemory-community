@@ -25,9 +25,14 @@ This avoids reintroducing hosted authentication, billing, telemetry, storage,
 analytics, or organisation workflows while keeping compatible memory behavior
 and wire contracts current.
 
-Replay is deliberately manual. There is no automated subtree-pull job: a
-scheduled mirror would defeat the per-cohort classification that keeps hosted
-concerns out of this repository.
+Intake is automated; integration remains reviewed. The scheduled
+`upstream-intake.yml` workflow reads hosted `main`, compares it with the
+accepted baseline below, applies the path policy in
+`config/upstream-sync.json`, and fails visibly when port/adapt candidates are
+present. Reports are redacted by default because hosted is private and this
+repository is public. Maintainers can run `scripts/upstream_intake.py` locally
+with `--include-details` for the review queue. The workflow never advances the
+accepted baseline or merges code by itself.
 
 ### Step 5 — why gates need their own step
 
@@ -61,6 +66,11 @@ covering something is indistinguishable from a gate that passes.
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
 - Hosted baseline inspected: `2aa9da45db` (post-`v3.11.1`); previous recorded
   baseline was `300696e8e9` (`v2.21.1`).
+- Latest automated observation: `f7145717fd` on 2026-10-18. The redacted
+  intake found 1,002 first-parent commits since the accepted baseline: 938
+  adapt candidates, 21 mixed-boundary commits, 41 manual-review commits, and
+  two excluded-only commits. These counts are an
+  intake queue, not a claim that the changes have been ported.
 - Backend subtree anchor: `5b70a8a884` (equivalent hosted tree at `305adba0e8:backend`).
 - Python SDK anchor: `ea2c494530`.
 - CLI anchor: `6fb85a6d4b`.

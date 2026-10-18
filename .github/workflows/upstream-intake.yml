@@ -1,0 +1,64 @@
+name: upstream intake
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Community
+        uses: actions/checkout@v4
+
+      - name: Require hosted-repository read token
+        env:
+          TOKEN: ${{ secrets.KEMORY_UPSTREAM_READ_TOKEN }}
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::KEMORY_UPSTREAM_READ_TOKEN is required for scheduled hosted intake."
+            exit 1
+          fi
+
+      - name: Check out hosted Kemory
+        uses: actions/checkout@v4
+        with:
+          repository: SeKondBrainAILabs/Kemory
+          ref: main
+          token: ${{ secrets.KEMORY_UPSTREAM_READ_TOKEN }}
+          fetch-depth: 0
+          path: .upstream/kemory
+
+      - name: Classify upstream delta
+        id: intake
+        continue-on-error: true
+        run: |
+          mkdir -p .upstream/report
+          python scripts/upstream_intake.py \
+            --source-repo .upstream/kemory \
+            --source-ref HEAD \
+            --json-output .upstream/report/summary.json \
+            --markdown-output .upstream/report/summary.md \
+            --fail-on-candidates
+
+      - name: Add redacted report to job summary
+        if: always() && hashFiles('.upstream/report/summary.md') != ''
+        run: cat .upstream/report/summary.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload redacted intake artifact
+        if: always() && hashFiles('.upstream/report/summary.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-intake-${{ github.run_id }}
+          path: .upstream/report/
+          retention-days: 14
+
+      - name: Require candidate review
+        if: steps.intake.outcome == 'failure'
+        run: |
+          echo "::error::Hosted changes need Community classification and review."
+          exit 1

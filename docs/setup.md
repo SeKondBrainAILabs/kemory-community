@@ -95,6 +95,7 @@ API key; its Node bridge starts `kemory mcp serve` inside the API container.
 
 ```bash
 npx kemory-community@latest doctor
+npx kemory-community@latest bundle
 npx kemory-community@latest mcp-config
 npx kemory-community@latest down
 ```
@@ -113,3 +114,17 @@ npx kemory-community@latest init --runtime local
 
 The local runtime writes configuration only. It is useful for inspecting the
 generated settings, but it does not start services in v0.1.
+
+## Bundle contract
+
+`kemory-community bundle` prints the machine-readable component contract used
+by the installer and release checks. The default bundle contains the API,
+dashboard, PostgreSQL with pgvector, Redis, in-process FastEmbed, and local
+artifact storage. Shared-infrastructure mode reuses its registered PostgreSQL
+and Redis allocations instead of starting duplicates.
+
+Core AI Backend, Core Backend, and Keycloak are not required by the supported
+single-user Community runtime and are not started silently. Their integration
+records in `config/community-bundle.json` list the licensing, versioned-image,
+identity, contract, port-registry, and Docker-test gates that must pass before
+an optional profile can ship.

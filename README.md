@@ -99,6 +99,8 @@ The installer generates a compose file with a randomly generated API key and
 pulls prebuilt images, waits for the API and dashboard to become ready, and
 writes a secret-free `mcp.json` that starts the MCP bridge through Docker.
 Use `npx kemory-community@latest doctor` for a live install check and
+`npx kemory-community@latest bundle` to inspect every required component and
+the admission gates for optional integrations. Use
 `npx kemory-community@latest down` to stop the stack. **Not available yet:** the npm
 package and the public images for v0.1 are pending publication (see the npm
 badge above). Until then, use the run-from-source path.
@@ -162,6 +164,17 @@ Same REST + MCP wire protocol, so memories are portable between them.
 
 Which upstream changes are ported, adapted or excluded — and why — is recorded
 per cohort in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
+The scheduled upstream intake workflow checks hosted `main` every day and
+raises a failed Actions run whenever a new port/adapt candidate needs review.
+It emits only redacted counts by default; private hosted subjects and paths are
+never committed to this public repository.
+
+The default bundle does **not** require Core AI Backend, Core Backend, or
+Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
+and local artifact storage cover the Community runtime. Those services remain
+gated optional integrations until their capability, redistribution, identity,
+and Docker acceptance requirements are satisfied. The executable contract is
+[`config/community-bundle.json`](config/community-bundle.json).
 
 ## What ships in v0.1
 

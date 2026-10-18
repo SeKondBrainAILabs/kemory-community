@@ -23,11 +23,18 @@ function run(args, options = {}) {
 }
 
 run(['ports']);
+const bundleResult = run(['bundle', '--json']);
+const bundle = JSON.parse(bundleResult.stdout);
+if (bundle.default_profile !== 'minimal') throw new Error('default bundle profile should be minimal');
+if (bundle.repository_integrations.some((item) => item.default_bundle)) {
+  throw new Error('private repository integration leaked into the default bundle');
+}
 run(['init', '--runtime', 'docker', '--dir', tmp]);
 
 const config = JSON.parse(fs.readFileSync(path.join(tmp, 'config.json'), 'utf8'));
 if (config.runtime !== 'docker') throw new Error('runtime should be docker');
 if (config.ports.api !== 8111) throw new Error('api port should be 8111');
+if (config.bundle_profile !== 'minimal') throw new Error('standalone setup should use minimal bundle');
 const composePath = path.join(tmp, 'docker-compose.yml');
 if (!fs.existsSync(composePath)) {
   throw new Error('docker-compose.yml was not generated');
@@ -38,6 +45,8 @@ if (!fs.existsSync(composePath)) {
 // the dashboard (it serves the API key at /config.json) and Postgres to the
 // whole network.
 const compose = fs.readFileSync(composePath, 'utf8');
+if (!compose.includes('GROQ_API_KEY: ${GROQ_API_KEY:-}')) throw new Error('Groq key is not passed to API');
+if (!compose.includes('KEMORY_ARTIFACT_BACKEND: local_fs')) throw new Error('artifact storage is not local');
 const published = compose.match(/^\s+- "(.*:\d+)"$/gm) || [];
 if (published.length === 0) throw new Error('no published ports found in generated compose');
 for (const mapping of published) {
@@ -55,6 +64,7 @@ run(['mcp-config', '--dir', tmp]);
 run(['init', '--runtime', 'docker', '--infra', 'shared', '--dir', sharedTmp]);
 const sharedConfig = JSON.parse(fs.readFileSync(path.join(sharedTmp, 'config.json'), 'utf8'));
 if (sharedConfig.infrastructure !== 'shared') throw new Error('shared infrastructure mode was not persisted');
+if (sharedConfig.bundle_profile !== 'shared-infra') throw new Error('shared setup should use shared bundle');
 if (sharedConfig.ports.postgres !== 5432) throw new Error('shared Postgres must use infra port 5432');
 if (sharedConfig.ports.redis_database !== 14) throw new Error('shared Redis database must be 14');
 

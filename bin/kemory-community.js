@@ -6,6 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const VERSION = '0.1.0';
+const BUNDLE_MANIFEST = path.resolve(__dirname, '..', 'config', 'community-bundle.json');
 const DEFAULTS = {
   runtime: 'docker',
   infra: 'standalone',
@@ -32,6 +33,7 @@ Usage:
   kemory-community up [--dir <path>]
   kemory-community down [--dir <path>]
   kemory-community doctor [--dir <path>]
+  kemory-community bundle [--json]
   kemory-community mcp-config [--dir <path>]
   kemory-community ports
 
@@ -68,8 +70,8 @@ function parseArgs(argv) {
       args._.push('help');
       continue;
     }
-    if (key === 'force') {
-      args.force = true;
+    if (['force', 'json'].includes(key)) {
+      args[key] = true;
       continue;
     }
     const value = argv[i + 1];
@@ -146,6 +148,7 @@ function standaloneDockerCompose(config) {
       DATABASE_URL: postgresql+asyncpg://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
       DATABASE_URL_SYNC: postgresql://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KEMORY_ARTIFACT_BACKEND: local_fs
       KMV_VECTOR_BACKEND: pgvector
       KMV_BLOB_BACKEND: local_fs
       KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
@@ -155,6 +158,8 @@ function standaloneDockerCompose(config) {
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
       OPENAI_API_KEY: \${OPENAI_API_KEY:-}
+      GROQ_API_KEY: \${GROQ_API_KEY:-}
+      GROQ_BASE_URL: \${GROQ_BASE_URL:-https://api.groq.com/openai}
       VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
@@ -232,6 +237,7 @@ function sharedDockerCompose(config) {
       DATABASE_URL: postgresql+asyncpg://\${KEMORY_COMMUNITY_DB_USER:-${config.dbUser}}:\${KEMORY_COMMUNITY_DB_PASSWORD:?Provision the shared database first}@postgres:5432/\${KEMORY_COMMUNITY_DB_NAME:-${config.dbName}}
       DATABASE_URL_SYNC: postgresql://\${KEMORY_COMMUNITY_DB_USER:-${config.dbUser}}:\${KEMORY_COMMUNITY_DB_PASSWORD:?Provision the shared database first}@postgres:5432/\${KEMORY_COMMUNITY_DB_NAME:-${config.dbName}}
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KEMORY_ARTIFACT_BACKEND: local_fs
       KMV_VECTOR_BACKEND: pgvector
       KMV_BLOB_BACKEND: local_fs
       KMV_BLOB_LOCAL_ROOT: /app/.community/artifacts
@@ -241,6 +247,8 @@ function sharedDockerCompose(config) {
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
       OPENAI_API_KEY: \${OPENAI_API_KEY:-}
+      GROQ_API_KEY: \${GROQ_API_KEY:-}
+      GROQ_BASE_URL: \${GROQ_BASE_URL:-https://api.groq.com/openai}
       VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
@@ -299,6 +307,8 @@ KEMORY_COMMUNITY_DB_USER=${config.dbUser}
 KEMORY_COMMUNITY_DB_PASSWORD=${config.dbPassword}
 KEMORY_COMMUNITY_REDIS_DB=${config.redisDatabase}
 OPENAI_API_KEY=
+GROQ_API_KEY=
+GROQ_BASE_URL=https://api.groq.com/openai
 VOYAGE_API_KEY=
 COHERE_API_KEY=
 `;
@@ -327,6 +337,7 @@ function jsonConfig(config) {
       },
       database: config.infra === 'shared' ? { name: config.dbName, user: config.dbUser } : null,
       storage: config.infra === 'shared' ? 'shared_postgres_and_docker_volume' : 'docker_named_volumes',
+      bundle_profile: config.infra === 'shared' ? 'shared-infra' : 'minimal',
     },
     null,
     2,
@@ -568,6 +579,13 @@ async function doctor(args) {
   report('docker', docker.status === 0, docker.status === 0 ? docker.stdout.trim() : 'missing');
   const compose = spawnSync('docker', ['compose', 'version'], { encoding: 'utf8' });
   report('docker compose', compose.status === 0, compose.status === 0 ? compose.stdout.trim() : 'missing');
+  const bundle = readBundleManifest();
+  const profile = fs.existsSync(configPath) ? readConfig(dir).bundle_profile : null;
+  report(
+    'bundle contract',
+    Boolean(bundle.profiles[profile || bundle.default_profile]),
+    profile || bundle.default_profile,
+  );
 
   if (fs.existsSync(configPath)) {
     const config = readConfig(dir);
@@ -582,6 +600,33 @@ async function doctor(args) {
     report('dashboard', dashboard.ok, `HTTP ${dashboard.status}`);
   }
   if (checks.includes(false)) process.exitCode = 1;
+}
+
+function readBundleManifest() {
+  if (!fs.existsSync(BUNDLE_MANIFEST)) fail(`missing bundle manifest ${BUNDLE_MANIFEST}`);
+  try {
+    return JSON.parse(fs.readFileSync(BUNDLE_MANIFEST, 'utf8'));
+  } catch {
+    fail(`${BUNDLE_MANIFEST} is not valid JSON`);
+  }
+}
+
+function printBundle(args) {
+  const bundle = readBundleManifest();
+  if (args.json) {
+    console.log(JSON.stringify(bundle, null, 2));
+    return;
+  }
+  console.log(`Kemory Community bundle ${bundle.bundle_version}`);
+  console.log(`Default profile: ${bundle.default_profile}`);
+  for (const [name, profile] of Object.entries(bundle.profiles)) {
+    console.log(`\n${name}: ${profile.description}`);
+    for (const component of profile.components) console.log(`  - ${component}`);
+  }
+  console.log('\nRepository integrations:');
+  for (const integration of bundle.repository_integrations) {
+    console.log(`  - ${integration.repository}: ${integration.status}`);
+  }
 }
 
 function printMcpConfig(args) {
@@ -613,6 +658,7 @@ async function main() {
     case 'up': await up(args); break;
     case 'down': down(args); break;
     case 'doctor': await doctor(args); break;
+    case 'bundle': printBundle(args); break;
     case 'mcp-config': printMcpConfig(args); break;
     case 'ports': ports(); break;
     case 'help':

@@ -36,6 +36,7 @@
   },
   "files": [
     "bin/",
+    "config/",
     "postinstall.js",
     "scripts/",
     "README.md",

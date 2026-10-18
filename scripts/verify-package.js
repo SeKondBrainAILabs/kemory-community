@@ -23,9 +23,27 @@ for (const required of [
   }
 }
 
-for (const required of ['bin/', 'postinstall.js', 'scripts/', 'README.md', 'LICENSE', 'NOTICE']) {
+for (const required of [
+  'bin/',
+  'config/',
+  'postinstall.js',
+  'scripts/',
+  'README.md',
+  'LICENSE',
+  'NOTICE',
+]) {
   if (!files.includes(required)) {
     throw new Error(`package.json files must include ${required}`);
+  }
+}
+
+const bundle = JSON.parse(fs.readFileSync(path.join(root, 'config', 'community-bundle.json'), 'utf8'));
+if (bundle.default_profile !== 'minimal') {
+  throw new Error('Community bundle default profile must remain minimal');
+}
+for (const repository of bundle.repository_integrations) {
+  if (repository.default_bundle !== false) {
+    throw new Error(`${repository.repository} must not enter the default bundle without admission gates`);
   }
 }
 
