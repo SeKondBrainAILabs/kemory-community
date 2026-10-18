@@ -11,6 +11,7 @@
         "postgres-pgvector",
         "redis",
         "fastembed",
+        "community-llm-adapters",
         "local-artifact-store"
       ]
     },
@@ -22,6 +23,7 @@
         "shared-postgres-pgvector",
         "shared-redis",
         "fastembed",
+        "community-llm-adapters",
         "local-artifact-store"
       ]
     }
@@ -70,6 +72,12 @@
       "purpose": "offline-default-embeddings"
     },
     {
+      "id": "community-llm-adapters",
+      "requirement": "required",
+      "distribution": "embedded-in-api-image",
+      "purpose": "provider-selection-for-groq-llama-cpp-and-vertex-ai"
+    },
+    {
       "id": "local-artifact-store",
       "requirement": "required",
       "distribution": "embedded-in-api-image",
@@ -77,6 +85,18 @@
     },
     {
       "id": "groq",
+      "requirement": "optional",
+      "distribution": "user-api-key",
+      "purpose": "synthesis-and-reranking"
+    },
+    {
+      "id": "llama-cpp",
+      "requirement": "optional",
+      "distribution": "user-managed-openai-compatible-endpoint",
+      "purpose": "local-synthesis-and-reranking"
+    },
+    {
+      "id": "vertex-ai",
       "requirement": "optional",
       "distribution": "user-api-key",
       "purpose": "synthesis-and-reranking"

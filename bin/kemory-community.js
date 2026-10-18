@@ -157,9 +157,15 @@ function standaloneDockerCompose(config) {
       KMV_COGNITION_ENTERPRISE: "false"
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
+      KEMORY_LLM_PROVIDER: \${KEMORY_LLM_PROVIDER:-}
+      KEMORY_LLM_MODEL: \${KEMORY_LLM_MODEL:-}
+      KEMORY_LLM_BASE_URL: \${KEMORY_LLM_BASE_URL:-}
+      KEMORY_LLM_API_KEY: \${KEMORY_LLM_API_KEY:-}
       OPENAI_API_KEY: \${OPENAI_API_KEY:-}
       GROQ_API_KEY: \${GROQ_API_KEY:-}
       GROQ_BASE_URL: \${GROQ_BASE_URL:-https://api.groq.com/openai}
+      GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
+      LLAMA_CPP_API_KEY: \${LLAMA_CPP_API_KEY:-}
       VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
@@ -169,6 +175,8 @@ function standaloneDockerCompose(config) {
       WORKERS: "1"
     ports:
       - "127.0.0.1:${config.apiPort}:${config.apiContainerPort}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kemory_data:/app/.community
     healthcheck:
@@ -246,9 +254,15 @@ function sharedDockerCompose(config) {
       KMV_COGNITION_ENTERPRISE: "false"
       KEMORY_LOCAL_API_KEY: \${KEMORY_LOCAL_API_KEY}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: \${KEMORY_LOCAL_BLOB_SIGNING_KEY}
+      KEMORY_LLM_PROVIDER: \${KEMORY_LLM_PROVIDER:-}
+      KEMORY_LLM_MODEL: \${KEMORY_LLM_MODEL:-}
+      KEMORY_LLM_BASE_URL: \${KEMORY_LLM_BASE_URL:-}
+      KEMORY_LLM_API_KEY: \${KEMORY_LLM_API_KEY:-}
       OPENAI_API_KEY: \${OPENAI_API_KEY:-}
       GROQ_API_KEY: \${GROQ_API_KEY:-}
       GROQ_BASE_URL: \${GROQ_BASE_URL:-https://api.groq.com/openai}
+      GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
+      LLAMA_CPP_API_KEY: \${LLAMA_CPP_API_KEY:-}
       VOYAGE_API_KEY: \${VOYAGE_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
@@ -258,6 +272,8 @@ function sharedDockerCompose(config) {
       WORKERS: "1"
     ports:
       - "127.0.0.1:${config.apiPort}:${config.apiContainerPort}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kemory_data:/app/.community
     networks:
@@ -306,9 +322,15 @@ KEMORY_COMMUNITY_DB_NAME=${config.dbName}
 KEMORY_COMMUNITY_DB_USER=${config.dbUser}
 KEMORY_COMMUNITY_DB_PASSWORD=${config.dbPassword}
 KEMORY_COMMUNITY_REDIS_DB=${config.redisDatabase}
+KEMORY_LLM_PROVIDER=
+KEMORY_LLM_MODEL=
+KEMORY_LLM_BASE_URL=
+KEMORY_LLM_API_KEY=
 OPENAI_API_KEY=
 GROQ_API_KEY=
 GROQ_BASE_URL=https://api.groq.com/openai
+GOOGLE_API_KEY=
+LLAMA_CPP_API_KEY=
 VOYAGE_API_KEY=
 COHERE_API_KEY=
 `;

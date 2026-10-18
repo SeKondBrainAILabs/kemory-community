@@ -76,8 +76,9 @@ curl -fsS http://127.0.0.1:8111/api/v1/ask \
   -d '{"query":"What did we decide?","synthesize":false}'
 ```
 
-Set a Groq key in the dashboard Settings page to synthesize a cited answer.
-Without one, Ask still returns the ranked local evidence and an explicit
+Choose Groq, llama.cpp, or Vertex AI under **Settings > Runtime > Language
+model**, test the connection, and save it to enable synthesis. Without a
+configured model, Ask still returns ranked local evidence and an explicit
 `digest_unavailable` reason.
 
 ### npm installer
@@ -142,9 +143,9 @@ this is the first thing worth knowing:
 - **Embeddings run in-process by default** (`fastembed`, a local ONNX model), so
   indexing your memories does not call out to anyone.
 - **Outbound calls happen only for features you configure yourself** — a
-  summarisation or alternative embedding provider you supply a key for. The
-  provider key variables ship empty; leave them unset and nothing leaves the
-  machine.
+  Groq, llama.cpp, or Vertex AI model and any alternative embedding provider
+  you select. Provider key variables ship empty; leave them unset and nothing
+  is sent to a cloud model provider.
 
 Full detail in [docs/privacy.md](docs/privacy.md).
 

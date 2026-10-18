@@ -69,6 +69,41 @@ The first call returns the readiness document; the second returns your
 (initially empty) namespace list. A `401` on the second means the key doesn't
 match what the API container was started with.
 
+## Configure a language model
+
+Open `http://127.0.0.1:5175/settings`, then use **Runtime > Language model**
+to select Groq, llama.cpp, or Vertex AI. Enter the model and provider-specific
+settings, run **Test connection**, then save. Credentials are stored in the
+mode-`0600` Community configuration file on the API data volume and are never
+returned by the settings API.
+
+| Provider | Required settings | Default endpoint |
+| --- | --- | --- |
+| llama.cpp | Model and an endpoint reachable from the API container; bearer token is optional | `http://host.docker.internal:8080` |
+| Groq | Model and Groq API key | `https://api.groq.com/openai` |
+| Vertex AI | Gemini model and Vertex AI Express API key | Managed by the Google Gen AI SDK |
+
+For a llama.cpp server running on the Docker host, the supplied Compose files
+map `host.docker.internal` on Linux as well as Docker Desktop. If llama.cpp is
+another container on the same network, use its service URL, for example
+`http://llama-cpp:8080`. The llama.cpp endpoint is user-managed and is not a
+Kemory-published host port, so it does not add an allocation to the Kemory port
+registry.
+
+Headless deployments can set the equivalent variables before startup:
+
+```bash
+KEMORY_LLM_PROVIDER=llama_cpp
+KEMORY_LLM_MODEL=local-model
+KEMORY_LLM_BASE_URL=http://host.docker.internal:8080
+KEMORY_LLM_API_KEY=
+```
+
+`GROQ_API_KEY`, `GROQ_BASE_URL`, `GOOGLE_API_KEY`, and `LLAMA_CPP_API_KEY`
+remain supported provider-specific alternatives. Dashboard settings take
+effect immediately in the running API and persist on its Community data
+volume.
+
 ## npm installer (pending first publish)
 
 > **Status:** the `kemory-community` npm package and the public container
@@ -119,8 +154,8 @@ generated settings, but it does not start services in v0.1.
 
 `kemory-community bundle` prints the machine-readable component contract used
 by the installer and release checks. The default bundle contains the API,
-dashboard, PostgreSQL with pgvector, Redis, in-process FastEmbed, and local
-artifact storage. Shared-infrastructure mode reuses its registered PostgreSQL
+dashboard, PostgreSQL with pgvector, Redis, in-process FastEmbed, direct
+Community LLM adapters, and local artifact storage. Shared-infrastructure mode reuses its registered PostgreSQL
 and Redis allocations instead of starting duplicates.
 
 Core AI Backend, Core Backend, and Keycloak are not required by the supported

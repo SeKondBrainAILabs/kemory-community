@@ -46,6 +46,8 @@ if (!fs.existsSync(composePath)) {
 // whole network.
 const compose = fs.readFileSync(composePath, 'utf8');
 if (!compose.includes('GROQ_API_KEY: ${GROQ_API_KEY:-}')) throw new Error('Groq key is not passed to API');
+if (!compose.includes('KEMORY_LLM_PROVIDER: ${KEMORY_LLM_PROVIDER:-}')) throw new Error('LLM provider is not passed to API');
+if (!compose.includes('host.docker.internal:host-gateway')) throw new Error('host LLM endpoint is not reachable from API');
 if (!compose.includes('KEMORY_ARTIFACT_BACKEND: local_fs')) throw new Error('artifact storage is not local');
 const published = compose.match(/^\s+- "(.*:\d+)"$/gm) || [];
 if (published.length === 0) throw new Error('no published ports found in generated compose');

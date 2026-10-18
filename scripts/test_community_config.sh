@@ -49,6 +49,9 @@ for name, expected_value in {
         raise SystemExit(f"api {name} must be {expected_value!r}; got {api_env.get(name)!r}")
 if "GROQ_API_KEY" not in api_env:
     raise SystemExit("api must pass through optional GROQ_API_KEY")
+for name in ("KEMORY_LLM_PROVIDER", "KEMORY_LLM_MODEL", "KEMORY_LLM_BASE_URL"):
+    if name not in api_env:
+        raise SystemExit(f"api must pass through {name}")
 PY
 
 echo "Checking Community bundle contract"
@@ -65,6 +68,7 @@ required = {
     "postgres-pgvector",
     "redis",
     "fastembed",
+    "community-llm-adapters",
     "local-artifact-store",
 }
 actual = set(bundle["profiles"]["minimal"]["components"])
