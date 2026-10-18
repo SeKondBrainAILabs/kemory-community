@@ -66,8 +66,8 @@ covering something is indistinguishable from a gate that passes.
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
 - Hosted baseline inspected: `2aa9da45db` (post-`v3.11.1`); previous recorded
   baseline was `300696e8e9` (`v2.21.1`).
-- Latest automated observation: `f7145717fd` on 2026-10-18. The redacted
-  intake found 1,002 first-parent commits since the accepted baseline: 938
+- Latest automated observation: `b366a39121` on 2026-10-18. The redacted
+  intake found 1,003 first-parent commits since the accepted baseline: 939
   adapt candidates, 21 mixed-boundary commits, 41 manual-review commits, and
   two excluded-only commits. These counts are an
   intake queue, not a claim that the changes have been ported.
