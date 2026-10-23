@@ -94,3 +94,22 @@ def test_detailed_report_is_explicit_and_bounded(tmp_path):
 
     assert [item["subject"] for item in report["candidates"]] == ["subject 1", "subject 2"]
     assert report["details_truncated"] is True
+
+
+def test_checked_in_observation_is_redacted():
+    report = json.loads((ROOT / "config" / "upstream-observation.json").read_text())
+    rendered = (ROOT / "docs" / "UPSTREAM_INTAKE_LATEST.md").read_text()
+
+    assert report["details_included"] is False
+    assert "candidates" not in report
+    assert report["observed_head"] in rendered
+    assert "Commit subjects and changed paths are intentionally redacted" in rendered
+
+
+def test_review_workflow_never_merges_hosted_code():
+    workflow = (ROOT / ".github" / "workflows" / "upstream-intake.yml").read_text()
+
+    assert "pull-requests: write" in workflow
+    assert "automation/upstream-intake" in workflow
+    assert "gh pr create" in workflow
+    assert "gh pr merge" not in workflow
