@@ -1,0 +1,14 @@
+{
+  "accepted_baseline": "2aa9da45db4ae3651834db7a49077da2d597af36",
+  "candidate_count": 1157,
+  "decision_counts": {
+    "adapt": 1075,
+    "exclude": 2,
+    "mixed": 36,
+    "review": 46
+  },
+  "details_included": false,
+  "first_parent_commit_count": 1159,
+  "observed_head": "1b0bddd4504cdac8ab8c1373181b7ebafccdd7f4",
+  "schema_version": 1
+}

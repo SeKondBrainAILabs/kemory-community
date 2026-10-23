@@ -18,9 +18,18 @@ services:
       DATABASE_URL_SYNC: postgresql://${KEMORY_COMMUNITY_DB_USER:-kemory_community}:${KEMORY_COMMUNITY_DB_PASSWORD:?Run infrastructure/provision-shared-infra.sh first}@postgres:5432/${KEMORY_COMMUNITY_DB_NAME:-kemory_community}
       ENVIRONMENT: development
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
+      KEMORY_ARTIFACT_BACKEND: local_fs
       KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:?Run infrastructure/provision-shared-infra.sh first}
       KEMORY_LOCAL_BLOB_SIGNING_KEY: ${KEMORY_LOCAL_BLOB_SIGNING_KEY:?Run infrastructure/provision-shared-infra.sh first}
+      KEMORY_LLM_PROVIDER: ${KEMORY_LLM_PROVIDER:-}
+      KEMORY_LLM_MODEL: ${KEMORY_LLM_MODEL:-}
+      KEMORY_LLM_BASE_URL: ${KEMORY_LLM_BASE_URL:-}
+      KEMORY_LLM_API_KEY: ${KEMORY_LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      LLAMA_CPP_API_KEY: ${LLAMA_CPP_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
       KEMORY_RUN_MIGRATIONS: "true"
@@ -37,6 +46,8 @@ services:
       WORKERS: "1"
     expose:
       - "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}:8000"
     volumes:

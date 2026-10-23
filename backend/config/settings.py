@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     kmv_cognition_enterprise: bool = False
     kemory_embedding_provider: str = "fastembed"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
+    kemory_llm_provider: str = ""
+    kemory_llm_model: str = ""
+    kemory_llm_base_url: str = ""
+    kemory_llm_api_key: str = ""
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai"
+    google_api_key: str = ""
+    llama_cpp_api_key: str = ""
     kmv_synthesis_model: str = "llama-3.3-70b-versatile"
     kemory_artifact_max_bytes: int = 50 * 1024 * 1024
 

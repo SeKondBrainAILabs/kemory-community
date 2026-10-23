@@ -25,9 +25,14 @@ This avoids reintroducing hosted authentication, billing, telemetry, storage,
 analytics, or organisation workflows while keeping compatible memory behavior
 and wire contracts current.
 
-Replay is deliberately manual. There is no automated subtree-pull job: a
-scheduled mirror would defeat the per-cohort classification that keeps hosted
-concerns out of this repository.
+Intake is automated; integration remains reviewed. The scheduled
+`upstream-intake.yml` workflow reads hosted `main`, compares it with the
+accepted baseline below, applies the path policy in
+`config/upstream-sync.json`, and fails visibly when port/adapt candidates are
+present. Reports are redacted by default because hosted is private and this
+repository is public. Maintainers can run `scripts/upstream_intake.py` locally
+with `--include-details` for the review queue. The workflow never advances the
+accepted baseline or merges code by itself.
 
 ### Step 5 — why gates need their own step
 
@@ -61,6 +66,11 @@ covering something is indistinguishable from a gate that passes.
 - Community release baseline: `v0.1.0` at `d97ff32fe`.
 - Hosted baseline inspected: `2aa9da45db` (post-`v3.11.1`); previous recorded
   baseline was `300696e8e9` (`v2.21.1`).
+- Latest automated observation: `1b0bddd450` on 2026-10-24. The redacted
+  intake found 1,159 first-parent commits since the accepted baseline: 1,075
+  adapt candidates, 36 mixed-boundary commits, 46 manual-review commits, and
+  two excluded-only commits. These counts are an
+  intake queue, not a claim that the changes have been ported.
 - Backend subtree anchor: `5b70a8a884` (equivalent hosted tree at `305adba0e8:backend`).
 - Python SDK anchor: `ea2c494530`.
 - CLI anchor: `6fb85a6d4b`.
@@ -91,9 +101,9 @@ at each boundary; the hosted worktree itself was not modified during the audit.
 | Memory timeline | Ported and adapted | Unified chat/memory source chronology with local-user keyset pagination and provenance; no Gatekeeper, hosted telemetry, or organisation analytics. Adapted from hosted `f4aad73` and `8325d9f`, with `occurred_at` support from the later chronology cohort. |
 | Namespace tags | Ported and adapted | Migration `020`; local-user profiles, direct user-key Groq naming, deterministic entity/embedding/era matching, dry-run Docker backfill and promotion tools, and dashboard chips. No hosted Gatekeeper, audit, provenance, or organisation workflows. Adapted from hosted `554a427`, `50052ce`, `0086767`, `8bf0fc4`, `eeed4c6`, and `01b6883`. |
 | Memory and namespace dashboard UX | Ported selectively | Improved explorer, detail/history, URL pagination, responsive navigation, and container runtime; uses X-API-Key only and exposes community workflows; excluded private design-system packages. |
-| Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, embedding, artifact-limit, and log settings; direct user-key Groq calls replace the hosted AI proxy. |
+| Community release surfaces and model configuration | Ported and adapted | Dedicated artifacts and doctor pages; persisted Groq, llama.cpp, Vertex AI, embedding, artifact-limit, and log settings; provider connection testing and direct user-key/provider calls replace the hosted AI proxy. |
 | Python CLI and stdio bridge | Ported and adapted | Local endpoint plus API-key configuration only; OAuth device flow, Bearer forwarding, hosted environments, org/team commands, telemetry, and hosted release upgrades are removed. |
-| Ask over retrieved evidence (`b7e3898`, `37aacc1`) | Ported and adapted | `POST /api/v1/ask`, `kemory_ask`, and `kemory ask` search local memories, captured chats, and inline text artifacts. The configured user-supplied Groq key replaces the hosted gateway; evidence still returns when synthesis is disabled or unavailable. |
+| Ask over retrieved evidence (`b7e3898`, `37aacc1`) | Ported and adapted | `POST /api/v1/ask`, `kemory_ask`, and `kemory ask` search local memories, captured chats, and inline text artifacts. The configured user-supplied Groq, llama.cpp, or Vertex AI provider replaces the hosted gateway; evidence still returns when synthesis is disabled or unavailable. |
 | MCP output schemas (`36c3d68`) | Ported selectively | MCP definitions and results support additive `outputSchema` and `structuredContent`; Ask declares and returns the structured envelope while legacy text remains intact. Hosted project/account tools remain absent. |
 | Container hardening (`1d54fda`, `424e8aa`, `ada5236`) | Ported and adapted | Multi-stage API image, non-root UID 1001 runtime, writable Community config directory, no compiler toolchain in the final image. Community administration scripts remain because the Docker-first docs invoke them. |
 | Ruff toolchain refresh (`5df260b`) | Ported | CI pins Ruff 0.16.3 and preserves the existing explicit rule policy. |

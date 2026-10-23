@@ -32,6 +32,7 @@ def test_release_routes_include_settings_update_and_artifact_workspace():
 
     assert ("/api/v1/artifacts", ("GET",)) in routes
     assert ("/api/v1/community/settings", ("PUT",)) in routes
+    assert ("/api/v1/community/llm/test", ("POST",)) in routes
 
 
 def test_artifact_limit_applies_to_every_upload_route(monkeypatch):
@@ -49,6 +50,12 @@ def test_runtime_settings_persist_without_returning_provider_secrets(tmp_path, m
     monkeypatch.setattr(settings, "kemory_community_config", str(config_path))
     for env_name in (
         "GROQ_API_KEY",
+        "GOOGLE_API_KEY",
+        "LLAMA_CPP_API_KEY",
+        "KEMORY_LLM_PROVIDER",
+        "KEMORY_LLM_MODEL",
+        "KEMORY_LLM_BASE_URL",
+        "KEMORY_LLM_API_KEY",
         "OPENAI_API_KEY",
         "VOYAGE_API_KEY",
         "COHERE_API_KEY",
@@ -62,11 +69,13 @@ def test_runtime_settings_persist_without_returning_provider_secrets(tmp_path, m
 
     result = update_community_runtime_settings(
         CommunityRuntimeSettingsUpdate(
-            groq_api_key="gsk_test_only",
+            llm_provider="vertex",
+            llm_model="gemini-2.5-flash",
+            llm_base_url="",
+            llm_api_key="vertex_test_only",
             openai_api_key="sk_test_only",
             embedding_provider="fastembed",
             embedding_model="BAAI/bge-small-en-v1.5",
-            groq_model="llama-3.3-70b-versatile",
             artifact_max_bytes=64 * 1024 * 1024,
             log_level="DEBUG",
         )
@@ -74,20 +83,27 @@ def test_runtime_settings_persist_without_returning_provider_secrets(tmp_path, m
 
     document = json.loads(config_path.read_text())
     assert document["ports"] == {"api": 8111}
-    assert document["runtime_settings"]["groq_api_key"] == "gsk_test_only"
+    assert document["runtime_settings"]["vertex_api_key"] == "vertex_test_only"
+    assert document["runtime_settings"]["llm_provider"] == "vertex"
+    assert document["runtime_settings"]["llm_model"] == "gemini-2.5-flash"
     assert document["runtime_settings"]["openai_api_key"] == "sk_test_only"
-    assert result.groq_configured is True
+    assert result.llm_provider == "vertex"
+    assert result.llm_configured is True
+    assert result.llm_api_key_configured is True
+    assert result.llm_api_keys_configured["vertex"] is True
     assert result.openai_configured is True
     assert result.voyage_configured is False
-    assert "groq_api_key" not in result.model_dump()
+    assert "vertex_api_key" not in result.model_dump()
     assert "openai_api_key" not in result.model_dump()
     assert settings.kemory_artifact_max_bytes == 64 * 1024 * 1024
     assert config_path.stat().st_mode & 0o777 == 0o600
 
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("KEMORY_LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     loaded = load_community_runtime_settings()
-    assert loaded.groq_configured is True
+    assert loaded.llm_provider == "vertex"
+    assert loaded.llm_configured is True
     assert loaded.openai_configured is True
     assert get_community_runtime_settings().log_level == "DEBUG"
 
@@ -111,6 +127,8 @@ async def test_groq_client_uses_openai_compatible_endpoint(monkeypatch):
         async def __aexit__(self, *_args):
             return None
 
+    monkeypatch.setenv("KEMORY_LLM_PROVIDER", "groq")
+    monkeypatch.delenv("KEMORY_LLM_API_KEY", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test_only")
     monkeypatch.setenv("GROQ_BASE_URL", "https://groq.invalid/openai")
     monkeypatch.setattr(llm.httpx, "AsyncClient", FakeClient)
@@ -122,10 +140,60 @@ async def test_groq_client_uses_openai_compatible_endpoint(monkeypatch):
     assert post.await_args.kwargs["headers"]["Authorization"] == "Bearer gsk_test_only"
 
 
-def test_legacy_concept_client_is_enabled_only_by_groq_key(monkeypatch):
+@pytest.mark.asyncio
+async def test_llama_cpp_client_uses_configured_endpoint_without_a_key(monkeypatch):
+    post = AsyncMock(
+        return_value=SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"choices": [{"message": {"content": "local"}}]},
+        )
+    )
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return SimpleNamespace(post=post)
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setenv("KEMORY_LLM_PROVIDER", "llama_cpp")
+    monkeypatch.setenv("KEMORY_LLM_BASE_URL", "http://llama-cpp:8080/v1")
+    monkeypatch.delenv("KEMORY_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMA_CPP_API_KEY", raising=False)
+    monkeypatch.setattr(llm.httpx, "AsyncClient", FakeClient)
+
+    response = await llm.chat_completion({"model": "local", "messages": []})
+
+    assert llm.assistant_text(response) == "local"
+    assert post.await_args.args[0] == "http://llama-cpp:8080/v1/chat/completions"
+    assert "Authorization" not in post.await_args.kwargs["headers"]
+
+
+@pytest.mark.asyncio
+async def test_vertex_provider_dispatches_to_google_adapter(monkeypatch):
+    vertex = AsyncMock(return_value={"choices": [{"message": {"content": "vertex"}}]})
+    monkeypatch.setenv("KEMORY_LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("GOOGLE_API_KEY", "vertex_test_only")
+    monkeypatch.setattr(llm, "_vertex_chat_completion", vertex)
+
+    response = await llm.chat_completion({"model": "gemini-2.5-flash", "messages": []})
+
+    assert llm.assistant_text(response) == "vertex"
+    assert vertex.await_args.kwargs["api_key"] == "vertex_test_only"
+
+
+def test_legacy_concept_client_uses_selected_provider(monkeypatch):
+    monkeypatch.delenv("KEMORY_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("KEMORY_LLM_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     assert CoreAIBackendClient().enabled is False
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test_only")
+    assert CoreAIBackendClient().enabled is True
+    monkeypatch.setenv("KEMORY_LLM_PROVIDER", "llama_cpp")
+    monkeypatch.setenv("KEMORY_LLM_BASE_URL", "http://llama-cpp:8080")
     assert CoreAIBackendClient().enabled is True
 
 

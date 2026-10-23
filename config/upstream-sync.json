@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "SeKondBrainAILabs/Kemory",
+  "upstream_branch": "main",
+  "accepted_baseline": "2aa9da45db4ae3651834db7a49077da2d597af36",
+  "privacy": {
+    "default_output": "redacted",
+    "publish_commit_subjects": false,
+    "publish_changed_paths": false
+  },
+  "rules": [
+    {
+      "decision": "exclude",
+      "patterns": [
+        "deploy/**",
+        "keycloak/**",
+        "infrastructure/**",
+        "backend/billing/**",
+        "backend/analytics/**",
+        "backend/connectors/**",
+        "backend/adapters/identity_provider/keycloak*",
+        "backend/mcp/ui/**",
+        "dashboard/src/pages/admin/**",
+        "dashboard/src/pages/billing/**"
+      ]
+    },
+    {
+      "decision": "port",
+      "patterns": [
+        "backend/mcp/server.py",
+        "backend/mcp/tools/**",
+        "backend/services/memory_service.py",
+        "backend/services/compression_pipeline.py",
+        "backend/services/session_digest_service.py",
+        "kemory/embeddings/**",
+        "kemory/search/**",
+        "kemory/compression/**",
+        "kemory/observer/**",
+        "kemory/reflector/**"
+      ]
+    },
+    {
+      "decision": "adapt",
+      "patterns": [
+        ".github/**",
+        "backend/**",
+        "dashboard/**",
+        "kemory/**",
+        "kemory_cli/**",
+        "scripts/**",
+        "tests/**",
+        "Dockerfile",
+        "docker-compose*.yml",
+        "pyproject.toml"
+      ]
+    }
+  ],
+  "default_decision": "review"
+}
