@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out Community
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -37,7 +37,7 @@ jobs:
           fi
 
       - name: Check out hosted Kemory
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: SeKondBrainAILabs/Kemory
           ref: main
