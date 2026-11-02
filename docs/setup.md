@@ -159,7 +159,7 @@ dashboard, PostgreSQL with pgvector, Redis, in-process FastEmbed, direct
 Community LLM adapters, and local artifact storage. Shared-infrastructure mode reuses its registered PostgreSQL
 and Redis allocations instead of starting duplicates.
 
-Core AI Backend, Core Backend, and Keycloak are not required by the supported
+The hosted cognition service, the hosted identity service, and Keycloak are not required by the supported
 single-user Community runtime and are not started silently. Their integration
 records in `config/community-bundle.json` list the licensing, versioned-image,
 identity, contract, port-registry, and Docker-test gates that must pass before

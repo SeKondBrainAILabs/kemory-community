@@ -104,7 +104,7 @@
   ],
   "repository_integrations": [
     {
-      "repository": "SeKondBrainAILabs/Core_Ai_Backend",
+      "repository": "hosted-cognition-service",
       "status": "not-required",
       "default_bundle": false,
       "reason": "Community uses embedded FastEmbed and direct user-key LLM adapters; the hosted cognition service is not on the default runtime path.",
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "repository": "SeKondBrainAILabs/Core_Backend",
+      "repository": "hosted-identity-service",
       "status": "not-required",
       "default_bundle": false,
       "reason": "Community local-single-user identity and local artifact storage do not call the hosted organization and identity system of record.",

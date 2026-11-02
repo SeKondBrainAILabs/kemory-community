@@ -165,15 +165,8 @@ Same REST + MCP wire protocol, so memories are portable between them.
 
 Which upstream changes are ported, adapted or excluded — and why — is recorded
 per cohort in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
-The scheduled upstream intake workflow checks hosted `main` every day and
-opens or refreshes one redacted review pull request whenever a new port/adapt
-candidate needs review. The run remains failed until the queue is classified;
-it never imports hosted code or advances the accepted baseline. Private hosted
-subjects and paths are never committed to this public repository. See the
-[latest public intake](docs/UPSTREAM_INTAKE_LATEST.md).
-
-The default bundle does **not** require Core AI Backend, Core Backend, or
-Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
+The default bundle does **not** require the hosted cognition service, the
+hosted identity service, or Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
 and local artifact storage cover the Community runtime. Those services remain
 gated optional integrations until their capability, redistribution, identity,
 and Docker acceptance requirements are satisfied. The executable contract is
