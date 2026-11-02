@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/SeKondBrainAILabs/kemory-community/discussions/categories/q-a
     about: Ask in Discussions instead of opening an issue.
   - name: Security vulnerability (PRIVATE)
-    url: mailto:security@kemory.s9n.ai
-    about: Email us. Do NOT open a public issue.
+    url: https://github.com/SeKondBrainAILabs/kemory-community/security/advisories/new
+    about: Report privately (or email security@sekondbrain.ai). Do NOT open a public issue.
