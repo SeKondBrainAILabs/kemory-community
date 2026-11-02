@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const BUNDLE_MANIFEST = path.resolve(__dirname, '..', 'config', 'community-bundle.json');
 const DEFAULTS = {
   runtime: 'docker',
@@ -19,8 +19,8 @@ const DEFAULTS = {
   apiContainerPort: 8000,
   dashboardContainerPort: 5173,
   postgresContainerPort: 5432,
-  apiImage: 'ghcr.io/sekondbrainailabs/kemory-community-api:0.1.0',
-  dashboardImage: 'ghcr.io/sekondbrainailabs/kemory-community-dashboard:0.1.0',
+  apiImage: 'ghcr.io/sekondbrainailabs/kemory-community-api:0.1.1',
+  dashboardImage: 'ghcr.io/sekondbrainailabs/kemory-community-dashboard:0.1.1',
 };
 
 function usage(exitCode = 0) {

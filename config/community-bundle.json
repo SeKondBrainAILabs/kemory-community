@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "0.1.0",
+  "bundle_version": "0.1.1",
   "default_profile": "minimal",
   "profiles": {
     "minimal": {
