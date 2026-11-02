@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-02
+
+### Changed
+- Dashboard dependencies are current: vite 8 with `@vitejs/plugin-react` 6,
+  zod 4, framer-motion 13 and the minor/patch updates dependabot had queued.
+  GitHub Actions move to checkout/setup-node/setup-python v7, stale v11 and
+  codeql-action v4. tailwindcss 4, ky 2 and `mcp` 2 are held back: each needs
+  code changes first.
+- Release images are published for both `linux/amd64` and `linux/arm64`, so
+  the npm installer runs natively on Apple Silicon Macs and ARM Linux hosts.
+- Releases publish to npm through trusted publishing (GitHub Actions OIDC)
+  instead of an `NPM_TOKEN` secret. There is no long-lived token to expire or
+  leak, and each published version carries provenance linking it to its
+  commit. The `preflight` job that required `NPM_TOKEN` is removed.
+
 ### Added
 - Structured output schemas and results across all Community MCP tools while
   retaining existing text responses for older clients.
@@ -91,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every open dependency advisory against this repository.
 
 ### Fixed
+- The API image starts again. v0.1.0 crashed at boot with "The SQLAlchemy
+  asyncio module requires that the Python 'greenlet' library is installed";
+  the backend extra now installs `sqlalchemy[asyncio]`.
 - UTF-8 text uploads up to 1 MiB are retained inline as searchable artifact
   evidence while the complete body remains in local filesystem blob storage.
 - Chat pushes that repeat a `source_turn_id` now keep the last occurrence
@@ -106,6 +124,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mention the `kemory mcp install --host <client>` shortcut.
 
 ### Security
+- Other websites can no longer read or change a local install. The API
+  allowed every browser origin, the compose file shipped a public default API
+  key (`kemory-community-ci-key`) and a fixed artifact signing key, and the
+  dashboard served the real key at `/config.json` (reachable by a
+  DNS-rebinding page). Now the API allows only `CORS_ORIGINS` plus browser
+  extensions, rejects `Host` headers outside `ALLOWED_HOSTS` with 400, the
+  compose file refuses to start without per-install keys in `.env`, and the
+  dashboard asks for the key in the browser instead of receiving it.
+  **Upgrading:** create `.env` as shown in the README before `up`.
+- Security reports go to GitHub private vulnerability reporting or
+  security@sekondbrain.ai. The previous address, security@kemory.s9n.ai,
+  bounced.
 - Published ports now bind to `127.0.0.1` instead of every network interface,
   in both the committed compose file and the one the installer generates.
   Previously the dashboard served the local API key at `/config.json` to any
@@ -116,4 +146,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules for this project's own API-key formats), and a guard now rejects
   imports of hosted-only packages that no declared dependency provides.
 
-[Unreleased]: https://github.com/SeKondBrainAILabs/kemory-community/compare/HEAD...HEAD
+[Unreleased]: https://github.com/SeKondBrainAILabs/kemory-community/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/SeKondBrainAILabs/kemory-community/compare/v0.1.0...v0.1.1

@@ -21,19 +21,21 @@ package needed, just Docker.
 ```bash
 git clone https://github.com/SeKondBrainAILabs/kemory-community.git
 cd kemory-community
+printf 'KEMORY_LOCAL_API_KEY=%s\nKEMORY_LOCAL_BLOB_SIGNING_KEY=%s\n' \
+  "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" > .env
 docker compose -f docker-compose.community.yml up -d --build
 ```
 
-The API will be available at `http://127.0.0.1:8111` and the dashboard at
-`http://127.0.0.1:5175`.
+Compose reads the per-install keys from `.env` and refuses to start without
+them; there is no built-in default key. The API will be available at
+`http://127.0.0.1:8111` and the dashboard at `http://127.0.0.1:5175`, which
+asks for the `KEMORY_LOCAL_API_KEY` value on first visit.
 
-The stack starts with a default API key (`kemory-community-ci-key`) intended
-for local trials. Set your own before starting:
-
-```bash
-KEMORY_LOCAL_API_KEY="$(openssl rand -hex 24)" \
-  docker compose -f docker-compose.community.yml up -d
-```
+The API answers only browser origins listed in `CORS_ORIGINS` (the dashboard)
+and only `Host` headers listed in `ALLOWED_HOSTS` (`localhost,127.0.0.1`).
+If you put the API behind a reverse proxy or another hostname, add it to
+`ALLOWED_HOSTS` (and the dashboard's address to `CORS_ORIGINS`) in `.env`,
+then run `up -d` again.
 
 ## Run on SeKondBrain shared infrastructure
 
@@ -61,7 +63,8 @@ preserves the source database and reuses the existing artifact/config volume.
 
 ```bash
 curl -fsS http://127.0.0.1:8111/health/ready
-curl -fsS -H "X-API-Key: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}" \
+KEMORY_LOCAL_API_KEY="$(sed -n 's/^KEMORY_LOCAL_API_KEY=//p' .env)"
+curl -fsS -H "X-API-Key: ${KEMORY_LOCAL_API_KEY}" \
   http://127.0.0.1:8111/api/v1/namespaces
 ```
 
@@ -158,7 +161,7 @@ dashboard, PostgreSQL with pgvector, Redis, in-process FastEmbed, direct
 Community LLM adapters, and local artifact storage. Shared-infrastructure mode reuses its registered PostgreSQL
 and Redis allocations instead of starting duplicates.
 
-Core AI Backend, Core Backend, and Keycloak are not required by the supported
+The hosted cognition service, the hosted identity service, and Keycloak are not required by the supported
 single-user Community runtime and are not started silently. Their integration
 records in `config/community-bundle.json` list the licensing, versioned-image,
 identity, contract, port-registry, and Docker-test gates that must pass before

@@ -42,9 +42,11 @@ if (!fs.existsSync(composePath)) {
 
 // Community is local-first: every published port must bind loopback only.
 // A bare "HOST:CONTAINER" mapping binds 0.0.0.0, which would expose the API,
-// the dashboard (it serves the API key at /config.json) and Postgres to the
-// whole network.
+// the dashboard and Postgres to the whole network.
 const compose = fs.readFileSync(composePath, 'utf8');
+// The dashboard serves its environment-derived config.json to anyone who can
+// reach it, so it must never be handed the API key.
+if (/^\s+API_KEY:/m.test(compose)) throw new Error('dashboard must not receive the API key');
 if (!compose.includes('GROQ_API_KEY: ${GROQ_API_KEY:-}')) throw new Error('Groq key is not passed to API');
 if (!compose.includes('KEMORY_LLM_PROVIDER: ${KEMORY_LLM_PROVIDER:-}')) throw new Error('LLM provider is not passed to API');
 if (!compose.includes('host.docker.internal:host-gateway')) throw new Error('host LLM endpoint is not reachable from API');

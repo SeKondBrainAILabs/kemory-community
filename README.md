@@ -5,11 +5,11 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/SeKondBrainAILabs/kemory-community/ci.yml?branch=main)](https://github.com/SeKondBrainAILabs/kemory-community/actions)
-[![npm](https://img.shields.io/badge/npm-v0.1-not--yet--released-lightgrey)](https://www.npmjs.com/package/kemory-community)
+[![npm](https://img.shields.io/npm/v/kemory-community)](https://www.npmjs.com/package/kemory-community)
 
 ## Status
 
-v0.1.0 is available. The Docker runtime is the default setup path for local
+v0.1.1 is available. The Docker runtime is the default setup path for local
 use and QA; current development selectively ports compatible hosted features.
 
 ## Quick Start
@@ -19,24 +19,23 @@ use and QA; current development selectively ports compatible hosted features.
 ```bash
 git clone https://github.com/SeKondBrainAILabs/kemory-community.git
 cd kemory-community
+printf 'KEMORY_LOCAL_API_KEY=%s\nKEMORY_LOCAL_BLOB_SIGNING_KEY=%s\n' \
+  "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" > .env
 docker compose -f docker-compose.community.yml up -d --build
 ```
+
+The `.env` file holds this install's API key and artifact signing key.
+Compose reads it automatically and refuses to start without it. Keep it
+private: anyone with the API key can read and change your memories.
 
 The first build takes a few minutes (it compiles the API image and bundles
 the dashboard). After that:
 
 - API: `http://127.0.0.1:8111`
-- Dashboard: `http://127.0.0.1:5175`
+- Dashboard: `http://127.0.0.1:5175`. On first visit it asks for the
+  `KEMORY_LOCAL_API_KEY` value from `.env` and remembers it in that browser.
 
 Same REST + MCP wire protocol as hosted Kemory, so memories are portable.
-
-The stack starts with a default API key (`kemory-community-ci-key`) meant
-for local trials. To use your own:
-
-```bash
-KEMORY_LOCAL_API_KEY="$(openssl rand -hex 24)" \
-  docker compose -f docker-compose.community.yml up -d
-```
 
 ### SeKondBrain shared infrastructure
 
@@ -59,7 +58,8 @@ curl -fsS http://127.0.0.1:8111/health/ready
 ```
 
 ```bash
-curl -fsS -H "X-API-Key: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}" \
+KEMORY_LOCAL_API_KEY="$(sed -n 's/^KEMORY_LOCAL_API_KEY=//p' .env)"
+curl -fsS -H "X-API-Key: ${KEMORY_LOCAL_API_KEY}" \
   http://127.0.0.1:8111/api/v1/namespaces
 ```
 
@@ -71,7 +71,7 @@ Ask across local memories, captured chats, and searchable text artifacts:
 
 ```bash
 curl -fsS http://127.0.0.1:8111/api/v1/ask \
-  -H "X-API-Key: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}" \
+  -H "X-API-Key: ${KEMORY_LOCAL_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"query":"What did we decide?","synthesize":false}'
 ```
@@ -102,9 +102,9 @@ writes a secret-free `mcp.json` that starts the MCP bridge through Docker.
 Use `npx kemory-community@latest doctor` for a live install check and
 `npx kemory-community@latest bundle` to inspect every required component and
 the admission gates for optional integrations. Use
-`npx kemory-community@latest down` to stop the stack. **Not available yet:** the npm
-package and the public images for v0.1 are pending publication (see the npm
-badge above). Until then, use the run-from-source path.
+`npx kemory-community@latest down` to stop the stack. The installer needs
+version 0.1.1 or later: the 0.1.0 package pointed at images that were never
+made public.
 
 ### Namespace tags
 
@@ -165,15 +165,8 @@ Same REST + MCP wire protocol, so memories are portable between them.
 
 Which upstream changes are ported, adapted or excluded — and why — is recorded
 per cohort in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
-The scheduled upstream intake workflow checks hosted `main` every day and
-opens or refreshes one redacted review pull request whenever a new port/adapt
-candidate needs review. The run remains failed until the queue is classified;
-it never imports hosted code or advances the accepted baseline. Private hosted
-subjects and paths are never committed to this public repository. See the
-[latest public intake](docs/UPSTREAM_INTAKE_LATEST.md).
-
-The default bundle does **not** require Core AI Backend, Core Backend, or
-Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
+The default bundle does **not** require the hosted cognition service, the
+hosted identity service, or Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
 and local artifact storage cover the Community runtime. Those services remain
 gated optional integrations until their capability, redistribution, identity,
 and Docker acceptance requirements are satisfied. The executable contract is

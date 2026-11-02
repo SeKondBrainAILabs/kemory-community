@@ -218,7 +218,7 @@ async def _jsonrpc_dispatch(
                 {
                     "protocolVersion": negotiated,
                     "capabilities": {"tools": {}, "prompts": {}},
-                    "serverInfo": {"name": "kemory-community", "version": "0.1.0"},
+                    "serverInfo": {"name": "kemory-community", "version": "0.1.1"},
                 }
             )
 

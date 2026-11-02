@@ -13,7 +13,8 @@ services:
     restart: unless-stopped
     environment:
       API_PUBLIC_URL: http://127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}
-      CORS_ORIGINS: http://localhost:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175},http://127.0.0.1:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175},http://127.0.0.1:${KEMORY_COMMUNITY_DASHBOARD_PORT:-5175}}
       DATABASE_URL: postgresql+asyncpg://${KEMORY_COMMUNITY_DB_USER:-kemory_community}:${KEMORY_COMMUNITY_DB_PASSWORD:?Run infrastructure/provision-shared-infra.sh first}@postgres:5432/${KEMORY_COMMUNITY_DB_NAME:-kemory_community}
       DATABASE_URL_SYNC: postgresql://${KEMORY_COMMUNITY_DB_USER:-kemory_community}:${KEMORY_COMMUNITY_DB_PASSWORD:?Run infrastructure/provision-shared-infra.sh first}@postgres:5432/${KEMORY_COMMUNITY_DB_NAME:-kemory_community}
       ENVIRONMENT: development
@@ -71,7 +72,6 @@ services:
       api:
         condition: service_healthy
     environment:
-      API_KEY: ${KEMORY_LOCAL_API_KEY:?Run infrastructure/provision-shared-infra.sh first}
       API_PUBLIC_URL: http://127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}
       SKIP_AUTH: "true"
     ports:

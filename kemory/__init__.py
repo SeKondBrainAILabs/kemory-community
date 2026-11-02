@@ -32,7 +32,7 @@ from kemory.models.episode import EpisodeCreate, EpisodeRecord
 from kemory.service.memory_service import MemoryService
 from kemory.storage.base import StorageBackend
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "SeKondBrain Engineering"
 
 __all__ = [

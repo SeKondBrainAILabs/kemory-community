@@ -9,7 +9,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Working tree only (--no-git), per the reasoning in .gitleaks.toml.
       # gitleaks exits 1 when it finds something, which fails the job.
       - name: gitleaks
@@ -35,10 +35,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.11" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Root CLI tests
@@ -55,6 +55,9 @@ jobs:
         working-directory: dashboard
         run: npm ci && npm run lint && npm test && npm run build
       - name: Compose config
+        env:
+          KEMORY_LOCAL_API_KEY: ci-only
+          KEMORY_LOCAL_BLOB_SIGNING_KEY: ci-only-blob-signing-key-32-bytes
         run: docker compose -f docker-compose.community.yml config >/dev/null
       - name: Shared-infra compose config
         env:

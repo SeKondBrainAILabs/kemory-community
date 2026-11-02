@@ -58,5 +58,6 @@ or secrets.
 For privacy questions, open a GitHub Discussion:
 https://github.com/SeKondBrainAILabs/kemory-community/discussions
 
-For security issues, email security@kemory.s9n.ai instead of opening a
-public issue.
+For security issues, report privately through GitHub
+(https://github.com/SeKondBrainAILabs/kemory-community/security/advisories/new)
+or email security@sekondbrain.ai instead of opening a public issue.

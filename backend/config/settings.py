@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # P1 #9 phase 2 migration on main); the Python package `kemory`
     # remains on its legacy name (a refactor for a separate change).
     app_name: str = "Kemory"
-    app_version: str = "0.5.1"
+    app_version: str = "0.1.1"
     environment: str = "development"
     log_level: str = "INFO"
     debug: bool = False
@@ -71,7 +71,13 @@ class Settings(BaseSettings):
     # at model_post_init — invalid entries (missing scheme, etc.) fail
     # kemory startup instead of producing silent CORS errors at the
     # customer's browser. Parsed view via .cors_origins_list.
-    cors_origins: str = "http://localhost:3000,http://localhost:3002,http://localhost:3003"
+    cors_origins: str = "http://127.0.0.1:5175,http://localhost:5175"
+
+    # ─── Host header allowlist ────────────────────────────────────
+    # Requests whose Host header is not listed get 400, so a DNS-rebinding
+    # page cannot reach the loopback-bound API under its own hostname. Add
+    # your hostname here if you put the API behind a reverse proxy.
+    allowed_hosts: str = "localhost,127.0.0.1"
 
     # ─── PostgreSQL ───────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://kora:kora_secret@localhost:5432/kora_vault"
@@ -280,6 +286,10 @@ class Settings(BaseSettings):
         already-known-good split.
         """
         return _parse_cors_origins(self.cors_origins)
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
 
     def model_post_init(self, __context) -> None:
         """Apply security policies that depend on multiple fields.

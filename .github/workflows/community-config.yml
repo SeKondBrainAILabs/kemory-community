@@ -18,12 +18,14 @@ jobs:
     name: pgvector + local_fs + local_single_user + noop
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate compose config
         env:
           COMPOSE_DOCKER_CLI_BUILD: "1"
           DOCKER_BUILDKIT: "1"
+          KEMORY_LOCAL_API_KEY: ci-only
+          KEMORY_LOCAL_BLOB_SIGNING_KEY: ci-only-blob-signing-key-32-bytes
         run: docker compose -f docker-compose.community.yml config >/dev/null
 
       - name: Shellcheck community verifier

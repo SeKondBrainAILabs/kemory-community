@@ -2,8 +2,9 @@
 
 ## Reporting a vulnerability
 
-Please report security vulnerabilities privately to
-**security@kemory.s9n.ai**. Do NOT open a public issue.
+Please report security vulnerabilities privately, either through
+[GitHub private vulnerability reporting](https://github.com/SeKondBrainAILabs/kemory-community/security/advisories/new)
+or by email to **security@sekondbrain.ai**. Do NOT open a public issue.
 
 We aim to:
 - Acknowledge receipt within 2 business days.

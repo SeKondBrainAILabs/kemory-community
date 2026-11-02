@@ -16,6 +16,9 @@ trap cleanup EXIT
 
 export COMPOSE_DOCKER_CLI_BUILD=1
 export DOCKER_BUILDKIT=1
+# The compose file has no default secrets; generate throwaway ones per run.
+export KEMORY_LOCAL_API_KEY="${KEMORY_LOCAL_API_KEY:-$(openssl rand -hex 24)}"
+export KEMORY_LOCAL_BLOB_SIGNING_KEY="${KEMORY_LOCAL_BLOB_SIGNING_KEY:-$(openssl rand -hex 32)}"
 
 echo "Validating docker-compose.community.yml"
 "${COMPOSE[@]}" config >/dev/null

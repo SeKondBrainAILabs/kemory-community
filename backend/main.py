@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.adapters.blob_store import get_blob_backend_name
 from backend.adapters.identity_provider import configure_identity_provider
@@ -97,27 +98,26 @@ app = FastAPI(
 
 
 # ─── Middleware ───────────────────────────────────────────────────
-# CORS — wildcard allow_origins with allow_credentials=False is the
-# correct shape for Kemory Community because every authenticated client
-# speaks X-API-Key header auth and never uses cookies.
+# CORS — only the dashboard origins in CORS_ORIGINS, plus browser
+# extensions. The API listens on loopback, so a wildcard here would let any
+# web page the user visits call it; with a guessed or leaked key that page
+# could read and delete every memory.
 #
-# None of these set `credentials: 'include'` on fetch, so flipping
-# allow_credentials=False does NOT regress them. It DOES let
-# chrome-extension://* origins through the preflight, which the prior
-# allow-list-based config blocked (extension-id origins can't be
-# enumerated up front, and Chrome rejects Allow-Origin:* when paired
-# with Allow-Credentials:true).
-#
-# If a future client ever needs cookie-credentialed cross-origin
-# requests, switch back to a specific allow-list and set
-# allow_credentials=True — those two MUST move together.
+# Extension origins (chrome-extension://<32-letter id>) can't be enumerated
+# up front, hence the regex. Every client uses X-API-Key header auth, never
+# cookies, so allow_credentials stays False.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added after CORS so it runs before it: a request with a foreign Host
+# header (DNS rebinding) is rejected before any route sees it.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts_list)
 
 # Body size limit (P4 #22). ASGI middleware ordering means the last
 # .middleware() registered is the first to run.

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { loadConfig } from '@/lib/runtimeConfig'
 import { AdvancedViewProvider } from '@/contexts/AdvancedViewContext'
+import { ApiKeyGate } from '@/components/layout/ApiKeyGate'
 import { App } from './App'
 import './index.css'
 
@@ -24,7 +25,9 @@ async function bootstrap() {
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AdvancedViewProvider>
-            <App />
+            <ApiKeyGate>
+              <App />
+            </ApiKeyGate>
           </AdvancedViewProvider>
         </BrowserRouter>
       </QueryClientProvider>
