@@ -33,7 +33,9 @@ asks for the `KEMORY_LOCAL_API_KEY` value on first visit.
 
 The API answers only browser origins listed in `CORS_ORIGINS` (the dashboard)
 and only `Host` headers listed in `ALLOWED_HOSTS` (`localhost,127.0.0.1`).
-Extend `ALLOWED_HOSTS` if you put the API behind a reverse proxy.
+If you put the API behind a reverse proxy or another hostname, add it to
+`ALLOWED_HOSTS` (and the dashboard's address to `CORS_ORIGINS`) in `.env`,
+then run `up -d` again.
 
 ## Run on SeKondBrain shared infrastructure
 
