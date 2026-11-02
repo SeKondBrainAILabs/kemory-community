@@ -8,9 +8,9 @@ Dual-mode Observer Agent for episode enrichment.
 - Detects temporal anchors via existing temporal patterns
 - Classifies memory_type / content_type via keyword rules
 
-**Cloud Edition** (when GROQ_API_KEY is set):
-- Calls Groq ``llama-3.1-8b-instant`` with a structured prompt
-- Falls back to Local Edition on any Groq error
+**LLM mode** (when a Community provider is configured):
+- Calls the configured Groq, llama.cpp, or Vertex AI model
+- Falls back to Local Edition on any provider error
 
 Story: KMV-V2-E05 — Observer Agent (Dual-Mode)
 """
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Circuit breaker for Groq API calls (KMV-V2-E05 spec: 5 failures in 60s)
+# Circuit breaker for LLM calls (KMV-V2-E05 spec: 5 failures in 60s)
 # ---------------------------------------------------------------------------
 
 _groq_failure_count: int = 0
@@ -83,8 +83,8 @@ async def observe(content: str, use_groq: bool | None = None) -> ObserverResult:
     content:
         Raw episode text.
     use_groq:
-        Override Groq usage.  ``None`` = auto-detect from ``GROQ_API_KEY``
-        environment variable.
+        Backward-compatible LLM override. ``None`` auto-detects the configured
+        Community provider.
 
     Returns
     -------
@@ -97,12 +97,14 @@ async def observe(content: str, use_groq: bool | None = None) -> ObserverResult:
         return ObserverResult()
 
     if use_groq is None:
-        use_groq = bool(os.environ.get("GROQ_API_KEY", "").strip())
+        from kemory.llm import llm_enabled
+
+        use_groq = llm_enabled()
 
     if use_groq:
         global _groq_failure_count, _groq_circuit_open_until
 
-        # Circuit breaker: skip Groq if tripped
+        # Circuit breaker: skip the provider if tripped
         if _groq_failure_count >= _GROQ_MAX_FAILURES:
             if time.monotonic() < _groq_circuit_open_until:
                 logger.debug("Observer: circuit open, using local edition")
@@ -125,7 +127,7 @@ async def observe(content: str, use_groq: bool | None = None) -> ObserverResult:
                 )
             else:
                 logger.warning(
-                    "Observer: Groq extraction failed (%d/%d), falling back to local: %s",
+                    "Observer: LLM extraction failed (%d/%d), falling back to local: %s",
                     _groq_failure_count,
                     _GROQ_MAX_FAILURES,
                     exc,
@@ -262,7 +264,7 @@ def _classify_content_type(content: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Cloud Edition (Groq)
+# Community LLM provider
 # ---------------------------------------------------------------------------
 
 _GROQ_PROMPT = """\
@@ -279,26 +281,26 @@ JSON:"""
 
 
 async def _groq_observe(content: str) -> ObserverResult:
-    """Extract metadata via Groq llama-3.1-8b-instant."""
+    """Extract metadata through the configured Community LLM."""
     import json
 
-    try:
-        from groq import AsyncGroq  # type: ignore[import]
-    except ImportError:
-        raise RuntimeError("groq package not installed. pip install groq")
+    from kemory.llm import assistant_text, chat_completion, llm_provider
 
-    api_key = os.environ.get("GROQ_API_KEY", "")
-    client = AsyncGroq(api_key=api_key)
-
-    response = await client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "user", "content": _GROQ_PROMPT.format(content=content[:2000])},
-        ],
-        temperature=0.0,
-        max_tokens=256,
+    response = await chat_completion(
+        {
+            "model": os.environ.get(
+                "KEMORY_LLM_MODEL",
+                os.environ.get("KMV_SYNTHESIS_MODEL", "llama-3.1-8b-instant"),
+            ),
+            "messages": [
+                {"role": "user", "content": _GROQ_PROMPT.format(content=content[:2000])},
+            ],
+            "temperature": 0.0,
+            "max_tokens": 256,
+            "response_format": {"type": "json_object"},
+        }
     )
-    raw = response.choices[0].message.content or "{}"
+    raw = assistant_text(response) or "{}"
 
     # Parse JSON — strip markdown fences if present
     raw = re.sub(r"^```(?:json)?\n?", "", raw.strip())
@@ -310,5 +312,5 @@ async def _groq_observe(content: str) -> ObserverResult:
         temporal_anchor=data.get("temporal_anchor"),
         memory_type=data.get("memory_type"),
         content_type=data.get("content_type"),
-        source="groq",
+        source=llm_provider(),
     )

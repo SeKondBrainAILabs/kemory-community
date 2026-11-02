@@ -6,8 +6,8 @@ Reflector Agent — consolidates episodic memories into semantic summaries.
 **Local Edition**: Groups episodes by content overlap, produces a
 concatenated summary string, no LLM needed.
 
-**Cloud Edition**: Calls Groq ``llama-3.1-8b-instant`` to generate a
-natural language reflection over the provided episodes.
+**LLM mode**: Calls the configured Groq, llama.cpp, or Vertex AI model to
+generate a natural language reflection over the provided episodes.
 
 Story: KMV-V2-E06 — Reflector Agent
 """
@@ -70,7 +70,8 @@ async def reflect(
         ``list_episodes``).  Each must have at minimum ``id`` and
         ``content`` keys.
     use_groq:
-        ``None`` = auto-detect from ``GROQ_API_KEY`` env var.
+        Backward-compatible LLM override. ``None`` auto-detects the configured
+        Community provider.
 
     Returns
     -------
@@ -83,13 +84,15 @@ async def reflect(
         return ReflectionResult()
 
     if use_groq is None:
-        use_groq = bool(os.environ.get("GROQ_API_KEY", "").strip())
+        from kemory.llm import llm_enabled
+
+        use_groq = llm_enabled()
 
     if use_groq:
         try:
             return await _groq_reflect(episodes)
         except Exception as exc:
-            logger.warning("Reflector: Groq reflection failed, falling back to local: %s", exc)
+            logger.warning("Reflector: LLM reflection failed, falling back to local: %s", exc)
 
     return _local_reflect(episodes)
 
@@ -197,7 +200,7 @@ def _local_reflect(episodes: list[dict[str, Any]]) -> ReflectionResult:
 
 
 # ---------------------------------------------------------------------------
-# Cloud Edition (Groq)
+# Community LLM provider
 # ---------------------------------------------------------------------------
 
 _GROQ_REFLECTION_PROMPT = """\
@@ -219,32 +222,32 @@ JSON:"""
 
 
 async def _groq_reflect(episodes: list[dict[str, Any]]) -> ReflectionResult:
-    """Generate reflection via Groq llama-3.1-8b-instant."""
+    """Generate reflection through the configured Community LLM."""
     import json
 
-    try:
-        from groq import AsyncGroq  # type: ignore[import]
-    except ImportError:
-        raise RuntimeError("groq package not installed. pip install groq")
-
-    api_key = os.environ.get("GROQ_API_KEY", "")
-    client = AsyncGroq(api_key=api_key)
+    from kemory.llm import assistant_text, chat_completion, llm_provider
 
     episodes_text = "\n".join(f"- {ep.get('content', '')[:200]}" for ep in episodes[:10])
     ids = [ep["id"] for ep in episodes if ep.get("id")]
 
-    response = await client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {
-                "role": "user",
-                "content": _GROQ_REFLECTION_PROMPT.format(episodes_text=episodes_text),
-            }
-        ],
-        temperature=0.3,
-        max_tokens=256,
+    response = await chat_completion(
+        {
+            "model": os.environ.get(
+                "KEMORY_LLM_MODEL",
+                os.environ.get("KMV_SYNTHESIS_MODEL", "llama-3.1-8b-instant"),
+            ),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _GROQ_REFLECTION_PROMPT.format(episodes_text=episodes_text),
+                }
+            ],
+            "temperature": 0.3,
+            "max_tokens": 256,
+            "response_format": {"type": "json_object"},
+        }
     )
-    raw = response.choices[0].message.content or "{}"
+    raw = assistant_text(response) or "{}"
     raw = re.sub(r"^```(?:json)?\n?", "", raw.strip())
     raw = re.sub(r"\n?```$", "", raw.strip())
     data = json.loads(raw)
@@ -253,5 +256,5 @@ async def _groq_reflect(episodes: list[dict[str, Any]]) -> ReflectionResult:
         summary=data.get("summary", ""),
         themes=data.get("themes") or [],
         source_episode_ids=ids,
-        source="groq",
+        source=llm_provider(),
     )

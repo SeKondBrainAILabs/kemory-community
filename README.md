@@ -76,8 +76,9 @@ curl -fsS http://127.0.0.1:8111/api/v1/ask \
   -d '{"query":"What did we decide?","synthesize":false}'
 ```
 
-Set a Groq key in the dashboard Settings page to synthesize a cited answer.
-Without one, Ask still returns the ranked local evidence and an explicit
+Choose Groq, llama.cpp, or Vertex AI under **Settings > Runtime > Language
+model**, test the connection, and save it to enable synthesis. Without a
+configured model, Ask still returns ranked local evidence and an explicit
 `digest_unavailable` reason.
 
 ### npm installer
@@ -99,6 +100,8 @@ The installer generates a compose file with a randomly generated API key and
 pulls prebuilt images, waits for the API and dashboard to become ready, and
 writes a secret-free `mcp.json` that starts the MCP bridge through Docker.
 Use `npx kemory-community@latest doctor` for a live install check and
+`npx kemory-community@latest bundle` to inspect every required component and
+the admission gates for optional integrations. Use
 `npx kemory-community@latest down` to stop the stack. **Not available yet:** the npm
 package and the public images for v0.1 are pending publication (see the npm
 badge above). Until then, use the run-from-source path.
@@ -140,9 +143,9 @@ this is the first thing worth knowing:
 - **Embeddings run in-process by default** (`fastembed`, a local ONNX model), so
   indexing your memories does not call out to anyone.
 - **Outbound calls happen only for features you configure yourself** — a
-  summarisation or alternative embedding provider you supply a key for. The
-  provider key variables ship empty; leave them unset and nothing leaves the
-  machine.
+  Groq, llama.cpp, or Vertex AI model and any alternative embedding provider
+  you select. Provider key variables ship empty; leave them unset and nothing
+  is sent to a cloud model provider.
 
 Full detail in [docs/privacy.md](docs/privacy.md).
 
@@ -162,6 +165,19 @@ Same REST + MCP wire protocol, so memories are portable between them.
 
 Which upstream changes are ported, adapted or excluded — and why — is recorded
 per cohort in [docs/HOSTED_DELTA_LEDGER.md](docs/HOSTED_DELTA_LEDGER.md).
+The scheduled upstream intake workflow checks hosted `main` every day and
+opens or refreshes one redacted review pull request whenever a new port/adapt
+candidate needs review. The run remains failed until the queue is classified;
+it never imports hosted code or advances the accepted baseline. Private hosted
+subjects and paths are never committed to this public repository. See the
+[latest public intake](docs/UPSTREAM_INTAKE_LATEST.md).
+
+The default bundle does **not** require Core AI Backend, Core Backend, or
+Keycloak. Local FastEmbed, direct user-key synthesis, local API-key identity,
+and local artifact storage cover the Community runtime. Those services remain
+gated optional integrations until their capability, redistribution, identity,
+and Docker acceptance requirements are satisfied. The executable contract is
+[`config/community-bundle.json`](config/community-bundle.json).
 
 ## What ships in v0.1
 

@@ -4,12 +4,16 @@ import {
   CheckCircle2,
   Cloud,
   Copy,
+  Cpu,
   Download,
   Eye,
   EyeOff,
   HardDrive,
   KeyRound,
+  LoaderCircle,
+  Play,
   Save,
+  Server,
   Settings2,
   ShieldCheck,
   Trash2,
@@ -19,7 +23,9 @@ import {
   exportCommunityBundle,
   getCommunitySettings,
   importCommunityBundle,
+  testCommunityLlm,
   updateCommunitySettings,
+  type CommunityLlmProvider,
   type CommunityRuntimeSettingsUpdate,
 } from '@/api/community'
 import { getApiKey, setApiKey } from '@/api/client'
@@ -28,9 +34,11 @@ import { getConfig } from '@/lib/runtimeConfig'
 type CloudProvider = 'openai' | 'voyage' | 'cohere'
 
 const DEFAULT_RUNTIME: CommunityRuntimeSettingsUpdate = {
+  llm_provider: 'groq',
+  llm_model: 'llama-3.3-70b-versatile',
+  llm_base_url: 'https://api.groq.com/openai',
   embedding_provider: 'fastembed',
   embedding_model: 'BAAI/bge-small-en-v1.5',
-  groq_model: 'llama-3.3-70b-versatile',
   artifact_max_bytes: 50 * 1024 * 1024,
   log_level: 'INFO',
 }
@@ -42,12 +50,39 @@ const PROVIDERS = {
   cohere: { label: 'Cohere', model: 'embed-v4.0' },
 } as const
 
+const LLM_PROVIDERS: Record<
+  CommunityLlmProvider,
+  { label: string; detail: string; model: string; baseUrl: string; icon: typeof Server }
+> = {
+  llama_cpp: {
+    label: 'llama.cpp',
+    detail: 'Local server',
+    model: 'local-model',
+    baseUrl: 'http://host.docker.internal:8080',
+    icon: Cpu,
+  },
+  groq: {
+    label: 'Groq',
+    detail: 'Groq Cloud',
+    model: 'llama-3.3-70b-versatile',
+    baseUrl: 'https://api.groq.com/openai',
+    icon: Server,
+  },
+  vertex: {
+    label: 'Vertex AI',
+    detail: 'Google Cloud',
+    model: 'gemini-2.5-flash',
+    baseUrl: '',
+    icon: Cloud,
+  },
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [apiKeyDraft, setApiKeyDraft] = useState(getApiKey() ?? getConfig()?.API_KEY ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
-  const [groqKeyDraft, setGroqKeyDraft] = useState('')
+  const [llmKeyDraft, setLlmKeyDraft] = useState('')
   const [providerKeyDraft, setProviderKeyDraft] = useState('')
   const [runtime, setRuntime] = useState<CommunityRuntimeSettingsUpdate>(DEFAULT_RUNTIME)
   const [message, setMessage] = useState<string | null>(null)
@@ -57,6 +92,10 @@ export function SettingsPage() {
     if (!settings.data?.runtime) return
     const {
       groq_configured: _groq,
+      groq_model: _groqModel,
+      llm_configured: _llmConfigured,
+      llm_api_key_configured: _llmKeyConfigured,
+      llm_api_keys_configured: _llmKeysConfigured,
       openai_configured: _openai,
       voyage_configured: _voyage,
       cohere_configured: _cohere,
@@ -68,10 +107,16 @@ export function SettingsPage() {
   const updater = useMutation({
     mutationFn: updateCommunitySettings,
     onSuccess: () => {
-      setGroqKeyDraft('')
+      setLlmKeyDraft('')
       setProviderKeyDraft('')
       setMessage('Runtime settings saved')
       queryClient.invalidateQueries({ queryKey: ['community-settings'] })
+    },
+  })
+  const llmTester = useMutation({
+    mutationFn: testCommunityLlm,
+    onSuccess: (result) => {
+      setMessage(`${LLM_PROVIDERS[result.provider].label} connected: ${result.response}`)
     },
   })
   const importer = useMutation({
@@ -85,6 +130,13 @@ export function SettingsPage() {
     ? settings.data?.runtime[`${cloudProvider}_configured`]
     : true
   const providerReady = !cloudProvider || Boolean(providerConfigured) || Boolean(providerKeyDraft.trim())
+  const llmProvider = runtime.llm_provider
+  const llmOption = LLM_PROVIDERS[llmProvider]
+  const llmKeyConfigured = Boolean(settings.data?.runtime.llm_api_keys_configured[llmProvider])
+  const llmReady = Boolean(runtime.llm_model.trim())
+    && (llmProvider === 'llama_cpp'
+      ? Boolean(runtime.llm_base_url.trim())
+      : llmKeyConfigured || Boolean(llmKeyDraft.trim()))
 
   async function downloadBackup() {
     const bundle = await exportCommunityBundle()
@@ -109,19 +161,40 @@ export function SettingsPage() {
 
   function saveRuntime() {
     const secrets: Partial<CommunityRuntimeSettingsUpdate> = {}
-    if (groqKeyDraft.trim()) secrets.groq_api_key = groqKeyDraft.trim()
+    if (llmKeyDraft.trim()) secrets.llm_api_key = llmKeyDraft.trim()
     if (cloudProvider && providerKeyDraft.trim()) {
       secrets[`${cloudProvider}_api_key`] = providerKeyDraft.trim()
     }
     updater.mutate({ ...runtime, ...secrets })
   }
 
-  function clearSecret(target: 'groq' | CloudProvider) {
+  function clearSecret(target: 'llm' | CloudProvider) {
     const nextRuntime = target === cloudProvider
       ? { ...runtime, embedding_provider: 'fastembed' as const, embedding_model: PROVIDERS.fastembed.model }
       : runtime
     setRuntime(nextRuntime)
     updater.mutate({ ...nextRuntime, [`clear_${target}_api_key`]: true })
+  }
+
+  function selectLlmProvider(next: CommunityLlmProvider) {
+    const defaults = LLM_PROVIDERS[next]
+    setLlmKeyDraft('')
+    llmTester.reset()
+    setRuntime({
+      ...runtime,
+      llm_provider: next,
+      llm_model: defaults.model,
+      llm_base_url: defaults.baseUrl,
+    })
+  }
+
+  function testLlmConnection() {
+    llmTester.mutate({
+      llm_provider: runtime.llm_provider,
+      llm_model: runtime.llm_model,
+      llm_base_url: runtime.llm_base_url,
+      ...(llmKeyDraft.trim() ? { llm_api_key: llmKeyDraft.trim() } : {}),
+    })
   }
 
   async function copyApiKey() {
@@ -158,6 +231,54 @@ export function SettingsPage() {
 
       <section className="border-t border-border pt-6">
         <SectionTitle icon={Settings2} title="Runtime" />
+        <div className="mb-3 text-xs font-semibold uppercase text-content-tertiary">Language model</div>
+        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Language model provider">
+          {(Object.entries(LLM_PROVIDERS) as Array<[CommunityLlmProvider, (typeof LLM_PROVIDERS)[CommunityLlmProvider]]>).map(([value, option]) => {
+            const ProviderIcon = option.icon
+            const selected = llmProvider === value
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => selectLlmProvider(value)}
+                className={`flex min-w-0 items-center gap-2 rounded-md border px-3 py-2.5 text-left ${selected ? 'border-brand-primary bg-brand-primary/5 text-brand-primary' : 'border-border bg-white text-content-secondary hover:bg-surface-secondary'}`}
+              >
+                <ProviderIcon className="h-4 w-4 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{option.label}</span>
+                  <span className="block truncate text-xs text-content-tertiary">{option.detail}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field label={`${llmOption.label} model`}>
+            <input value={runtime.llm_model} onChange={(event) => setRuntime({ ...runtime, llm_model: event.target.value })} className="field" />
+          </Field>
+          {llmProvider !== 'vertex' && (
+            <Field label={`${llmOption.label} endpoint`}>
+              <input value={runtime.llm_base_url} onChange={(event) => setRuntime({ ...runtime, llm_base_url: event.target.value })} className="field font-mono" />
+            </Field>
+          )}
+          <SecretField
+            label={llmProvider === 'llama_cpp' ? 'Bearer token' : `${llmOption.label} API key`}
+            configured={Boolean(llmKeyConfigured)}
+            required={llmProvider !== 'llama_cpp'}
+            value={llmKeyDraft}
+            onChange={setLlmKeyDraft}
+            onClear={() => clearSecret('llm')}
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" onClick={testLlmConnection} disabled={llmTester.isPending || !llmReady} className="inline-flex items-center gap-2 rounded-md border border-border bg-white px-4 py-2 text-sm font-medium text-content-primary hover:bg-surface-secondary disabled:opacity-50">
+            {llmTester.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Test connection
+          </button>
+        </div>
+        {!llmReady && <div className="mt-3 text-sm text-red-600">Complete the required language model settings.</div>}
+
+        <div className="mb-3 mt-7 border-t border-border pt-6 text-xs font-semibold uppercase text-content-tertiary">Embeddings</div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Embedding provider">
             <select
@@ -186,16 +307,6 @@ export function SettingsPage() {
               onClear={() => clearSecret(cloudProvider)}
             />
           )}
-          <SecretField
-            label="Groq API key"
-            configured={Boolean(settings.data?.runtime.groq_configured)}
-            value={groqKeyDraft}
-            onChange={setGroqKeyDraft}
-            onClear={() => clearSecret('groq')}
-          />
-          <Field label="Groq model">
-            <input value={runtime.groq_model} onChange={(event) => setRuntime({ ...runtime, groq_model: event.target.value })} className="field" />
-          </Field>
           <Field label="Artifact limit (MB)">
             <input type="number" min={1} max={1024} value={Math.round(runtime.artifact_max_bytes / 1024 / 1024)} onChange={(event) => setRuntime({ ...runtime, artifact_max_bytes: Number(event.target.value) * 1024 * 1024 })} className="field" />
           </Field>
@@ -206,7 +317,7 @@ export function SettingsPage() {
           </Field>
         </div>
         {!providerReady && <div className="mt-3 text-sm text-red-600">An API key is required for cloud embeddings.</div>}
-        <button type="button" onClick={saveRuntime} disabled={updater.isPending || !providerReady} className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+        <button type="button" onClick={saveRuntime} disabled={updater.isPending || !providerReady || !llmReady} className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
           <Save size={16} /> Save runtime settings
         </button>
       </section>
@@ -236,6 +347,7 @@ export function SettingsPage() {
 
       {message && <div className="flex items-center gap-2 text-sm text-content-secondary"><CheckCircle2 className="h-4 w-4 text-status-success" /> {message}</div>}
       {(settings.error || importer.error || updater.error) && <div className="text-sm text-red-600">Community settings request failed</div>}
+      {llmTester.error && <div className="text-sm text-red-600">Language model connection failed. Check the endpoint, model, and credentials.</div>}
     </div>
   )
 }
@@ -248,14 +360,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="text-xs font-medium text-content-secondary">{label}{children}</label>
 }
 
-function SecretField({ label, configured, value, onChange, onClear }: { label: string; configured: boolean; value: string; onChange: (value: string) => void; onClear: () => void }) {
+function SecretField({ label, configured, required = false, value, onChange, onClear }: { label: string; configured: boolean; required?: boolean; value: string; onChange: (value: string) => void; onClear: () => void }) {
   return (
     <Field label={label}>
       <div className="mt-1 flex items-center gap-2">
         <input value={value} onChange={(event) => onChange(event.target.value)} type="password" placeholder={configured ? 'Configured; enter a replacement' : 'Not configured'} className="field mt-0 min-w-0 flex-1" />
         {configured && <button type="button" onClick={onClear} className="rounded-md border border-border p-2 text-content-secondary hover:bg-surface-secondary" title={`Remove ${label}`}><Trash2 size={16} /></button>}
       </div>
-      <span className={`mt-1 block text-xs ${configured ? 'text-status-success' : 'text-content-tertiary'}`}>{configured ? 'Configured' : 'Optional'}</span>
+      <span className={`mt-1 block text-xs ${configured ? 'text-status-success' : 'text-content-tertiary'}`}>{configured ? 'Configured' : required ? 'Required' : 'Optional'}</span>
     </Field>
   )
 }

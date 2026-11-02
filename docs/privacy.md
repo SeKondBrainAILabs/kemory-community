@@ -30,8 +30,10 @@ Kemory Community Edition does not include hosted telemetry.
 The community build may send data to external services only when needed
 for features you configure:
 
-- Groq receives prompts and related context for L3 summaries and other
-  model-backed features, using the Groq API key you provide.
+- Groq or Vertex AI receives prompts and related context for model-backed
+  features only when you select that provider and supply its API key.
+- A configured llama.cpp endpoint receives the same prompts. It stays local
+  only when that endpoint is operated on infrastructure you control.
 - Hugging Face may be contacted on first run to download the default local
   embedding model, `BAAI/bge-small-en-v1.5`.
 - If you configure a non-default embedding or model provider, requests are

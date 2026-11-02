@@ -447,10 +447,10 @@ async def _maybe_summarize_l3(
     with tier="L3". L3.1 will later overwrite with tier="L3.1" when its
     threshold is met.
     """
-    import os
+    from kemory.llm import llm_enabled
 
-    if not os.environ.get("GROQ_API_KEY", "").strip():
-        logger.debug("l3_summary.skipped", reason="no_groq_api_key", namespace=namespace)
+    if not llm_enabled():
+        logger.debug("l3_summary.skipped", reason="llm_not_configured", namespace=namespace)
         return
 
     # Count active non-concept memories in the namespace
@@ -658,10 +658,10 @@ async def _maybe_summarize_session_l3(
     Debounced per (user, namespace, session) — only runs when ≥1 new memory
     has arrived since the last pipeline run for that tuple.
     """
-    import os
+    from kemory.llm import llm_enabled
 
-    if not os.environ.get("GROQ_API_KEY", "").strip():
-        logger.debug("session_l3.skipped", reason="no_groq_api_key", namespace=namespace)
+    if not llm_enabled():
+        logger.debug("session_l3.skipped", reason="llm_not_configured", namespace=namespace)
         return
 
     # Fetch the triggering memory to extract session_id + created_at anchor.
@@ -938,7 +938,7 @@ async def _summarize_with_groq(
     }
     text = assistant_text(await chat_completion(payload, timeout_seconds=120.0))
     if text is None:
-        raise RuntimeError("GROQ_API_KEY is not configured or Groq returned no content")
+        raise RuntimeError("The Community LLM is not configured or returned no content")
     return text
 
 

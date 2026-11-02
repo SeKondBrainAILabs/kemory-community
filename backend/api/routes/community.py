@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,9 +15,12 @@ from backend.core.auth import AuthContext, require_auth
 from backend.core.database import get_db
 from backend.models.memory import Memory
 from backend.services.community_settings_service import (
+    CommunityLlmTestRequest,
+    CommunityLlmTestResult,
     CommunityRuntimeSettings,
     CommunityRuntimeSettingsUpdate,
     get_community_runtime_settings,
+    test_community_llm,
     update_community_runtime_settings,
 )
 from backend.services.memory_service import MemoryCreate, create_memory
@@ -60,6 +63,17 @@ async def update_community_settings(
     auth: AuthContext = Depends(require_auth),
 ):
     return update_community_runtime_settings(update)
+
+
+@router.post("/llm/test", response_model=CommunityLlmTestResult)
+async def test_community_llm_connection(
+    request: CommunityLlmTestRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    try:
+        return await test_community_llm(request)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"LLM connection failed: {str(exc)[:240]}") from exc
 
 
 @router.get("/export")
