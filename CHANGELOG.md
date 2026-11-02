@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every open dependency advisory against this repository.
 
 ### Fixed
+- The backend installs `sqlalchemy[asyncio]` instead of `sqlalchemy`.
+  SQLAlchemy 2.1.0 stopped installing `greenlet` by default, so a fresh
+  install failed to import `sqlalchemy.ext.asyncio` and the API could not start.
 - UTF-8 text uploads up to 1 MiB are retained inline as searchable artifact
   evidence while the complete body remains in local filesystem blob storage.
 - Chat pushes that repeat a `source_turn_id` now keep the last occurrence
