@@ -14,19 +14,27 @@ jobs:
       - uses: actions/checkout@v7
       - name: Login to GHCR
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Build and push images
+      # Apple Silicon Macs and ARM Linux hosts need arm64 images; without them
+      # the installer pulls amd64-only images that run under emulation or not
+      # at all. QEMU lets the amd64 runner build the arm64 variant.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and push multi-arch images
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           REPO="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          PLATFORMS="linux/amd64,linux/arm64"
 
-          docker build -t "${REPO}-api:${VERSION}" -t "${REPO}-api:latest" .
-          docker build -t "${REPO}-dashboard:${VERSION}" -t "${REPO}-dashboard:latest" ./dashboard
+          docker buildx build --platform "${PLATFORMS}" --push \
+            -t "${REPO}-api:${VERSION}" -t "${REPO}-api:latest" .
+          docker buildx build --platform "${PLATFORMS}" --push \
+            -t "${REPO}-dashboard:${VERSION}" -t "${REPO}-dashboard:latest" ./dashboard
 
-          docker push "${REPO}-api:${VERSION}"
-          docker push "${REPO}-api:latest"
-          docker push "${REPO}-dashboard:${VERSION}"
-          docker push "${REPO}-dashboard:latest"
+          for image in api dashboard; do
+            docker buildx imagetools inspect "${REPO}-${image}:${VERSION}" \
+              | grep -q "linux/arm64" || { echo "::error::${image} is missing linux/arm64"; exit 1; }
+          done
 
   publish-npm:
     needs: publish-docker

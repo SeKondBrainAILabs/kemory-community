@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub Actions move to checkout/setup-node/setup-python v7, stale v11 and
   codeql-action v4. tailwindcss 4, ky 2 and `mcp` 2 are held back: each needs
   code changes first.
+- Release images are published for both `linux/amd64` and `linux/arm64`, so
+  the npm installer runs natively on Apple Silicon Macs and ARM Linux hosts.
 - Releases publish to npm through trusted publishing (GitHub Actions OIDC)
   instead of an `NPM_TOKEN` secret. There is no long-lived token to expire or
   leak, and each published version carries provenance linking it to its
