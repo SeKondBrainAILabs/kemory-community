@@ -144,7 +144,7 @@ function standaloneDockerCompose(config) {
     image: \${KEMORY_COMMUNITY_IMAGE:-${config.apiImage}}
     environment:
       API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
-      CORS_ORIGINS: http://localhost:${config.dashboardPort}
+      CORS_ORIGINS: http://localhost:${config.dashboardPort},http://127.0.0.1:${config.dashboardPort}
       DATABASE_URL: postgresql+asyncpg://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
       DATABASE_URL_SYNC: postgresql://kemory:kemory_local@postgres:${config.postgresContainerPort}/kemory_community
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
@@ -195,7 +195,6 @@ function standaloneDockerCompose(config) {
     image: \${KEMORY_COMMUNITY_DASHBOARD_IMAGE:-${config.dashboardImage}}
     environment:
       API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
-      API_KEY: \${KEMORY_LOCAL_API_KEY}
       SKIP_AUTH: "true"
     ports:
       - "127.0.0.1:${config.dashboardPort}:${config.dashboardContainerPort}"
@@ -290,7 +289,6 @@ function sharedDockerCompose(config) {
     restart: unless-stopped
     environment:
       API_PUBLIC_URL: http://127.0.0.1:${config.apiPort}
-      API_KEY: \${KEMORY_LOCAL_API_KEY}
       SKIP_AUTH: "true"
     ports:
       - "127.0.0.1:${config.dashboardPort}:${config.dashboardContainerPort}"

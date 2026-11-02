@@ -71,7 +71,6 @@ services:
       api:
         condition: service_healthy
     environment:
-      API_KEY: ${KEMORY_LOCAL_API_KEY:?Run infrastructure/provision-shared-infra.sh first}
       API_PUBLIC_URL: http://127.0.0.1:${KEMORY_COMMUNITY_API_PORT:-8111}
       SKIP_AUTH: "true"
     ports:

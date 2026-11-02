@@ -39,14 +39,15 @@ services:
         condition: service_healthy
     environment:
       API_PUBLIC_URL: http://127.0.0.1:8111
-      CORS_ORIGINS: http://localhost:5175
+      CORS_ORIGINS: http://127.0.0.1:5175,http://localhost:5175
       DATABASE_URL: postgresql+asyncpg://kora:kora_secret@postgres:5432/kora_vault
       DATABASE_URL_SYNC: postgresql://kora:kora_secret@postgres:5432/kora_vault
       ENVIRONMENT: development
       KEMORY_COMMUNITY_CONFIG: /app/.community/config.json
       KEMORY_ARTIFACT_BACKEND: local_fs
-      KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
-      KEMORY_LOCAL_BLOB_SIGNING_KEY: community-ci-local-blob-signing-key-32-bytes
+      # Per-install secrets from .env; see "Run from source" in README.md.
+      KEMORY_LOCAL_API_KEY: ${KEMORY_LOCAL_API_KEY:?Create .env with KEMORY_LOCAL_API_KEY first (see README)}
+      KEMORY_LOCAL_BLOB_SIGNING_KEY: ${KEMORY_LOCAL_BLOB_SIGNING_KEY:?Create .env with KEMORY_LOCAL_BLOB_SIGNING_KEY first (see README)}
       KEMORY_LLM_PROVIDER: ${KEMORY_LLM_PROVIDER:-}
       KEMORY_LLM_MODEL: ${KEMORY_LLM_MODEL:-}
       KEMORY_LLM_BASE_URL: ${KEMORY_LLM_BASE_URL:-}
@@ -98,7 +99,6 @@ services:
       api:
         condition: service_healthy
     environment:
-      API_KEY: ${KEMORY_LOCAL_API_KEY:-kemory-community-ci-key}
       API_PUBLIC_URL: http://127.0.0.1:8111
       SKIP_AUTH: "true"
     ports:

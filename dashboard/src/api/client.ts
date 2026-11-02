@@ -3,6 +3,9 @@ import { getConfig } from '@/lib/runtimeConfig'
 
 const API_KEY_STORAGE_KEY = 's9nmv_api_key'
 
+/** Dispatched on window when the API rejects the key, so ApiKeyGate can ask again. */
+export const API_UNAUTHORIZED_EVENT = 'kemory:unauthorized'
+
 /**
  * API key helpers for community local_single_user auth.
  */
@@ -56,6 +59,7 @@ export const api = ky.create({
       (_request, _options, response) => {
         if (response.status === 401) {
           clearApiKey()
+          window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT))
         }
         return response
       },

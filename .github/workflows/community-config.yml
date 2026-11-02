@@ -24,6 +24,8 @@ jobs:
         env:
           COMPOSE_DOCKER_CLI_BUILD: "1"
           DOCKER_BUILDKIT: "1"
+          KEMORY_LOCAL_API_KEY: ci-only
+          KEMORY_LOCAL_BLOB_SIGNING_KEY: ci-only-blob-signing-key-32-bytes
         run: docker compose -f docker-compose.community.yml config >/dev/null
 
       - name: Shellcheck community verifier
