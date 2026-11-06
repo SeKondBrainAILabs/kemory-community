@@ -1,0 +1,141 @@
+name: upstream intake
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-intake
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Community
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require hosted-repository read token
+        env:
+          TOKEN: ${{ secrets.KEMORY_UPSTREAM_READ_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.KEMORY_COMMUNITY_SYNC_TOKEN }}
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::KEMORY_UPSTREAM_READ_TOKEN is required for scheduled hosted intake."
+            exit 1
+          fi
+          if [ -z "${SYNC_TOKEN}" ]; then
+            echo "::error::KEMORY_COMMUNITY_SYNC_TOKEN is required to open the review pull request."
+            exit 1
+          fi
+
+      - name: Check out hosted Kemory
+        uses: actions/checkout@v4
+        with:
+          repository: SeKondBrainAILabs/Kemory
+          ref: main
+          token: ${{ secrets.KEMORY_UPSTREAM_READ_TOKEN }}
+          fetch-depth: 0
+          path: .upstream/kemory
+
+      - name: Classify upstream delta
+        id: intake
+        continue-on-error: true
+        run: |
+          mkdir -p .upstream/report
+          python scripts/upstream_intake.py \
+            --source-repo .upstream/kemory \
+            --source-ref HEAD \
+            --json-output .upstream/report/summary.json \
+            --markdown-output .upstream/report/summary.md \
+            --fail-on-candidates
+
+      - name: Add redacted report to job summary
+        if: always() && hashFiles('.upstream/report/summary.md') != ''
+        run: cat .upstream/report/summary.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload redacted intake artifact
+        if: always() && hashFiles('.upstream/report/summary.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-intake-${{ github.run_id }}
+          path: .upstream/report/
+          retention-days: 14
+
+      - name: Open or refresh the upstream review pull request
+        if: always() && hashFiles('.upstream/report/summary.json') != ''
+        env:
+          GH_TOKEN: ${{ secrets.KEMORY_COMMUNITY_SYNC_TOKEN }}
+          REVIEW_BRANCH: automation/upstream-intake
+        run: |
+          candidate_count="$(jq -r '.candidate_count' .upstream/report/summary.json)"
+          pr_number="$(
+            gh pr list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --head "${REVIEW_BRANCH}" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ "${candidate_count}" -eq 0 ]; then
+            if [ -n "${pr_number}" ]; then
+              gh pr close "${pr_number}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --comment "Hosted Kemory now matches the accepted Community intake baseline."
+            fi
+            exit 0
+          fi
+
+          observed_head="$(jq -r '.observed_head' .upstream/report/summary.json)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "${REVIEW_BRANCH}" "${GITHUB_SHA}"
+          cp .upstream/report/summary.json config/upstream-observation.json
+          cp .upstream/report/summary.md docs/UPSTREAM_INTAKE_LATEST.md
+          git add config/upstream-observation.json docs/UPSTREAM_INTAKE_LATEST.md
+          has_changes=false
+          if ! git diff --cached --quiet; then
+            has_changes=true
+            git commit --signoff -m "chore(sync): observe hosted Kemory ${observed_head:0:12}"
+            git push --force origin "HEAD:refs/heads/${REVIEW_BRANCH}"
+          fi
+
+          body_file="$(mktemp)"
+          cp .upstream/report/summary.md "${body_file}"
+          cat >> "${body_file}" <<'EOF'
+
+          ## Review contract
+
+          This pull request is an automatically refreshed intake signal. It does
+          not import or merge hosted code. Maintainers must classify and adapt each
+          accepted cohort, run the Community Docker acceptance suite, update the
+          hosted delta ledger, and obtain the required review before advancing the
+          accepted baseline.
+          EOF
+
+          if [ -n "${pr_number}" ]; then
+            gh pr edit "${pr_number}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --body-file "${body_file}"
+          elif [ "${has_changes}" = true ]; then
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${REVIEW_BRANCH}" \
+              --title "chore(sync): review hosted Kemory delta" \
+              --body-file "${body_file}"
+          fi
+
+      - name: Require candidate review
+        if: steps.intake.outcome == 'failure'
+        run: |
+          echo "::error::Hosted changes need Community classification and review."
+          exit 1

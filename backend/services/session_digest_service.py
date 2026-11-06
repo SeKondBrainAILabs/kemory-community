@@ -604,9 +604,9 @@ async def generate_digest_update(
     token_budget: int,
     model: str,
 ) -> DigestGeneration:
-    """Use the configured Groq key when available, otherwise deterministic fallback."""
+    """Use the configured Community LLM, otherwise deterministic fallback."""
 
-    from kemory.llm import assistant_text, chat_completion, groq_enabled
+    from kemory.llm import assistant_text, chat_completion, llm_enabled
 
     source_exchanges = _format_source_exchanges(batch)
     prompt = _render_prompt(
@@ -617,7 +617,7 @@ async def generate_digest_update(
         background_context=background_context,
         source_exchanges=source_exchanges,
     )
-    if not groq_enabled():
+    if not llm_enabled():
         return DigestGeneration(
             text=_extractive_digest(previous_digest, batch, token_budget, model),
             tier="L2.1-extractive",

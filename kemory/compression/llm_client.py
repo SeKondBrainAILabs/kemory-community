@@ -1,7 +1,7 @@
 """
 kemory/compression/llm_client.py
 ========================================
-Community LLM client backed by the user's Groq API key.
+Community LLM client backed by the configured provider.
 
 When unreachable, the client returns a synthetic ``Concept`` containing the
 raw group with a ``synthesis_unavailable`` flag — agents still get data.
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Concept:
-    """A synthesized concept produced by Groq (or a deterministic fallback)."""
+    """A synthesized concept produced by an LLM (or a deterministic fallback)."""
 
     name: str
     synthesis: str
@@ -29,7 +29,7 @@ class Concept:
     directional: bool = False
     positions_merged: int = 0
     synthesis_unavailable: bool = False
-    source: str = "groq"  # "groq" | "raw_fallback"
+    source: str = "llm"  # provider name | "raw_fallback"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,23 +44,27 @@ class Concept:
 
 
 class CoreAIBackendClient:
-    """Compatibility name for the community Groq concept client."""
+    """Compatibility name for the Community LLM concept client."""
 
     def __init__(
         self,
         base_url: str | None = None,
         token: str | None = None,
         timeout: float = 30.0,
+        provider: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai")).rstrip(
-            "/"
-        )
-        self.token = token or os.environ.get("GROQ_API_KEY", "")
+        from kemory.llm import llm_provider
+
+        self.provider = provider or llm_provider()
+        self.base_url = base_url
+        self.token = token
         self.timeout = timeout
 
     @property
     def enabled(self) -> bool:
-        return bool(self.token)
+        from kemory.llm import llm_enabled
+
+        return llm_enabled(self.provider, self.token)
 
     async def synthesize_concept(
         self,
@@ -118,10 +122,15 @@ class CoreAIBackendClient:
         directional: bool,
         mode: str = "current",
     ) -> Concept:
-        """When Groq is unavailable, return the raw group as-is."""
+        """When the LLM is unavailable, return the raw group as-is."""
         logger.warning(
-            "groq.unavailable",
-            extra={"directional": directional, "mode": mode, "memory_count": len(memories)},
+            "llm.unavailable",
+            extra={
+                "provider": self.provider,
+                "directional": directional,
+                "mode": mode,
+                "memory_count": len(memories),
+            },
         )
         if directional and mode == "current" and memories:
             # Pick the chronologically latest as the "current" position
@@ -152,7 +161,7 @@ class CoreAIBackendClient:
         directional: bool,
         mode: str | None = None,
     ) -> Concept | None:
-        """Synthesize through Groq's OpenAI-compatible chat endpoint."""
+        """Synthesize through the configured Community LLM."""
         if not self.enabled:
             return None
 
@@ -176,7 +185,10 @@ class CoreAIBackendClient:
             "describing the concept) and 'synthesis' (one paragraph, factual, "
             "no preamble). JSON only — no markdown fences."
         )
-        model = os.environ.get("KMV_SYNTHESIS_MODEL", "llama-3.3-70b-versatile")
+        model = os.environ.get(
+            "KEMORY_LLM_MODEL",
+            os.environ.get("KMV_SYNTHESIS_MODEL", "llama-3.3-70b-versatile"),
+        )
 
         payload = {
             "model": model,
@@ -204,18 +216,18 @@ class CoreAIBackendClient:
                 source_memory_ids=[str(m.get("id", "")) for m in memories if m.get("id")],
                 directional=directional,
                 positions_merged=len(memories),
-                source="groq",
+                source=self.provider,
             )
         except Exception as exc:
             logger.warning(
-                "groq.chat_fallback_parse_failed: %s - %s",
+                "llm.chat_fallback_parse_failed: %s - %s",
                 type(exc).__name__,
                 str(exc)[:200],
             )
             return None
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        """POST to Groq, returning parsed JSON or None on failure."""
+        """POST to the selected provider, returning parsed JSON or None on failure."""
         from kemory.llm import chat_completion
 
         try:
@@ -224,7 +236,8 @@ class CoreAIBackendClient:
                 timeout_seconds=self.timeout,
                 api_key=self.token,
                 base_url=self.base_url,
+                provider=self.provider,
             )
         except Exception as exc:
-            logger.warning("groq.request_failed: %s %s - %s", "POST", path, exc)
+            logger.warning("llm.request_failed: %s %s - %s", "POST", path, exc)
             return None
