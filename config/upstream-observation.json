@@ -1,14 +1,14 @@
 {
   "accepted_baseline": "2aa9da45db4ae3651834db7a49077da2d597af36",
-  "candidate_count": 1157,
+  "candidate_count": 1424,
   "decision_counts": {
-    "adapt": 1075,
+    "adapt": 1308,
     "exclude": 2,
-    "mixed": 36,
-    "review": 46
+    "mixed": 63,
+    "review": 53
   },
   "details_included": false,
-  "first_parent_commit_count": 1159,
-  "observed_head": "1b0bddd4504cdac8ab8c1373181b7ebafccdd7f4",
+  "first_parent_commit_count": 1426,
+  "observed_head": "7ea4169728db56cfdf930fc01464e3a22dda5b19",
   "schema_version": 1
 }
